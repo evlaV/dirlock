@@ -1,0 +1,13 @@
+[package]
+name = "fscrypt-rs"
+version = "0.0.1"
+edition = "2021"
+
+[dependencies]
+nix = { version = "0.29.0", features = ["ioctl"] }
+hex = "0.4"
+argh = "0.1.12"
+anyhow = "1.0.94"
+bitflags = "2.6.0"
+zeroize = "1.8.1"
+num_enum = "0.7.3"
