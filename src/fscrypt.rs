@@ -277,3 +277,88 @@ pub fn get_key_status(dir: &Path, keyid: &[u8]) -> Result<(KeyStatus, KeyStatusF
 
     Ok((key_status, KeyStatusFlags::from_bits_truncate(arg.status_flags)))
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::fscrypt::*;
+    use anyhow::{bail, Result};
+    use std::env;
+    use rand::prelude::*;
+
+    const EMPTY_RAW_KEY : RawKey = [0u8; FSCRYPT_MAX_KEY_SIZE];
+    const MNTPOINT_ENV_VAR : &str = "FSCRYPT_RS_TEST_FS";
+
+    #[test]
+    fn test_add_key() -> Result<()> {
+        let mntpoint = match env::var(MNTPOINT_ENV_VAR) {
+            Ok(x) if x == "skip" => return Ok(()),
+            Ok(x) => std::path::PathBuf::from(&x),
+            _ => bail!("Environment variable '{MNTPOINT_ENV_VAR}' not set"),
+        };
+
+        let mut key = EMPTY_RAW_KEY;
+        let mut rng = rand::thread_rng();
+
+        for _ in 0..5 {
+            // Create a temporary directory and check that it's not encrypted
+            let workdir = tempdir::TempDir::new_in(&mntpoint, "encrypted")?;
+            if let Some(_) = get_policy(workdir.as_ref())? {
+                panic!("Found policy where none was expected")
+            };
+
+            // Generate a random key and calculate its expected ID
+            rng.try_fill_bytes(&mut key[..])?;
+            let id = get_key_id(&key)?;
+
+            // Check that the key is absent from the filesystem
+            let (status, _) = get_key_status(&mntpoint, &id)?;
+            assert_eq!(status, KeyStatus::Absent);
+
+            // Add the key to the filesystem, check the ID and its presence
+            let new_id = add_key(&mntpoint, &key)?;
+            assert_eq!(new_id, id);
+            let (status, flags) = get_key_status(&mntpoint, &id)?;
+            assert_eq!(status, KeyStatus::Present);
+            assert!(flags.contains(KeyStatusFlags::AddedBySelf));
+
+            // Encrypt the directory and check the new status
+            set_policy(workdir.as_ref(), &id)?;
+            match get_policy(workdir.as_ref())? {
+                Some(Policy::V2(x)) if x.master_key_identifier == id => (),
+                _ => panic!("Could not find the expected policy")
+            };
+
+            // Remove the key from the filesystem and check that it's absent
+            remove_key(&mntpoint, &id, RemoveKeyUsers::CurrentUser)?;
+            let (status, _) = get_key_status(&mntpoint, &id)?;
+            assert_eq!(status, KeyStatus::Absent);
+
+            // Check again that the directory is still encrypted
+            match get_policy(workdir.as_ref())? {
+                Some(Policy::V2(x)) if x.master_key_identifier == id => (),
+                _ => panic!("Could not find the expected policy")
+            };
+        };
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_no_encryption_supported() -> Result<()> {
+        let mntpoint = std::path::Path::new("/tmp");
+        let workdir = tempdir::TempDir::new_in(&mntpoint, "encrypted")?;
+
+        let mut key = EMPTY_RAW_KEY;
+        let mut rng = rand::thread_rng();
+        rng.try_fill_bytes(&mut key[..])?;
+        let id = get_key_id(&key)?;
+
+        assert!(add_key(&mntpoint, &key).is_err());
+        assert!(set_policy(workdir.path(), &id).is_err());
+        assert!(get_policy(workdir.path()).is_err());
+        assert!(get_key_status(&mntpoint, &id).is_err());
+        assert!(remove_key(&mntpoint, &id, RemoveKeyUsers::CurrentUser).is_err());
+
+        Ok(())
+    }
+}
