@@ -4,6 +4,7 @@ use std::os::fd::AsRawFd;
 use nix::errno::Errno;
 use num_enum::{FromPrimitive, TryFromPrimitive};
 use rand::RngCore;
+use serde::{Serialize, Deserialize};
 use std::mem;
 use std::path::Path;
 use crate::linux::*;
@@ -21,7 +22,8 @@ impl std::fmt::Display for KeyDescriptor {
 
 
 /// A 16-byte key identifier for v2 fscrypt policies
-#[derive(Default, PartialEq)]
+#[derive(Default, PartialEq, Hash, Eq, Serialize, Deserialize, Clone)]
+#[serde(try_from = "String", into = "String")]
 pub struct KeyIdentifier([u8; FSCRYPT_KEY_IDENTIFIER_SIZE]);
 
 impl std::fmt::Display for KeyIdentifier {
@@ -41,8 +43,24 @@ impl TryFrom<&str> for KeyIdentifier {
     }
 }
 
+impl TryFrom<String> for KeyIdentifier {
+    type Error = anyhow::Error;
+    /// Create a key identifier from an hex string
+    fn try_from(s: String) -> Result<Self> {
+        Self::try_from(s.as_str())
+    }
+}
+
+impl From<KeyIdentifier> for String {
+    /// Convert a key identifier into an hex string
+    fn from(k: KeyIdentifier) -> String {
+        hex::encode(k.0)
+    }
+}
+
 
 /// A raw master encryption key. Meant to be loaded directly into the kernel.
+#[derive(PartialEq)]
 pub struct RawKey(pub [u8; FSCRYPT_MAX_KEY_SIZE]);
 
 impl Default for RawKey {
@@ -188,7 +206,7 @@ bitflags::bitflags! {
     }
 }
 
-#[derive(TryFromPrimitive, Debug)]
+#[derive(TryFromPrimitive, Debug, PartialEq)]
 #[repr(u32)]
 pub enum KeyStatus {
     Absent = FSCRYPT_KEY_STATUS_ABSENT,
