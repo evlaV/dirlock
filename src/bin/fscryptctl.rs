@@ -6,8 +6,7 @@ use argh::FromArgs;
 use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
 
-mod fscrypt;
-mod linux;
+use fscrypt_rs::{fscrypt, linux};
 
 #[derive(FromArgs)]
 /// Disk encryption tool.
