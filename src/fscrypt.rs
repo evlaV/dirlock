@@ -171,6 +171,18 @@ nix::ioctl_readwrite!(fscrypt_remove_key, b'f', 24, fscrypt_remove_key_arg);
 nix::ioctl_readwrite!(fscrypt_remove_key_all_users, b'f', 25, fscrypt_remove_key_arg);
 nix::ioctl_readwrite!(fscrypt_get_key_status, b'f', 26, fscrypt_get_key_status_arg);
 
+#[allow(dead_code)]
+pub fn get_key_id(key: &[u8]) -> Result<KeyIdentifier> {
+    let key : &RawKey = key.try_into().map_err(|_| anyhow!("Invalid key length"))?;
+    // The key ID is calculated using unsalted HKDF-SHA512
+    // https://github.com/google/fscrypt/blob/v0.3.5/crypto/crypto.go#L183
+    let info = b"fscrypt\x00\x01";
+    let hkdf = hkdf::Hkdf::<sha2::Sha512>::new(None, key);
+    let mut result = KeyIdentifier::default();
+    hkdf.expand(info, &mut result).unwrap();
+    Ok(result)
+}
+
 pub fn add_key(dir: &Path, key: &[u8]) -> Result<KeyIdentifier> {
     let key : &RawKey = key.try_into().map_err(|_| anyhow!("Invalid key length"))?;
     let fd = std::fs::File::open(dir)?;
