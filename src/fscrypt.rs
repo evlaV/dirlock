@@ -3,6 +3,7 @@ use anyhow::{bail, ensure, Result};
 use std::os::fd::AsRawFd;
 use nix::errno::Errno;
 use num_enum::{FromPrimitive, TryFromPrimitive};
+use rand::RngCore;
 use std::mem;
 use std::path::Path;
 use crate::linux::*;
@@ -58,6 +59,14 @@ impl Drop for RawKey {
 }
 
 impl RawKey {
+    /// Generates a new, random key
+    pub fn new_random() -> Self {
+        let mut rng = rand::thread_rng();
+        let mut key = RawKey::default();
+        rng.try_fill_bytes(&mut key.0).unwrap();
+        key
+    }
+
     /// Generates a new key, reading the data from a given source
     pub fn new_from_reader(r: &mut impl std::io::Read) -> Result<Self> {
         let mut key = RawKey::default();
@@ -336,7 +345,6 @@ mod tests {
     use crate::fscrypt::*;
     use anyhow::{bail, Result};
     use std::env;
-    use rand::prelude::*;
 
     const MNTPOINT_ENV_VAR : &str = "FSCRYPT_RS_TEST_FS";
 
@@ -348,9 +356,6 @@ mod tests {
             _ => bail!("Environment variable '{MNTPOINT_ENV_VAR}' not set"),
         };
 
-        let mut key = RawKey::default();
-        let mut rng = rand::thread_rng();
-
         for _ in 0..5 {
             // Create a temporary directory and check that it's not encrypted
             let workdir = tempdir::TempDir::new_in(&mntpoint, "encrypted")?;
@@ -359,7 +364,7 @@ mod tests {
             };
 
             // Generate a random key and calculate its expected ID
-            rng.try_fill_bytes(&mut key.0)?;
+            let key = RawKey::new_random();
             let id = key.get_id();
 
             // Check that the key is absent from the filesystem
@@ -400,9 +405,7 @@ mod tests {
         let mntpoint = std::path::Path::new("/tmp");
         let workdir = tempdir::TempDir::new_in(&mntpoint, "encrypted")?;
 
-        let mut key = RawKey::default();
-        let mut rng = rand::thread_rng();
-        rng.try_fill_bytes(&mut key.0)?;
+        let key = RawKey::new_random();
         let id = key.get_id();
 
         assert!(add_key(&mntpoint, &key).is_err());
