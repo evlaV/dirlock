@@ -7,7 +7,16 @@ use std::mem;
 use std::path::Path;
 use crate::linux::*;
 
-type KeyDescriptor = [u8; FSCRYPT_KEY_DESCRIPTOR_SIZE];
+/// An 8-byte key descriptor for v1 fscrypt policies
+pub struct KeyDescriptor([u8; FSCRYPT_KEY_DESCRIPTOR_SIZE]);
+
+impl std::fmt::Display for KeyDescriptor {
+    /// Display a KeyDescriptor in hex format
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", hex::encode(self.0))
+    }
+}
+
 type KeyIdentifier = [u8; FSCRYPT_KEY_IDENTIFIER_SIZE];
 type RawKey = [u8; FSCRYPT_MAX_KEY_SIZE];
 
@@ -39,7 +48,7 @@ impl From<&fscrypt_policy_v1> for PolicyV1 {
             contents_encryption_mode: p.contents_encryption_mode.into(),
             filenames_encryption_mode: p.filenames_encryption_mode.into(),
             flags: p.flags.into(),
-            master_key_descriptor: p.master_key_descriptor,
+            master_key_descriptor: KeyDescriptor(p.master_key_descriptor),
         }
     }
 }

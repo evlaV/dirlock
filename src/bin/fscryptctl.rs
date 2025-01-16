@@ -95,7 +95,7 @@ fn get_mountpoint(dir: &Path) -> Result<std::path::PathBuf> {
 fn cmd_get_policy(args: &GetPolicyArgs) -> Result<()> {
     match fscrypt::get_policy(&args.dir)? {
         None => println!("Directory not encrypted"),
-        Some(fscrypt::Policy::V1(p)) => println!("Policy v1, key id: {}", hex::encode(p.master_key_descriptor)),
+        Some(fscrypt::Policy::V1(p)) => println!("Policy v1, key id: {}", p.master_key_descriptor),
         Some(fscrypt::Policy::V2(p)) => println!("Policy v2, key id: {}", hex::encode(p.master_key_identifier)),
         Some(fscrypt::Policy::Unknown(v)) => println!("Encrypted with unknown policy ({v})"),
     };
