@@ -95,7 +95,6 @@ pub enum Policy {
     Unknown(u8)
 }
 
-#[allow(dead_code)]
 pub struct PolicyV1 {
     pub contents_encryption_mode : EncryptionMode,
     pub filenames_encryption_mode : EncryptionMode,
@@ -103,7 +102,6 @@ pub struct PolicyV1 {
     pub master_key_descriptor : KeyDescriptor
 }
 
-#[allow(dead_code)]
 pub struct PolicyV2 {
     pub contents_encryption_mode : EncryptionMode,
     pub filenames_encryption_mode : EncryptionMode,
@@ -162,7 +160,6 @@ bitflags::bitflags! {
     }
 }
 
-#[allow(dead_code)]
 pub struct PolicyFlags {
     pub pad: PolicyFlagsPad,
     pub flags: PolicyFlagsFlags
@@ -179,7 +176,6 @@ impl From<u8> for PolicyFlags {
 
 pub enum RemoveKeyUsers {
     CurrentUser,
-    #[allow(dead_code)]
     AllUsers
 }
 
@@ -219,7 +215,6 @@ pub enum EncryptionMode {
     SPECK128_256XTS = FS_ENCRYPTION_MODE_SPECK128_256_XTS,
     SPECK128_256CTS = FS_ENCRYPTION_MODE_SPECK128_256_CTS,
     Adiantum = FS_ENCRYPTION_MODE_ADIANTUM,
-    #[allow(dead_code)]
     #[num_enum(catch_all)]
     Unknown(u8)
 }
