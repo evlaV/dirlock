@@ -121,10 +121,9 @@ fn cmd_key_status(args: &KeyStatusArgs) -> Result<()> {
 }
 
 fn cmd_add_key(args: &AddKeyArgs) -> Result<()> {
-    let mut key = fscrypt::RawKey::default();
     let mut stdin = std::io::stdin();
-    let keylen = stdin.read(&mut key.0)?;
-    ensure!(keylen == key.0.len() && stdin.read(&mut [0])? == 0, "Invalid key length");
+    let key = fscrypt::RawKey::new_from_reader(&mut stdin)?;
+    ensure!(stdin.read(&mut [0])? == 0, "Too much data when reading key from stdin");
     let keyid = fscrypt::add_key(&args.mountpoint, &key)?;
     println!("Added key {} to directory {}", keyid, args.mountpoint.display());
     Ok(())

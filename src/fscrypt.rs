@@ -1,5 +1,5 @@
 
-use anyhow::{bail, Result};
+use anyhow::{bail, ensure, Result};
 use std::os::fd::AsRawFd;
 use nix::errno::Errno;
 use num_enum::{FromPrimitive, TryFromPrimitive};
@@ -58,6 +58,14 @@ impl Drop for RawKey {
 }
 
 impl RawKey {
+    /// Generates a new key, reading the data from a given source
+    pub fn new_from_reader(r: &mut impl std::io::Read) -> Result<Self> {
+        let mut key = RawKey::default();
+        let len = r.read(&mut key.0)?;
+        ensure!(len == key.0.len(), "Expected {} bytes when reading key, got {len}", key.0.len());
+        Ok(key)
+    }
+
     /// Calculates the fscrypt v2 key ID for this key
     ///
     /// The key ID is calculated using unsalted HKDF-SHA512:
