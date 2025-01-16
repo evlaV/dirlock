@@ -1,5 +1,5 @@
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use std::io::Read;
 use std::os::linux::fs::MetadataExt;
 use argh::FromArgs;
@@ -96,7 +96,7 @@ fn cmd_get_policy(args: &GetPolicyArgs) -> Result<()> {
     match fscrypt::get_policy(&args.dir)? {
         None => println!("Directory not encrypted"),
         Some(fscrypt::Policy::V1(p)) => println!("Policy v1, key id: {}", p.master_key_descriptor),
-        Some(fscrypt::Policy::V2(p)) => println!("Policy v2, key id: {}", hex::encode(p.master_key_identifier)),
+        Some(fscrypt::Policy::V2(p)) => println!("Policy v2, key id: {}", p.master_key_identifier),
         Some(fscrypt::Policy::Unknown(v)) => println!("Encrypted with unknown policy ({v})"),
     };
 
@@ -104,18 +104,16 @@ fn cmd_get_policy(args: &GetPolicyArgs) -> Result<()> {
 }
 
 fn cmd_set_policy(args: &SetPolicyArgs) -> Result<()> {
-    let id = hex::decode(&args.keyid)
-        .map_err(|e| anyhow!("Invalid key ID: {e}"))?;
-    fscrypt::set_policy(&args.dir, id.as_slice())?;
+    let keyid = fscrypt::KeyIdentifier::try_from(args.keyid.as_str())?;
+    fscrypt::set_policy(&args.dir, &keyid)?;
     println!("Set policy {} in directory {}", args.keyid, &args.dir.display());
     Ok(())
 }
 
 fn cmd_key_status(args: &KeyStatusArgs) -> Result<()> {
-    let id = hex::decode(&args.keyid)
-        .map_err(|e| anyhow!("Invalid key ID: {e}"))?;
+    let keyid = fscrypt::KeyIdentifier::try_from(args.keyid.as_str())?;
     let mnt = get_mountpoint(&args.mountpoint)?;
-    let (status, flags) = fscrypt::get_key_status(&mnt, id.as_slice())?;
+    let (status, flags) = fscrypt::get_key_status(&mnt, &keyid)?;
     println!("Got status of key {} in directory {}: {:?}", &args.keyid, mnt.display(), status);
     if flags.contains(fscrypt::KeyStatusFlags::AddedBySelf) {
         println!("(key added by self)");
@@ -127,14 +125,13 @@ fn cmd_add_key(args: &AddKeyArgs) -> Result<()> {
     let mut key = Zeroizing::new([0; linux::FSCRYPT_MAX_KEY_SIZE + 1]);
     let keylen = std::io::stdin().read(&mut key[..])?;
     let keyid = fscrypt::add_key(&args.mountpoint, &key[0..keylen])?;
-    println!("Added key {} to directory {}", hex::encode(keyid), args.mountpoint.display());
+    println!("Added key {} to directory {}", keyid, args.mountpoint.display());
     Ok(())
 }
 
 fn cmd_remove_key(args: &RemoveKeyArgs) -> Result<()> {
-    let id = hex::decode(&args.keyid)
-        .map_err(|e| anyhow!("Invalid key ID: {e}"))?;
-    fscrypt::remove_key(&args.mountpoint, id.as_slice(), fscrypt::RemoveKeyUsers::CurrentUser)?;
+    let keyid = fscrypt::KeyIdentifier::try_from(args.keyid.as_str())?;
+    fscrypt::remove_key(&args.mountpoint, &keyid, fscrypt::RemoveKeyUsers::CurrentUser)?;
     println!("Removed key {} from directory {}", &args.keyid, args.mountpoint.display());
     Ok(())
 }

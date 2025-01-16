@@ -17,7 +17,28 @@ impl std::fmt::Display for KeyDescriptor {
     }
 }
 
-type KeyIdentifier = [u8; FSCRYPT_KEY_IDENTIFIER_SIZE];
+
+/// A 16-byte key identifier for v2 fscrypt policies
+#[derive(Default, PartialEq)]
+pub struct KeyIdentifier([u8; FSCRYPT_KEY_IDENTIFIER_SIZE]);
+
+impl std::fmt::Display for KeyIdentifier {
+    /// Display a key identifier in hex format
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "{}", hex::encode(self.0))
+    }
+}
+
+impl TryFrom<&str> for KeyIdentifier {
+    type Error = anyhow::Error;
+    /// Create a key identifier from an hex string
+    fn try_from(s: &str) -> Result<Self> {
+        let mut ret = KeyIdentifier::default();
+        hex::decode_to_slice(s, &mut ret.0)?;
+        Ok(ret)
+    }
+}
+
 type RawKey = [u8; FSCRYPT_MAX_KEY_SIZE];
 
 pub enum Policy {
@@ -59,7 +80,7 @@ impl From<&fscrypt_policy_v2> for PolicyV2 {
             contents_encryption_mode: p.contents_encryption_mode.into(),
             filenames_encryption_mode: p.filenames_encryption_mode.into(),
             flags: p.flags.into(),
-            master_key_identifier: p.master_key_identifier,
+            master_key_identifier: KeyIdentifier(p.master_key_identifier),
         }
     }
 }
@@ -188,7 +209,7 @@ pub fn get_key_id(key: &[u8]) -> Result<KeyIdentifier> {
     let info = b"fscrypt\x00\x01";
     let hkdf = hkdf::Hkdf::<sha2::Sha512>::new(None, key);
     let mut result = KeyIdentifier::default();
-    hkdf.expand(info, &mut result).unwrap();
+    hkdf.expand(info, &mut result.0).unwrap();
     Ok(result)
 }
 
@@ -206,17 +227,16 @@ pub fn add_key(dir: &Path, key: &[u8]) -> Result<KeyIdentifier> {
     let argptr = std::ptr::addr_of_mut!(arg) as *mut fscrypt_add_key_arg;
     match unsafe { fscrypt_add_key(raw_fd, argptr) } {
         Err(x) => Err(x.into()),
-        _ => Ok(unsafe { arg.key_spec.u.identifier })
+        _ => Ok(KeyIdentifier(unsafe { arg.key_spec.u.identifier }))
     }
 }
 
-pub fn remove_key(dir: &Path, keyid: &[u8], users: RemoveKeyUsers) -> Result<RemovalStatusFlags> {
-    let keyid : &KeyIdentifier = keyid.try_into().map_err(|_| anyhow!("Invalid key ID length"))?;
+pub fn remove_key(dir: &Path, keyid: &KeyIdentifier, users: RemoveKeyUsers) -> Result<RemovalStatusFlags> {
     let fd = std::fs::File::open(dir)?;
 
     let mut arg : fscrypt_remove_key_arg = unsafe { mem::zeroed() };
     arg.key_spec.type_ = FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER;
-    arg.key_spec.u.identifier = *keyid;
+    arg.key_spec.u.identifier = keyid.0;
 
     let raw_fd = fd.as_raw_fd();
     let argptr = std::ptr::addr_of_mut!(arg);
@@ -245,8 +265,7 @@ pub fn get_policy(dir: &Path) -> Result<Option<Policy>> {
     }
 }
 
-pub fn set_policy(dir: &Path, keyid: &[u8]) -> Result<()> {
-    let keyid : &KeyIdentifier = keyid.try_into().map_err(|_| anyhow!("Invalid key ID length"))?;
+pub fn set_policy(dir: &Path, keyid: &KeyIdentifier) -> Result<()> {
     let fd = std::fs::File::open(dir)?;
 
     let mut arg = fscrypt_policy_v2 {
@@ -255,7 +274,7 @@ pub fn set_policy(dir: &Path, keyid: &[u8]) -> Result<()> {
         filenames_encryption_mode : FSCRYPT_MODE_AES_256_CTS,
         flags : FSCRYPT_POLICY_FLAGS_PAD_32,
         __reserved : [0u8; 4],
-        master_key_identifier : *keyid
+        master_key_identifier : keyid.0
     };
 
     let raw_fd = fd.as_raw_fd();
@@ -266,13 +285,12 @@ pub fn set_policy(dir: &Path, keyid: &[u8]) -> Result<()> {
     }
 }
 
-pub fn get_key_status(dir: &Path, keyid: &[u8]) -> Result<(KeyStatus, KeyStatusFlags)> {
-    let keyid : &KeyIdentifier = keyid.try_into().map_err(|_| anyhow!("Invalid key ID length"))?;
+pub fn get_key_status(dir: &Path, keyid: &KeyIdentifier) -> Result<(KeyStatus, KeyStatusFlags)> {
     let fd = std::fs::File::open(dir)?;
 
     let mut arg : fscrypt_get_key_status_arg = unsafe { mem::zeroed() };
     arg.key_spec.type_ = FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER;
-    arg.key_spec.u.identifier = *keyid;
+    arg.key_spec.u.identifier = keyid.0;
 
     let raw_fd = fd.as_raw_fd();
     let argptr = std::ptr::addr_of_mut!(arg);
@@ -325,7 +343,7 @@ mod tests {
 
             // Add the key to the filesystem, check the ID and its presence
             let new_id = add_key(&mntpoint, &key)?;
-            assert_eq!(new_id, id);
+            assert!(new_id == id);
             let (status, flags) = get_key_status(&mntpoint, &id)?;
             assert_eq!(status, KeyStatus::Present);
             assert!(flags.contains(KeyStatusFlags::AddedBySelf));
