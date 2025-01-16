@@ -1,12 +1,11 @@
 
-use anyhow::Result;
+use anyhow::{ensure, Result};
 use std::io::Read;
 use std::os::linux::fs::MetadataExt;
 use argh::FromArgs;
 use std::path::{Path, PathBuf};
-use zeroize::Zeroizing;
 
-use fscrypt_rs::{fscrypt, linux};
+use fscrypt_rs::fscrypt;
 
 #[derive(FromArgs)]
 /// Disk encryption tool.
@@ -122,9 +121,11 @@ fn cmd_key_status(args: &KeyStatusArgs) -> Result<()> {
 }
 
 fn cmd_add_key(args: &AddKeyArgs) -> Result<()> {
-    let mut key = Zeroizing::new([0; linux::FSCRYPT_MAX_KEY_SIZE + 1]);
-    let keylen = std::io::stdin().read(&mut key[..])?;
-    let keyid = fscrypt::add_key(&args.mountpoint, &key[0..keylen])?;
+    let mut key = fscrypt::RawKey::default();
+    let mut stdin = std::io::stdin();
+    let keylen = stdin.read(&mut key.0)?;
+    ensure!(keylen == key.0.len() && stdin.read(&mut [0])? == 0, "Invalid key length");
+    let keyid = fscrypt::add_key(&args.mountpoint, &key)?;
     println!("Added key {} to directory {}", keyid, args.mountpoint.display());
     Ok(())
 }

@@ -1,5 +1,5 @@
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{bail, Result};
 use std::os::fd::AsRawFd;
 use nix::errno::Errno;
 use num_enum::{FromPrimitive, TryFromPrimitive};
@@ -39,7 +39,38 @@ impl TryFrom<&str> for KeyIdentifier {
     }
 }
 
-type RawKey = [u8; FSCRYPT_MAX_KEY_SIZE];
+
+/// A raw master encryption key. Meant to be loaded directly into the kernel.
+pub struct RawKey(pub [u8; FSCRYPT_MAX_KEY_SIZE]);
+
+impl Default for RawKey {
+    /// Returns a key containing only zeroes.
+    fn default() -> Self {
+        Self([0u8; FSCRYPT_MAX_KEY_SIZE])
+    }
+}
+
+impl Drop for RawKey {
+    /// Wipes the key safely from memory on drop.
+    fn drop(&mut self) {
+        unsafe { zeroize::zeroize_flat_type(self) }
+    }
+}
+
+impl RawKey {
+    /// Calculates the fscrypt v2 key ID for this key
+    ///
+    /// The key ID is calculated using unsalted HKDF-SHA512:
+    /// <https://github.com/google/fscrypt/blob/v0.3.5/crypto/crypto.go#L183>
+    pub fn get_id(&self) -> KeyIdentifier {
+        let info = b"fscrypt\x00\x01";
+        let hkdf = hkdf::Hkdf::<sha2::Sha512>::new(None, &self.0);
+        let mut result = KeyIdentifier::default();
+        hkdf.expand(info, &mut result.0).unwrap();
+        result
+    }
+}
+
 
 pub enum Policy {
     V1(PolicyV1),
@@ -183,7 +214,7 @@ pub struct fscrypt_add_key_arg_full {
     raw_size: u32,
     key_id: u32,
     __reserved: [u32; 8],
-    raw: RawKey
+    raw: [u8; FSCRYPT_MAX_KEY_SIZE]
 }
 
 impl Drop for fscrypt_add_key_arg_full {
@@ -201,27 +232,14 @@ nix::ioctl_readwrite!(fscrypt_remove_key, b'f', 24, fscrypt_remove_key_arg);
 nix::ioctl_readwrite!(fscrypt_remove_key_all_users, b'f', 25, fscrypt_remove_key_arg);
 nix::ioctl_readwrite!(fscrypt_get_key_status, b'f', 26, fscrypt_get_key_status_arg);
 
-#[allow(dead_code)]
-pub fn get_key_id(key: &[u8]) -> Result<KeyIdentifier> {
-    let key : &RawKey = key.try_into().map_err(|_| anyhow!("Invalid key length"))?;
-    // The key ID is calculated using unsalted HKDF-SHA512
-    // https://github.com/google/fscrypt/blob/v0.3.5/crypto/crypto.go#L183
-    let info = b"fscrypt\x00\x01";
-    let hkdf = hkdf::Hkdf::<sha2::Sha512>::new(None, key);
-    let mut result = KeyIdentifier::default();
-    hkdf.expand(info, &mut result.0).unwrap();
-    Ok(result)
-}
-
-pub fn add_key(dir: &Path, key: &[u8]) -> Result<KeyIdentifier> {
-    let key : &RawKey = key.try_into().map_err(|_| anyhow!("Invalid key length"))?;
+pub fn add_key(dir: &Path, key: &RawKey) -> Result<KeyIdentifier> {
     let fd = std::fs::File::open(dir)?;
 
     let mut arg : fscrypt_add_key_arg_full = unsafe { mem::zeroed() };
     arg.key_spec.type_ = FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER;
-    arg.raw_size = key.len() as u32;
+    arg.raw_size = key.0.len() as u32;
     arg.key_id = 0;
-    arg.raw = *key;
+    arg.raw = key.0;
 
     let raw_fd = fd.as_raw_fd();
     let argptr = std::ptr::addr_of_mut!(arg) as *mut fscrypt_add_key_arg;
@@ -312,7 +330,6 @@ mod tests {
     use std::env;
     use rand::prelude::*;
 
-    const EMPTY_RAW_KEY : RawKey = [0u8; FSCRYPT_MAX_KEY_SIZE];
     const MNTPOINT_ENV_VAR : &str = "FSCRYPT_RS_TEST_FS";
 
     #[test]
@@ -323,7 +340,7 @@ mod tests {
             _ => bail!("Environment variable '{MNTPOINT_ENV_VAR}' not set"),
         };
 
-        let mut key = EMPTY_RAW_KEY;
+        let mut key = RawKey::default();
         let mut rng = rand::thread_rng();
 
         for _ in 0..5 {
@@ -334,8 +351,8 @@ mod tests {
             };
 
             // Generate a random key and calculate its expected ID
-            rng.try_fill_bytes(&mut key[..])?;
-            let id = get_key_id(&key)?;
+            rng.try_fill_bytes(&mut key.0)?;
+            let id = key.get_id();
 
             // Check that the key is absent from the filesystem
             let (status, _) = get_key_status(&mntpoint, &id)?;
@@ -375,10 +392,10 @@ mod tests {
         let mntpoint = std::path::Path::new("/tmp");
         let workdir = tempdir::TempDir::new_in(&mntpoint, "encrypted")?;
 
-        let mut key = EMPTY_RAW_KEY;
+        let mut key = RawKey::default();
         let mut rng = rand::thread_rng();
-        rng.try_fill_bytes(&mut key[..])?;
-        let id = get_key_id(&key)?;
+        rng.try_fill_bytes(&mut key.0)?;
+        let id = key.get_id();
 
         assert!(add_key(&mntpoint, &key).is_err());
         assert!(set_policy(workdir.path(), &id).is_err());
