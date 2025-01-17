@@ -7,6 +7,7 @@ use rand::RngCore;
 use std::mem;
 use std::path::Path;
 use crate::linux::*;
+use crate::util;
 
 /// An 8-byte key descriptor for v1 fscrypt policies
 pub struct KeyDescriptor([u8; FSCRYPT_KEY_DESCRIPTOR_SIZE]);
@@ -245,7 +246,7 @@ nix::ioctl_readwrite!(fscrypt_remove_key_all_users, b'f', 25, fscrypt_remove_key
 nix::ioctl_readwrite!(fscrypt_get_key_status, b'f', 26, fscrypt_get_key_status_arg);
 
 pub fn add_key(dir: &Path, key: &RawKey) -> Result<KeyIdentifier> {
-    let fd = std::fs::File::open(dir)?;
+    let fd = std::fs::File::open(util::get_mountpoint(dir)?)?;
 
     let mut arg : fscrypt_add_key_arg_full = unsafe { mem::zeroed() };
     arg.key_spec.type_ = FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER;
@@ -262,7 +263,7 @@ pub fn add_key(dir: &Path, key: &RawKey) -> Result<KeyIdentifier> {
 }
 
 pub fn remove_key(dir: &Path, keyid: &KeyIdentifier, users: RemoveKeyUsers) -> Result<RemovalStatusFlags> {
-    let fd = std::fs::File::open(dir)?;
+    let fd = std::fs::File::open(util::get_mountpoint(dir)?)?;
 
     let mut arg : fscrypt_remove_key_arg = unsafe { mem::zeroed() };
     arg.key_spec.type_ = FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER;
@@ -316,7 +317,7 @@ pub fn set_policy(dir: &Path, keyid: &KeyIdentifier) -> Result<()> {
 }
 
 pub fn get_key_status(dir: &Path, keyid: &KeyIdentifier) -> Result<(KeyStatus, KeyStatusFlags)> {
-    let fd = std::fs::File::open(dir)?;
+    let fd = std::fs::File::open(util::get_mountpoint(dir)?)?;
 
     let mut arg : fscrypt_get_key_status_arg = unsafe { mem::zeroed() };
     arg.key_spec.type_ = FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER;
