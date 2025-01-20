@@ -22,3 +22,9 @@ pub fn get_mountpoint(dir: &Path) -> Result<PathBuf> {
         current.pop();
     }
 }
+
+/// Check if a directory is empty
+pub(crate) fn dir_is_empty(dir: &Path) -> Result<bool> {
+    let empty = std::fs::read_dir(dir)?.next().is_none();
+    Ok(empty)
+}

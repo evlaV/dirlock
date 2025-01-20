@@ -1,9 +1,9 @@
 
-use anyhow::{anyhow, bail, ensure, Result};
+use anyhow::{bail, ensure, Result};
 use argh::FromArgs;
 use std::path::PathBuf;
 use fscrypt_rs::{fscrypt, config};
-use fscrypt_rs::protector::{Protector, PasswordProtector};
+use zeroize::Zeroizing;
 
 #[derive(FromArgs)]
 /// Disk encryption tool.
@@ -58,17 +58,8 @@ struct StatusArgs {
 }
 
 fn cmd_lock(args: &LockArgs) -> Result<()> {
-    let keyid = match fscrypt::get_policy(&args.dir)? {
-        Some(fscrypt::Policy::V2(p)) => p.master_key_identifier,
-        Some(_) => bail!("Unsupported policy version"),
-        None => bail!("{} is not encrypted", args.dir.display()),
-    };
-
-    let (status, _) = fscrypt::get_key_status(&args.dir, &keyid)?;
-    ensure!(status != fscrypt::KeyStatus::Absent,
-            "Directory {} is already locked", args.dir.display());
-
-    let flags = fscrypt::remove_key(&args.dir, &keyid, fscrypt::RemoveKeyUsers::CurrentUser)?;
+    let cfg = config::Config::new_from_file()?;
+    let flags = fscrypt_rs::lock_dir(&args.dir, &cfg)?;
 
     if flags.contains(fscrypt::RemovalStatusFlags::FilesBusy) {
         println!("Key removed, but some files are still busy");
@@ -82,73 +73,60 @@ fn cmd_lock(args: &LockArgs) -> Result<()> {
 }
 
 fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
-    let keyid = match fscrypt::get_policy(&args.dir)? {
-        Some(fscrypt::Policy::V2(p)) => p.master_key_identifier,
-        Some(_) => bail!("Directory {} is encrypted with an unsupported fscrypt policy", args.dir.display()),
-        None => bail!("Directory {} is not encrypted", args.dir.display()),
-    };
+    use fscrypt_rs::DirStatus::*;
 
-    let (status, _) = fscrypt::get_key_status(&args.dir, &keyid)?;
-    ensure!(status == fscrypt::KeyStatus::Absent,
-            "Directory {} is already unlocked", args.dir.display());
-
-    let cfg = config::Config::new_from_file()
-        .map_err(|e| anyhow!("Failed to read config: {e}"))?;
-    let Some(prot) = cfg.get_protector(&keyid) else {
-        bail!("No key found for directory {}", args.dir.display());
+    let cfg = config::Config::new_from_file()?;
+    match fscrypt_rs::get_encrypted_dir_data(&args.dir, &cfg)? {
+        Encrypted(d) if d.key_status == fscrypt::KeyStatus::Present =>
+            bail!("The directory {} is already unlocked", args.dir.display()),
+        Encrypted(_) => (),
+        x => bail!("{}", x),
     };
 
     eprint!("Enter encryption password: ");
-    let pass = rpassword::read_password()?;
+    let pass = Zeroizing::new(rpassword::read_password()?);
 
-    let key = prot.decrypt(pass.as_bytes());
-    let new_id = key.get_id();
-    ensure!(new_id == keyid, "Wrong password");
-
-    fscrypt::add_key(&args.dir, &key)?;
-
-    Ok(())
+    fscrypt_rs::unlock_dir(&args.dir, &pass, &cfg)
 }
 
 fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
-    if fscrypt::get_policy(&args.dir)?.is_some() {
-        bail!("Directory {} is already encrypted", args.dir.display());
-    }
-    let key = fscrypt::RawKey::new_random();
-    let keyid = fscrypt::add_key(&args.dir, &key)?;
-    fscrypt::set_policy(&args.dir, &keyid)?;
+    let mut cfg = config::Config::new_from_file()?;
+    match fscrypt_rs::get_encrypted_dir_data(&args.dir, &cfg)? {
+        fscrypt_rs::DirStatus::Unencrypted => (),
+        x => bail!("{}", x),
+    };
 
     eprint!("Enter encryption password: ");
-    let pass1 = rpassword::read_password()?;
+    let pass1 = Zeroizing::new(rpassword::read_password()?);
     eprint!("Repeat encryption password: ");
-    let pass2 = rpassword::read_password()?;
+    let pass2 = Zeroizing::new(rpassword::read_password()?);
     ensure!(pass1 == pass2, "Passwords don't match");
 
-    let prot = PasswordProtector::new(&key, pass1.as_bytes())?;
-
-    let mut cfg = config::Config::new_from_file()
-        .map_err(|e| anyhow!("Failed to read config: {e}"))?;
-    cfg.add_protector(&keyid, Protector::Password(prot));
-    cfg.save().map_err(|e| anyhow!("Failed to save config: {e}"))?;
+    let keyid = fscrypt_rs::encrypt_dir(&args.dir, &pass1, &mut cfg)?;
+    println!("{}", keyid);
 
     Ok(())
 }
 
 fn cmd_status(args: &StatusArgs) -> Result<()> {
-    let Some(policy) = fscrypt::get_policy(&args.dir)? else {
-        println!("Not encrypted");
-        return Ok(());
+    use fscrypt_rs::DirStatus::*;
+    use fscrypt::KeyStatus::*;
+
+    let cfg = config::Config::new_from_file()?;
+    let dir_data = match fscrypt_rs::get_encrypted_dir_data(&args.dir, &cfg)? {
+        Encrypted(d) => d,
+        x => {
+            println!("{x}");
+            return Ok(());
+        }
     };
 
-    match policy {
-        fscrypt::Policy::V1(_) => println!("Encrypted with policy v1"),
-        fscrypt::Policy::V2(p) => {
-            let (status, _) = fscrypt::get_key_status(&args.dir, &p.master_key_identifier)?;
-            println!("Encrypted with policy v2, key id {}", p.master_key_identifier);
-            println!("Key status: {:?}", status);
-        },
-        fscrypt::Policy::Unknown(_) => println!("Encrypted with an unknown policy"),
-    }
+    let locked = match dir_data.key_status {
+        Absent => "locked",
+        Present => "unlocked",
+        IncompletelyRemoved => "partially locked",
+    };
+    println!("Encrypted, {locked} (key id {})", dir_data.policy.master_key_identifier);
 
     Ok(())
 }

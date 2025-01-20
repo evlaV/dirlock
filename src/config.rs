@@ -1,5 +1,5 @@
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use std::io::Write;
@@ -30,9 +30,9 @@ impl Config {
     /// Load the configuration from file, or get an empty one if the file does not exist
     pub fn new_from_file() -> Result<Self> {
         let cfg : Config = match std::fs::OpenOptions::new().read(true).open(config_file_name()) {
-            Ok(f) => serde_json::from_reader(f)?,
+            Ok(f) => serde_json::from_reader(f).map_err(|e| anyhow!("Error parsing config file: {e}"))?,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Config::default(),
-            Err(e) => bail!("Error opening config file: {}", e.to_string()),
+            Err(e) => bail!("Error opening config file: {e}"),
         };
         Ok(cfg)
     }
@@ -55,6 +55,11 @@ impl Config {
         } else {
             None
         }
+    }
+
+    /// Check if there is a protector available for the given [`KeyIdentifier`]
+    pub fn has_protector(&self, policy: &KeyIdentifier) -> bool {
+        self.get_protector(policy).is_some()
     }
 
     /// Write the configuration to disk
