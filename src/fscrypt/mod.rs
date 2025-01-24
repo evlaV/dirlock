@@ -1,4 +1,6 @@
 
+mod linux;
+
 use anyhow::{bail, ensure, Result};
 use std::os::fd::AsRawFd;
 use nix::errno::Errno;
@@ -7,8 +9,11 @@ use rand::RngCore;
 use serde::{Serialize, Deserialize};
 use std::mem;
 use std::path::Path;
-use crate::linux::*;
+use linux::*;
 use crate::util;
+
+/// All our keys use the maximum length allowed by fscrypt
+pub(crate) const KEY_LEN: usize = FSCRYPT_MAX_KEY_SIZE;
 
 /// An 8-byte key descriptor for v1 fscrypt policies
 pub struct KeyDescriptor([u8; FSCRYPT_KEY_DESCRIPTOR_SIZE]);
@@ -61,12 +66,12 @@ impl From<KeyIdentifier> for String {
 
 /// A raw master encryption key. Meant to be loaded directly into the kernel.
 #[derive(PartialEq)]
-pub struct RawKey(pub [u8; FSCRYPT_MAX_KEY_SIZE]);
+pub struct RawKey(pub [u8; KEY_LEN]);
 
 impl Default for RawKey {
     /// Returns a key containing only zeroes.
     fn default() -> Self {
-        Self([0u8; FSCRYPT_MAX_KEY_SIZE])
+        Self([0u8; KEY_LEN])
     }
 }
 
@@ -245,7 +250,7 @@ pub struct fscrypt_add_key_arg_full {
     raw_size: u32,
     key_id: u32,
     __reserved: [u32; 8],
-    raw: [u8; FSCRYPT_MAX_KEY_SIZE]
+    raw: [u8; KEY_LEN]
 }
 
 impl Drop for fscrypt_add_key_arg_full {

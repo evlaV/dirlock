@@ -5,9 +5,7 @@ use pbkdf2::pbkdf2_hmac;
 use rand::RngCore;
 use serde::{Serialize, Deserialize};
 use base64::prelude::*;
-use crate::fscrypt::RawKey;
-
-const KEY_LEN : usize = crate::linux::FSCRYPT_MAX_KEY_SIZE;
+use crate::fscrypt::{RawKey, KEY_LEN};
 
 /// A byte array containing a wrapped key, used internally by a [`Protector`].
 #[derive(Serialize, Deserialize, Clone)]
