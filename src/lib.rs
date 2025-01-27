@@ -7,7 +7,7 @@ mod util;
 use anyhow::{anyhow, bail, Result};
 use config::Config;
 use fscrypt::{KeyIdentifier, RemovalStatusFlags};
-use protector::{Protector, PasswordProtector};
+use protector::{Protector, PasswordProtector, WrappedPolicyKey};
 use std::path::Path;
 
 pub enum DirStatus {
@@ -50,7 +50,7 @@ pub fn get_encrypted_dir_data(path: &Path, cfg: &Config) -> Result<DirStatus> {
         _    => return Ok(DirStatus::Unsupported),
     };
 
-    if ! cfg.has_protector(&policy.master_key_identifier) {
+    if cfg.get_protectors_for_policy(&policy.master_key_identifier).is_empty() {
         return Ok(DirStatus::KeyMissing);
     };
 
@@ -82,14 +82,18 @@ pub fn auth_user(user: &str, password: &str, cfg: &Config) -> Result<bool> {
         x => bail!("{}", x),
     };
 
-    // TODO: At this point we should already know that we have a key
-    // Maybe store it in the dir data?
-    let Some(prot) = cfg.get_protector(&dir_data.policy.master_key_identifier) else {
-        bail!("Unable to find a key to decrypt directory {}", homedir.display());
-    };
+    let protectors = cfg.get_protectors_for_policy(&dir_data.policy.master_key_identifier);
+    if protectors.is_empty() {
+        bail!("Unable to find a key to authenticate user {user}");
+    }
 
-    let master_key = prot.decrypt(password.as_bytes());
-    Ok(dir_data.policy.master_key_identifier == master_key.get_id())
+    for (_, prot, policykey) in protectors {
+        if prot.decrypt(policykey, password).is_some() {
+            return Ok(true)
+        }
+    }
+
+    Ok(false)
 }
 
 /// Unlocks a directory with the given password
@@ -103,22 +107,21 @@ pub fn unlock_dir(path: &Path, password: &str, cfg: &Config) -> Result<()> {
         bail!("The directory {} is already unlocked", path.display());
     }
 
-    // TODO: At this point we should already know that we have a key
-    // Maybe store it in the dir data?
-    let Some(prot) = cfg.get_protector(&dir_data.policy.master_key_identifier) else {
+    let protectors = cfg.get_protectors_for_policy(&dir_data.policy.master_key_identifier);
+    if protectors.is_empty() {
         bail!("Unable to find a key to decrypt directory {}", path.display());
-    };
-
-    let master_key = prot.decrypt(password.as_bytes());
-    if dir_data.policy.master_key_identifier != master_key.get_id() {
-        bail!("Unable to decrypt master key: wrong password?");
     }
 
-    if let Err(e) = fscrypt::add_key(path, &master_key) {
-        bail!("Unable to unlock directory with master key: {}", e);
+    for (_, prot, policykey) in protectors {
+        if let Some(master_key) = prot.decrypt(policykey, password) {
+            if let Err(e) = fscrypt::add_key(path, &master_key) {
+                bail!("Unable to unlock directory with master key: {}", e);
+            }
+            return Ok(());
+        }
     }
 
-    Ok(())
+    Err(anyhow!("Unable to decrypt master key: wrong password?"))
 }
 
 
@@ -150,6 +153,7 @@ pub fn encrypt_dir(path: &Path, password: &str, cfg: &mut Config) -> Result<KeyI
         bail!("Cannot encrypt a non-empty directory");
     }
 
+    // Generate a master key and encrypt the directory with it
     let master_key = fscrypt::RawKey::new_random();
     let keyid = fscrypt::add_key(path, &master_key)?;
     if let Err(e) = fscrypt::set_policy(path, &keyid) {
@@ -158,8 +162,17 @@ pub fn encrypt_dir(path: &Path, password: &str, cfg: &mut Config) -> Result<KeyI
         bail!("Failed to encrypt directory: {e}");
     }
 
-    let prot = PasswordProtector::new(&master_key, password.as_bytes())?;
-    cfg.add_protector(&keyid, Protector::Password(prot));
+    // Generate a protector key and use it to wrap the master key
+    let protector_key = protector::ProtectorKey::new_random();
+    let protector_id = protector_key.get_id();
+    let policy = WrappedPolicyKey::new(master_key, &protector_key)?;
+
+    // Wrap the protector key with a password
+    let protector = PasswordProtector::new(protector_key, password)?;
+
+    // Store the new protector and policy in the configuration
+    cfg.add_protector(protector_id.clone(), Protector::Password(protector))?;
+    cfg.add_policy(keyid.clone(), protector_id, policy)?;
     // FIXME: At this point the directory is encrypted and we don't have a key
     cfg.save().map_err(|e| anyhow!("Failed to save config: {e}"))?;
     Ok(keyid)

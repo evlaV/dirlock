@@ -1,10 +1,10 @@
 
 use anyhow::{anyhow, bail, Result};
 use serde::{Serialize, Deserialize};
-use std::collections::HashMap;
+use std::collections::{hash_map, HashMap};
 use std::io::Write;
 use std::sync::OnceLock;
-use crate::protector::Protector;
+use crate::protector::{Protector, ProtectorId, WrappedPolicyKey};
 use crate::fscrypt::KeyIdentifier;
 
 // If this variable is set use this config file instead of the default one
@@ -23,7 +23,8 @@ fn config_file_name() -> &'static str {
 /// Main configuration of the app
 #[derive(Serialize, Deserialize, Default)]
 pub struct Config {
-    keys: HashMap<KeyIdentifier, Vec<Protector>>
+    protectors: HashMap<ProtectorId, Protector>,
+    policies: HashMap<KeyIdentifier, HashMap<ProtectorId, WrappedPolicyKey>>,
 }
 
 impl Config {
@@ -37,29 +38,46 @@ impl Config {
         Ok(cfg)
     }
 
-    /// Add a protector for the given [`KeyIdentifier`]
-    pub fn add_protector(&mut self, policy: &KeyIdentifier, prot: Protector) {
-        if let Some(protlist) = self.keys.get_mut(policy) {
-            protlist.push(prot);
-        } else {
-            let protlist = vec![prot];
-            self.keys.insert(policy.clone(), protlist);
+    /// Add a (wrapped) policy key together with the ID of the protector used to unwrap it
+    pub fn add_policy(&mut self, policy_id: KeyIdentifier, protector_id: ProtectorId, policy: WrappedPolicyKey) -> Result<()> {
+        if ! self.protectors.contains_key(&protector_id) {
+            bail!("No available policy for that protector");
         }
+        if let Some(policy_map) = self.policies.get_mut(&policy_id) {
+            let hash_map::Entry::Vacant(e) = policy_map.entry(protector_id) else {
+                bail!("Trying to add a duplicate protector for a policy");
+            };
+            e.insert(policy);
+        } else {
+            let policy_map = HashMap::from([(protector_id, policy)]);
+            self.policies.insert(policy_id, policy_map);
+        }
+        Ok(())
     }
 
-    /// Get the protector for the given [`KeyIdentifier`]
-    /// TODO: this currently returns the first protector only
-    pub fn get_protector(&self, policy: &KeyIdentifier) -> Option<&Protector> {
-        if let Some(protlist) = self.keys.get(policy) {
-            protlist.first()
-        } else {
-            None
-        }
+    /// Add a protector to the configuration
+    pub fn add_protector(&mut self, id: ProtectorId, prot: Protector) -> Result<()> {
+        let hash_map::Entry::Vacant(e) = self.protectors.entry(id) else {
+            bail!("Trying to overwrite an existing protector");
+        };
+        e.insert(prot);
+        Ok(())
     }
 
-    /// Check if there is a protector available for the given [`KeyIdentifier`]
-    pub fn has_protector(&self, policy: &KeyIdentifier) -> bool {
-        self.get_protector(policy).is_some()
+    /// Get all protectors that can be used to unlock the policy key identified by `id`
+    pub fn get_protectors_for_policy(&self, id: &KeyIdentifier) -> Vec<(&ProtectorId, &Protector, &WrappedPolicyKey)> {
+        let mut result = vec![];
+        if let Some(policies) = self.policies.get(id) {
+            for (protid, policy) in policies {
+                // TODO if this fails it means that there's a policy
+                // wrapped with a protector but the protector is
+                // missing. We should report this.
+                if let Some(prot) = self.protectors.get(protid) {
+                    result.push((protid, prot, policy));
+                }
+            }
+        }
+        result
     }
 
     /// Write the configuration to disk

@@ -7,6 +7,7 @@ use nix::errno::Errno;
 use num_enum::{FromPrimitive, TryFromPrimitive};
 use rand::RngCore;
 use serde::{Serialize, Deserialize};
+use serde_with::{serde_as, hex::Hex};
 use std::mem;
 use std::path::Path;
 use linux::*;
@@ -27,9 +28,12 @@ impl std::fmt::Display for KeyDescriptor {
 
 
 /// A 16-byte key identifier for v2 fscrypt policies
+#[serde_as]
 #[derive(Default, PartialEq, Hash, Eq, Serialize, Deserialize, Clone)]
-#[serde(try_from = "String", into = "String")]
-pub struct KeyIdentifier([u8; FSCRYPT_KEY_IDENTIFIER_SIZE]);
+pub struct KeyIdentifier(
+    #[serde_as(as = "Hex")]
+    [u8; FSCRYPT_KEY_IDENTIFIER_SIZE]
+);
 
 impl std::fmt::Display for KeyIdentifier {
     /// Display a key identifier in hex format
@@ -45,21 +49,6 @@ impl TryFrom<&str> for KeyIdentifier {
         let mut ret = KeyIdentifier::default();
         hex::decode_to_slice(s, &mut ret.0)?;
         Ok(ret)
-    }
-}
-
-impl TryFrom<String> for KeyIdentifier {
-    type Error = anyhow::Error;
-    /// Create a key identifier from an hex string
-    fn try_from(s: String) -> Result<Self> {
-        Self::try_from(s.as_str())
-    }
-}
-
-impl From<KeyIdentifier> for String {
-    /// Convert a key identifier into an hex string
-    fn from(k: KeyIdentifier) -> String {
-        hex::encode(k.0)
     }
 }
 
