@@ -17,30 +17,18 @@ use crate::util;
 pub(crate) const POLICY_KEY_LEN: usize = FSCRYPT_MAX_KEY_SIZE;
 
 /// An 8-byte key descriptor for v1 fscrypt policies
+#[derive(derive_more::Display)]
+#[display("{}", hex::encode(_0))]
 pub struct PolicyKeyDescriptor([u8; FSCRYPT_KEY_DESCRIPTOR_SIZE]);
-
-impl std::fmt::Display for PolicyKeyDescriptor {
-    /// Display a PolicyKeyDescriptor in hex format
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", hex::encode(self.0))
-    }
-}
-
 
 /// A 16-byte key identifier for v2 fscrypt policies
 #[serde_as]
-#[derive(Default, PartialEq, Hash, Eq, Serialize, Deserialize, Clone)]
+#[derive(Default, PartialEq, Hash, Eq, Serialize, Deserialize, Clone, derive_more::Display)]
+#[display("{}", hex::encode(_0))]
 pub struct PolicyKeyId(
     #[serde_as(as = "Hex")]
     [u8; FSCRYPT_KEY_IDENTIFIER_SIZE]
 );
-
-impl std::fmt::Display for PolicyKeyId {
-    /// Display a key identifier in hex format
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", hex::encode(self.0))
-    }
-}
 
 impl TryFrom<&str> for PolicyKeyId {
     type Error = anyhow::Error;

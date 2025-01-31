@@ -62,18 +62,12 @@ impl ProtectorKey {
 }
 
 #[serde_as]
-#[derive(Eq, PartialEq, Clone, Hash, Default, Serialize, Deserialize)]
+#[derive(Eq, PartialEq, Clone, Hash, Default, Serialize, Deserialize, derive_more::Display)]
+#[display("{}", hex::encode(_0))]
 pub struct ProtectorId(
     #[serde_as(as = "Hex")]
     [u8; PROTECTOR_ID_LEN]
 );
-
-impl std::fmt::Display for ProtectorId {
-    /// Display a protector ID in hex format
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", hex::encode(self.0))
-    }
-}
 
 #[serde_as]
 #[derive(Default, Serialize, Deserialize)]
