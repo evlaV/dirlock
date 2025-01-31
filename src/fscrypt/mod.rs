@@ -14,7 +14,7 @@ use linux::*;
 use crate::util;
 
 /// All our keys use the maximum length allowed by fscrypt
-pub(crate) const KEY_LEN: usize = FSCRYPT_MAX_KEY_SIZE;
+pub(crate) const POLICY_KEY_LEN: usize = FSCRYPT_MAX_KEY_SIZE;
 
 /// An 8-byte key descriptor for v1 fscrypt policies
 pub struct PolicyKeyDescriptor([u8; FSCRYPT_KEY_DESCRIPTOR_SIZE]);
@@ -55,12 +55,12 @@ impl TryFrom<&str> for PolicyKeyId {
 
 /// A raw master encryption key. Meant to be loaded directly into the kernel.
 #[derive(PartialEq)]
-pub struct RawKey(pub [u8; KEY_LEN]);
+pub struct RawKey(pub [u8; POLICY_KEY_LEN]);
 
 impl Default for RawKey {
     /// Returns a key containing only zeroes.
     fn default() -> Self {
-        Self([0u8; KEY_LEN])
+        Self([0u8; POLICY_KEY_LEN])
     }
 }
 
@@ -239,7 +239,7 @@ pub struct fscrypt_add_key_arg_full {
     raw_size: u32,
     key_id: u32,
     __reserved: [u32; 8],
-    raw: [u8; KEY_LEN]
+    raw: [u8; POLICY_KEY_LEN]
 }
 
 impl Drop for fscrypt_add_key_arg_full {

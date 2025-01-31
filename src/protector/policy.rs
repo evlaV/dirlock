@@ -5,7 +5,10 @@ use serde::{Serialize, Deserialize};
 use serde_with::{serde_as, base64::Base64};
 
 use crate::{
-    fscrypt::RawKey,
+    fscrypt::{
+        POLICY_KEY_LEN,
+        RawKey,
+    },
     protector::{
         AesIv,
         Hmac,
@@ -19,7 +22,7 @@ use crate::{
 #[derive(Serialize, Deserialize)]
 pub struct WrappedPolicyKey {
     #[serde_as(as = "Base64")]
-    wrapped_key: [u8; 64],
+    wrapped_key: [u8; POLICY_KEY_LEN],
     iv: AesIv,
     hmac: Hmac,
 }
