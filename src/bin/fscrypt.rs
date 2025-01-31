@@ -126,7 +126,7 @@ fn cmd_status(args: &StatusArgs) -> Result<()> {
         Present => "unlocked",
         IncompletelyRemoved => "partially locked",
     };
-    println!("Encrypted, {locked} (key id {})", dir_data.policy.master_key_identifier);
+    println!("Encrypted, {locked} (key id {})", dir_data.policy.keyid);
 
     Ok(())
 }

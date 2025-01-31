@@ -17,10 +17,10 @@ use crate::util;
 pub(crate) const KEY_LEN: usize = FSCRYPT_MAX_KEY_SIZE;
 
 /// An 8-byte key descriptor for v1 fscrypt policies
-pub struct KeyDescriptor([u8; FSCRYPT_KEY_DESCRIPTOR_SIZE]);
+pub struct PolicyKeyDescriptor([u8; FSCRYPT_KEY_DESCRIPTOR_SIZE]);
 
-impl std::fmt::Display for KeyDescriptor {
-    /// Display a KeyDescriptor in hex format
+impl std::fmt::Display for PolicyKeyDescriptor {
+    /// Display a PolicyKeyDescriptor in hex format
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{}", hex::encode(self.0))
     }
@@ -30,23 +30,23 @@ impl std::fmt::Display for KeyDescriptor {
 /// A 16-byte key identifier for v2 fscrypt policies
 #[serde_as]
 #[derive(Default, PartialEq, Hash, Eq, Serialize, Deserialize, Clone)]
-pub struct KeyIdentifier(
+pub struct PolicyKeyId(
     #[serde_as(as = "Hex")]
     [u8; FSCRYPT_KEY_IDENTIFIER_SIZE]
 );
 
-impl std::fmt::Display for KeyIdentifier {
+impl std::fmt::Display for PolicyKeyId {
     /// Display a key identifier in hex format
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "{}", hex::encode(self.0))
     }
 }
 
-impl TryFrom<&str> for KeyIdentifier {
+impl TryFrom<&str> for PolicyKeyId {
     type Error = anyhow::Error;
     /// Create a key identifier from an hex string
     fn try_from(s: &str) -> Result<Self> {
-        let mut ret = KeyIdentifier::default();
+        let mut ret = PolicyKeyId::default();
         hex::decode_to_slice(s, &mut ret.0)?;
         Ok(ret)
     }
@@ -92,10 +92,10 @@ impl RawKey {
     ///
     /// The key ID is calculated using unsalted HKDF-SHA512:
     /// <https://github.com/google/fscrypt/blob/v0.3.5/crypto/crypto.go#L183>
-    pub fn get_id(&self) -> KeyIdentifier {
+    pub fn get_id(&self) -> PolicyKeyId {
         let info = b"fscrypt\x00\x01";
         let hkdf = hkdf::Hkdf::<sha2::Sha512>::new(None, &self.0);
-        let mut result = KeyIdentifier::default();
+        let mut result = PolicyKeyId::default();
         hkdf.expand(info, &mut result.0).unwrap();
         result
     }
@@ -109,26 +109,26 @@ pub enum Policy {
 }
 
 pub struct PolicyV1 {
-    pub contents_encryption_mode : EncryptionMode,
-    pub filenames_encryption_mode : EncryptionMode,
-    pub flags : PolicyFlags,
-    pub master_key_descriptor : KeyDescriptor
+    pub contents_mode: EncryptionMode,
+    pub filenames_mode: EncryptionMode,
+    pub flags: PolicyFlags,
+    pub keyid: PolicyKeyDescriptor
 }
 
 pub struct PolicyV2 {
-    pub contents_encryption_mode : EncryptionMode,
-    pub filenames_encryption_mode : EncryptionMode,
-    pub flags : PolicyFlags,
-    pub master_key_identifier : KeyIdentifier
+    pub contents_mode: EncryptionMode,
+    pub filenames_mode: EncryptionMode,
+    pub flags: PolicyFlags,
+    pub keyid: PolicyKeyId
 }
 
 impl From<&fscrypt_policy_v1> for PolicyV1 {
     fn from(p: &fscrypt_policy_v1) -> Self {
         Self {
-            contents_encryption_mode: p.contents_encryption_mode.into(),
-            filenames_encryption_mode: p.filenames_encryption_mode.into(),
+            contents_mode: p.contents_encryption_mode.into(),
+            filenames_mode: p.filenames_encryption_mode.into(),
             flags: p.flags.into(),
-            master_key_descriptor: KeyDescriptor(p.master_key_descriptor),
+            keyid: PolicyKeyDescriptor(p.master_key_descriptor),
         }
     }
 }
@@ -136,10 +136,10 @@ impl From<&fscrypt_policy_v1> for PolicyV1 {
 impl From<&fscrypt_policy_v2> for PolicyV2 {
     fn from(p: &fscrypt_policy_v2) -> Self {
         Self {
-            contents_encryption_mode: p.contents_encryption_mode.into(),
-            filenames_encryption_mode: p.filenames_encryption_mode.into(),
+            contents_mode: p.contents_encryption_mode.into(),
+            filenames_mode: p.filenames_encryption_mode.into(),
             flags: p.flags.into(),
-            master_key_identifier: KeyIdentifier(p.master_key_identifier),
+            keyid: PolicyKeyId(p.master_key_identifier),
         }
     }
 }
@@ -257,7 +257,7 @@ nix::ioctl_readwrite!(fscrypt_remove_key, b'f', 24, fscrypt_remove_key_arg);
 nix::ioctl_readwrite!(fscrypt_remove_key_all_users, b'f', 25, fscrypt_remove_key_arg);
 nix::ioctl_readwrite!(fscrypt_get_key_status, b'f', 26, fscrypt_get_key_status_arg);
 
-pub fn add_key(dir: &Path, key: &RawKey) -> Result<KeyIdentifier> {
+pub fn add_key(dir: &Path, key: &RawKey) -> Result<PolicyKeyId> {
     let fd = std::fs::File::open(util::get_mountpoint(dir)?)?;
 
     let mut arg : fscrypt_add_key_arg_full = unsafe { mem::zeroed() };
@@ -270,11 +270,11 @@ pub fn add_key(dir: &Path, key: &RawKey) -> Result<KeyIdentifier> {
     let argptr = std::ptr::addr_of_mut!(arg) as *mut fscrypt_add_key_arg;
     match unsafe { fscrypt_add_key(raw_fd, argptr) } {
         Err(x) => Err(x.into()),
-        _ => Ok(KeyIdentifier(unsafe { arg.key_spec.u.identifier }))
+        _ => Ok(PolicyKeyId(unsafe { arg.key_spec.u.identifier }))
     }
 }
 
-pub fn remove_key(dir: &Path, keyid: &KeyIdentifier, users: RemoveKeyUsers) -> Result<RemovalStatusFlags> {
+pub fn remove_key(dir: &Path, keyid: &PolicyKeyId, users: RemoveKeyUsers) -> Result<RemovalStatusFlags> {
     let fd = std::fs::File::open(util::get_mountpoint(dir)?)?;
 
     let mut arg : fscrypt_remove_key_arg = unsafe { mem::zeroed() };
@@ -308,7 +308,7 @@ pub fn get_policy(dir: &Path) -> Result<Option<Policy>> {
     }
 }
 
-pub fn set_policy(dir: &Path, keyid: &KeyIdentifier) -> Result<()> {
+pub fn set_policy(dir: &Path, keyid: &PolicyKeyId) -> Result<()> {
     let fd = std::fs::File::open(dir)?;
 
     let mut arg = fscrypt_policy_v2 {
@@ -328,7 +328,7 @@ pub fn set_policy(dir: &Path, keyid: &KeyIdentifier) -> Result<()> {
     }
 }
 
-pub fn get_key_status(dir: &Path, keyid: &KeyIdentifier) -> Result<(KeyStatus, KeyStatusFlags)> {
+pub fn get_key_status(dir: &Path, keyid: &PolicyKeyId) -> Result<(KeyStatus, KeyStatusFlags)> {
     let fd = std::fs::File::open(util::get_mountpoint(dir)?)?;
 
     let mut arg : fscrypt_get_key_status_arg = unsafe { mem::zeroed() };
@@ -389,7 +389,7 @@ mod tests {
             // Encrypt the directory and check the new status
             set_policy(workdir.as_ref(), &id)?;
             match get_policy(workdir.as_ref())? {
-                Some(Policy::V2(x)) if x.master_key_identifier == id => (),
+                Some(Policy::V2(x)) if x.keyid == id => (),
                 _ => panic!("Could not find the expected policy")
             };
 
@@ -400,7 +400,7 @@ mod tests {
 
             // Check again that the directory is still encrypted
             match get_policy(workdir.as_ref())? {
-                Some(Policy::V2(x)) if x.master_key_identifier == id => (),
+                Some(Policy::V2(x)) if x.keyid == id => (),
                 _ => panic!("Could not find the expected policy")
             };
         };

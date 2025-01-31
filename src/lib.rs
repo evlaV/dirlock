@@ -6,7 +6,7 @@ mod util;
 
 use anyhow::{anyhow, bail, Result};
 use config::Config;
-use fscrypt::{KeyIdentifier, RemovalStatusFlags};
+use fscrypt::{PolicyKeyId, RemovalStatusFlags};
 use protector::{Protector, PasswordProtector, WrappedPolicyKey};
 use std::path::Path;
 
@@ -50,11 +50,11 @@ pub fn get_encrypted_dir_data(path: &Path, cfg: &Config) -> Result<DirStatus> {
         _    => return Ok(DirStatus::Unsupported),
     };
 
-    if cfg.get_protectors_for_policy(&policy.master_key_identifier).is_empty() {
+    if cfg.get_protectors_for_policy(&policy.keyid).is_empty() {
         return Ok(DirStatus::KeyMissing);
     };
 
-    let (key_status, _key_flags) = fscrypt::get_key_status(path, &policy.master_key_identifier)
+    let (key_status, _key_flags) = fscrypt::get_key_status(path, &policy.keyid)
         .map_err(|e| anyhow!("Failed to get key status: {e}"))?;
 
     Ok(DirStatus::Encrypted(EncryptedDirData { policy, key_status, _key_flags }))
@@ -82,7 +82,7 @@ pub fn auth_user(user: &str, password: &str, cfg: &Config) -> Result<bool> {
         x => bail!("{}", x),
     };
 
-    let protectors = cfg.get_protectors_for_policy(&dir_data.policy.master_key_identifier);
+    let protectors = cfg.get_protectors_for_policy(&dir_data.policy.keyid);
     if protectors.is_empty() {
         bail!("Unable to find a key to authenticate user {user}");
     }
@@ -107,7 +107,7 @@ pub fn unlock_dir(path: &Path, password: &str, cfg: &Config) -> Result<()> {
         bail!("The directory {} is already unlocked", path.display());
     }
 
-    let protectors = cfg.get_protectors_for_policy(&dir_data.policy.master_key_identifier);
+    let protectors = cfg.get_protectors_for_policy(&dir_data.policy.keyid);
     if protectors.is_empty() {
         bail!("Unable to find a key to decrypt directory {}", path.display());
     }
@@ -137,13 +137,13 @@ pub fn lock_dir(path: &Path, cfg: &Config) -> Result<RemovalStatusFlags> {
     }
 
     let user = fscrypt::RemoveKeyUsers::CurrentUser;
-    fscrypt::remove_key(path, &dir_data.policy.master_key_identifier, user)
+    fscrypt::remove_key(path, &dir_data.policy.keyid, user)
         .map_err(|e|anyhow!("Unable to lock directory: {e}"))
 }
 
 
 /// Encrypts a directory
-pub fn encrypt_dir(path: &Path, password: &str, cfg: &mut Config) -> Result<KeyIdentifier> {
+pub fn encrypt_dir(path: &Path, password: &str, cfg: &mut Config) -> Result<PolicyKeyId> {
     match get_encrypted_dir_data(path, cfg)? {
         DirStatus::Unencrypted => (),
         x => bail!("{}", x),

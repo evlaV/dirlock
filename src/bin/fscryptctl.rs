@@ -94,8 +94,8 @@ fn get_mountpoint(dir: &Path) -> Result<std::path::PathBuf> {
 fn cmd_get_policy(args: &GetPolicyArgs) -> Result<()> {
     match fscrypt::get_policy(&args.dir)? {
         None => println!("Directory not encrypted"),
-        Some(fscrypt::Policy::V1(p)) => println!("Policy v1, key id: {}", p.master_key_descriptor),
-        Some(fscrypt::Policy::V2(p)) => println!("Policy v2, key id: {}", p.master_key_identifier),
+        Some(fscrypt::Policy::V1(p)) => println!("Policy v1, key id: {}", p.keyid),
+        Some(fscrypt::Policy::V2(p)) => println!("Policy v2, key id: {}", p.keyid),
         Some(fscrypt::Policy::Unknown(v)) => println!("Encrypted with unknown policy ({v})"),
     };
 
@@ -103,14 +103,14 @@ fn cmd_get_policy(args: &GetPolicyArgs) -> Result<()> {
 }
 
 fn cmd_set_policy(args: &SetPolicyArgs) -> Result<()> {
-    let keyid = fscrypt::KeyIdentifier::try_from(args.keyid.as_str())?;
+    let keyid = fscrypt::PolicyKeyId::try_from(args.keyid.as_str())?;
     fscrypt::set_policy(&args.dir, &keyid)?;
     println!("Set policy {} in directory {}", args.keyid, &args.dir.display());
     Ok(())
 }
 
 fn cmd_key_status(args: &KeyStatusArgs) -> Result<()> {
-    let keyid = fscrypt::KeyIdentifier::try_from(args.keyid.as_str())?;
+    let keyid = fscrypt::PolicyKeyId::try_from(args.keyid.as_str())?;
     let mnt = get_mountpoint(&args.mountpoint)?;
     let (status, flags) = fscrypt::get_key_status(&mnt, &keyid)?;
     println!("Got status of key {} in directory {}: {:?}", &args.keyid, mnt.display(), status);
@@ -130,7 +130,7 @@ fn cmd_add_key(args: &AddKeyArgs) -> Result<()> {
 }
 
 fn cmd_remove_key(args: &RemoveKeyArgs) -> Result<()> {
-    let keyid = fscrypt::KeyIdentifier::try_from(args.keyid.as_str())?;
+    let keyid = fscrypt::PolicyKeyId::try_from(args.keyid.as_str())?;
     fscrypt::remove_key(&args.mountpoint, &keyid, fscrypt::RemoveKeyUsers::CurrentUser)?;
     println!("Removed key {} from directory {}", &args.keyid, args.mountpoint.display());
     Ok(())

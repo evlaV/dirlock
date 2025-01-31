@@ -5,7 +5,7 @@ use std::collections::{hash_map, HashMap};
 use std::io::Write;
 use std::sync::OnceLock;
 use crate::protector::{Protector, ProtectorId, WrappedPolicyKey};
-use crate::fscrypt::KeyIdentifier;
+use crate::fscrypt::PolicyKeyId;
 
 // If this variable is set use this config file instead of the default one
 const CONFIG_FILE_ENV_VAR : &str = "FSCRYPT_RS_CONFIG";
@@ -24,7 +24,7 @@ fn config_file_name() -> &'static str {
 #[derive(Serialize, Deserialize, Default)]
 pub struct Config {
     protectors: HashMap<ProtectorId, Protector>,
-    policies: HashMap<KeyIdentifier, HashMap<ProtectorId, WrappedPolicyKey>>,
+    policies: HashMap<PolicyKeyId, HashMap<ProtectorId, WrappedPolicyKey>>,
 }
 
 impl Config {
@@ -39,7 +39,7 @@ impl Config {
     }
 
     /// Add a (wrapped) policy key together with the ID of the protector used to unwrap it
-    pub fn add_policy(&mut self, policy_id: KeyIdentifier, protector_id: ProtectorId, policy: WrappedPolicyKey) -> Result<()> {
+    pub fn add_policy(&mut self, policy_id: PolicyKeyId, protector_id: ProtectorId, policy: WrappedPolicyKey) -> Result<()> {
         if ! self.protectors.contains_key(&protector_id) {
             bail!("No available policy for that protector");
         }
@@ -65,7 +65,7 @@ impl Config {
     }
 
     /// Get all protectors that can be used to unlock the policy key identified by `id`
-    pub fn get_protectors_for_policy(&self, id: &KeyIdentifier) -> Vec<(&ProtectorId, &Protector, &WrappedPolicyKey)> {
+    pub fn get_protectors_for_policy(&self, id: &PolicyKeyId) -> Vec<(&ProtectorId, &Protector, &WrappedPolicyKey)> {
         let mut result = vec![];
         if let Some(policies) = self.policies.get(id) {
             for (protid, policy) in policies {
