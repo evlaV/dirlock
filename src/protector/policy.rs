@@ -7,7 +7,7 @@ use serde_with::{serde_as, base64::Base64};
 use crate::{
     fscrypt::{
         POLICY_KEY_LEN,
-        RawKey,
+        PolicyKey,
     },
     protector::{
         AesIv,
@@ -28,8 +28,8 @@ pub struct WrappedPolicyKey {
 }
 
 impl WrappedPolicyKey {
-    /// Creates a new [`WrappedPolicyKey`] that wraps a [`RawKey`] with a [`ProtectorKey`]
-    pub fn new(raw_key: RawKey, protector_key: &ProtectorKey) -> Result<Self> {
+    /// Creates a new [`WrappedPolicyKey`] that wraps a [`PolicyKey`] with a [`ProtectorKey`]
+    pub fn new(raw_key: PolicyKey, protector_key: &ProtectorKey) -> Result<Self> {
         let mut rng = rand::thread_rng();
         let mut prot = WrappedPolicyKey {
             wrapped_key: raw_key.0,
@@ -41,9 +41,9 @@ impl WrappedPolicyKey {
         Ok(prot)
     }
 
-    /// Unwraps a [`RawKey`] with a [`ProtectorKey`]
-    pub fn decrypt(&self, protector_key: ProtectorKey) -> Option<RawKey> {
-        let mut raw_key = RawKey(self.wrapped_key);
+    /// Unwraps a [`PolicyKey`] with a [`ProtectorKey`]
+    pub fn decrypt(&self, protector_key: ProtectorKey) -> Option<PolicyKey> {
+        let mut raw_key = PolicyKey(self.wrapped_key);
         if aes_dec(&protector_key, &self.iv, &self.hmac, &mut raw_key.0) {
             Some(raw_key)
         } else {

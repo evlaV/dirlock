@@ -55,34 +55,34 @@ impl TryFrom<&str> for PolicyKeyId {
 
 /// A raw master encryption key. Meant to be loaded directly into the kernel.
 #[derive(PartialEq)]
-pub struct RawKey(pub [u8; POLICY_KEY_LEN]);
+pub struct PolicyKey(pub [u8; POLICY_KEY_LEN]);
 
-impl Default for RawKey {
+impl Default for PolicyKey {
     /// Returns a key containing only zeroes.
     fn default() -> Self {
         Self([0u8; POLICY_KEY_LEN])
     }
 }
 
-impl Drop for RawKey {
+impl Drop for PolicyKey {
     /// Wipes the key safely from memory on drop.
     fn drop(&mut self) {
         unsafe { zeroize::zeroize_flat_type(self) }
     }
 }
 
-impl RawKey {
+impl PolicyKey {
     /// Generates a new, random key
     pub fn new_random() -> Self {
         let mut rng = rand::thread_rng();
-        let mut key = RawKey::default();
+        let mut key = PolicyKey::default();
         rng.try_fill_bytes(&mut key.0).unwrap();
         key
     }
 
     /// Generates a new key, reading the data from a given source
     pub fn new_from_reader(r: &mut impl std::io::Read) -> Result<Self> {
-        let mut key = RawKey::default();
+        let mut key = PolicyKey::default();
         let len = r.read(&mut key.0)?;
         ensure!(len == key.0.len(), "Expected {} bytes when reading key, got {len}", key.0.len());
         Ok(key)
@@ -257,7 +257,7 @@ nix::ioctl_readwrite!(fscrypt_remove_key, b'f', 24, fscrypt_remove_key_arg);
 nix::ioctl_readwrite!(fscrypt_remove_key_all_users, b'f', 25, fscrypt_remove_key_arg);
 nix::ioctl_readwrite!(fscrypt_get_key_status, b'f', 26, fscrypt_get_key_status_arg);
 
-pub fn add_key(dir: &Path, key: &RawKey) -> Result<PolicyKeyId> {
+pub fn add_key(dir: &Path, key: &PolicyKey) -> Result<PolicyKeyId> {
     let fd = std::fs::File::open(util::get_mountpoint(dir)?)?;
 
     let mut arg : fscrypt_add_key_arg_full = unsafe { mem::zeroed() };
@@ -372,7 +372,7 @@ mod tests {
             };
 
             // Generate a random key and calculate its expected ID
-            let key = RawKey::new_random();
+            let key = PolicyKey::new_random();
             let id = key.get_id();
 
             // Check that the key is absent from the filesystem
@@ -413,7 +413,7 @@ mod tests {
         let mntpoint = std::path::Path::new("/tmp");
         let workdir = tempdir::TempDir::new_in(&mntpoint, "encrypted")?;
 
-        let key = RawKey::new_random();
+        let key = PolicyKey::new_random();
         let id = key.get_id();
 
         assert!(add_key(&mntpoint, &key).is_err());

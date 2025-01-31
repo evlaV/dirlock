@@ -8,7 +8,7 @@ use serde_with::{serde_as, hex::Hex, base64::Base64};
 use sha2::{Digest, Sha256, Sha512};
 use zeroize;
 
-use crate::fscrypt::RawKey;
+use crate::fscrypt::PolicyKey;
 
 pub use password::PasswordProtector as PasswordProtector;
 pub use policy::WrappedPolicyKey as WrappedPolicyKey;
@@ -21,7 +21,7 @@ const AES_IV_LEN: usize = 16;
 const HMAC_LEN: usize = 32;
 const SALT_LEN: usize = 32;
 
-/// A raw encryption key used to unwrap the master [`RawKey`]
+/// A raw encryption key used to unwrap the master [`PolicyKey`]
 /// used by fscrypt.
 #[derive(Default)]
 pub struct ProtectorKey([u8; PROTECTOR_KEY_LEN]);
@@ -103,7 +103,7 @@ struct Salt(
     [u8; SALT_LEN]
 );
 
-/// A wrapped [`RawKey`] using one of several available methods
+/// A wrapped [`PolicyKey`] using one of several available methods
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Protector {
@@ -113,7 +113,7 @@ pub enum Protector {
 
 impl Protector {
     /// Unwraps the key using a password
-    pub fn decrypt(&self, policy: &WrappedPolicyKey, pass: &str) -> Option<RawKey> {
+    pub fn decrypt(&self, policy: &WrappedPolicyKey, pass: &str) -> Option<PolicyKey> {
         if let Some(protector_key) = match self {
             Protector::Password(p) => p.decrypt(pass)
         } {

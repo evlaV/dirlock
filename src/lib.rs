@@ -154,7 +154,7 @@ pub fn encrypt_dir(path: &Path, password: &str, cfg: &mut Config) -> Result<Poli
     }
 
     // Generate a master key and encrypt the directory with it
-    let master_key = fscrypt::RawKey::new_random();
+    let master_key = fscrypt::PolicyKey::new_random();
     let keyid = fscrypt::add_key(path, &master_key)?;
     if let Err(e) = fscrypt::set_policy(path, &keyid) {
         let user = fscrypt::RemoveKeyUsers::CurrentUser;
