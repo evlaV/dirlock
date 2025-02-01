@@ -23,7 +23,7 @@ pub struct PolicyKeyDescriptor([u8; FSCRYPT_KEY_DESCRIPTOR_SIZE]);
 
 /// A 16-byte key identifier for v2 fscrypt policies
 #[serde_as]
-#[derive(Default, PartialEq, Hash, Eq, Serialize, Deserialize, Clone, derive_more::Display)]
+#[derive(Default, PartialEq, Hash, Eq, Serialize, Deserialize, Clone, Debug, derive_more::Display)]
 #[display("{}", hex::encode(_0))]
 pub struct PolicyKeyId(
     #[serde_as(as = "Hex")]
