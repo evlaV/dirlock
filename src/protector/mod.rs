@@ -71,13 +71,6 @@ pub struct ProtectorId(
 
 #[serde_as]
 #[derive(Default, Serialize, Deserialize)]
-struct WrappedProtectorKey(
-    #[serde_as(as = "Base64")]
-    [u8; PROTECTOR_KEY_LEN]
-);
-
-#[serde_as]
-#[derive(Default, Serialize, Deserialize)]
 struct AesIv(
     #[serde_as(as = "Base64")]
     [u8; AES_IV_LEN]
