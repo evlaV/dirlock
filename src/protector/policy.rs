@@ -29,16 +29,12 @@ pub struct WrappedPolicyKey {
 
 impl WrappedPolicyKey {
     /// Creates a new [`WrappedPolicyKey`] that wraps a [`PolicyKey`] with a [`ProtectorKey`]
-    pub fn new(raw_key: PolicyKey, protector_key: &ProtectorKey) -> Result<Self> {
+    pub fn new(mut raw_key: PolicyKey, protector_key: &ProtectorKey) -> Result<Self> {
         let mut rng = rand::thread_rng();
-        let mut prot = WrappedPolicyKey {
-            wrapped_key: *raw_key.as_ref(),
-            iv: AesIv::default(),
-            hmac: Hmac::default(),
-        };
-        rng.try_fill_bytes(&mut prot.iv.0)?;
-        prot.hmac = aes_enc(protector_key, &prot.iv, &mut prot.wrapped_key);
-        Ok(prot)
+        let mut iv = AesIv::default();
+        rng.try_fill_bytes(&mut iv.0)?;
+        let hmac = aes_enc(protector_key, &iv, raw_key.as_mut());
+        Ok(WrappedPolicyKey{ wrapped_key: *raw_key.as_ref(), iv, hmac })
     }
 
     /// Unwraps a [`PolicyKey`] with a [`ProtectorKey`]
