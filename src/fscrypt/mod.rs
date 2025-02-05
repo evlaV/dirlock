@@ -42,6 +42,7 @@ impl TryFrom<&str> for PolicyKeyId {
 
 
 /// A raw master encryption key. Meant to be loaded directly into the kernel.
+#[derive(zeroize::ZeroizeOnDrop)]
 pub struct PolicyKey([u8; POLICY_KEY_LEN]);
 
 impl AsRef<[u8; POLICY_KEY_LEN]> for PolicyKey {
@@ -66,13 +67,6 @@ impl Default for PolicyKey {
     /// Returns a key containing only zeroes.
     fn default() -> Self {
         Self([0u8; POLICY_KEY_LEN])
-    }
-}
-
-impl Drop for PolicyKey {
-    /// Wipes the key safely from memory on drop.
-    fn drop(&mut self) {
-        unsafe { zeroize::zeroize_flat_type(&mut self.0) }
     }
 }
 

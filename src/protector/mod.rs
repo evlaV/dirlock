@@ -6,7 +6,6 @@ use rand::RngCore;
 use serde::{Serialize, Deserialize};
 use serde_with::{serde_as, hex::Hex, base64::Base64};
 use sha2::{Digest, Sha256, Sha512};
-use zeroize;
 
 use crate::fscrypt::PolicyKey;
 
@@ -23,20 +22,13 @@ const SALT_LEN: usize = 32;
 
 /// A raw encryption key used to unwrap the master [`PolicyKey`]
 /// used by fscrypt.
-#[derive(Default)]
+#[derive(Default, zeroize::ZeroizeOnDrop)]
 pub struct ProtectorKey([u8; PROTECTOR_KEY_LEN]);
 type Aes256Key = ProtectorKey;
 
 impl From<&[u8; PROTECTOR_KEY_LEN]> for ProtectorKey {
     fn from(src: &[u8; PROTECTOR_KEY_LEN]) -> Self {
         ProtectorKey(*src)
-    }
-}
-
-impl Drop for ProtectorKey {
-    /// Wipes the key safely from memory on drop.
-    fn drop(&mut self) {
-        unsafe { zeroize::zeroize_flat_type(&mut self.0) }
     }
 }
 
