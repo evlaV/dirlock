@@ -42,8 +42,25 @@ impl TryFrom<&str> for PolicyKeyId {
 
 
 /// A raw master encryption key. Meant to be loaded directly into the kernel.
-#[derive(PartialEq)]
-pub struct PolicyKey(pub [u8; POLICY_KEY_LEN]);
+pub struct PolicyKey([u8; POLICY_KEY_LEN]);
+
+impl AsRef<[u8; POLICY_KEY_LEN]> for PolicyKey {
+    fn as_ref(&self) -> &[u8; POLICY_KEY_LEN] {
+        &self.0
+    }
+}
+
+impl AsMut<[u8; POLICY_KEY_LEN]> for PolicyKey {
+    fn as_mut(&mut self) -> &mut [u8; POLICY_KEY_LEN] {
+        &mut self.0
+    }
+}
+
+impl From<&[u8; POLICY_KEY_LEN]> for PolicyKey {
+    fn from(src: &[u8; POLICY_KEY_LEN]) -> Self {
+        PolicyKey(*src)
+    }
+}
 
 impl Default for PolicyKey {
     /// Returns a key containing only zeroes.
@@ -55,7 +72,7 @@ impl Default for PolicyKey {
 impl Drop for PolicyKey {
     /// Wipes the key safely from memory on drop.
     fn drop(&mut self) {
-        unsafe { zeroize::zeroize_flat_type(self) }
+        unsafe { zeroize::zeroize_flat_type(&mut self.0) }
     }
 }
 
@@ -250,9 +267,9 @@ pub fn add_key(dir: &Path, key: &PolicyKey) -> Result<PolicyKeyId> {
 
     let mut arg : fscrypt_add_key_arg_full = unsafe { mem::zeroed() };
     arg.key_spec.type_ = FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER;
-    arg.raw_size = key.0.len() as u32;
+    arg.raw_size = key.as_ref().len() as u32;
     arg.key_id = 0;
-    arg.raw = key.0;
+    arg.raw = *key.as_ref();
 
     let raw_fd = fd.as_raw_fd();
     let argptr = std::ptr::addr_of_mut!(arg) as *mut fscrypt_add_key_arg;

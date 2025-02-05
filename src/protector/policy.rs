@@ -32,7 +32,7 @@ impl WrappedPolicyKey {
     pub fn new(raw_key: PolicyKey, protector_key: &ProtectorKey) -> Result<Self> {
         let mut rng = rand::thread_rng();
         let mut prot = WrappedPolicyKey {
-            wrapped_key: raw_key.0,
+            wrapped_key: *raw_key.as_ref(),
             iv: AesIv::default(),
             hmac: Hmac::default(),
         };
@@ -43,8 +43,8 @@ impl WrappedPolicyKey {
 
     /// Unwraps a [`PolicyKey`] with a [`ProtectorKey`]
     pub fn decrypt(&self, protector_key: ProtectorKey) -> Option<PolicyKey> {
-        let mut raw_key = PolicyKey(self.wrapped_key);
-        if aes_dec(&protector_key, &self.iv, &self.hmac, &mut raw_key.0) {
+        let mut raw_key = PolicyKey::from(&self.wrapped_key);
+        if aes_dec(&protector_key, &self.iv, &self.hmac, raw_key.as_mut()) {
             Some(raw_key)
         } else {
             None

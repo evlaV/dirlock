@@ -294,7 +294,7 @@ mod tests {
             // Check the key we just unwrapped
             assert_eq!(data, unwrapped_key, "Unwrapped key doesn't match the expected value");
             // Check the key ID
-            assert_eq!(PolicyKey(data.0).get_id(), policy_id, "Policy ID doesn't match the expected value");
+            assert_eq!(PolicyKey::from(&data.0).get_id(), policy_id, "Policy ID doesn't match the expected value");
             // Wrap the key again and validate the HMAC
             assert_eq!(aes_enc(&enc_key, &aes_iv, &mut data.0).0, hmac.0, "HMAC validation failed");
             // Check the key we just wrapped
