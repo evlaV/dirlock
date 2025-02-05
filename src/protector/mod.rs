@@ -27,10 +27,16 @@ const SALT_LEN: usize = 32;
 pub struct ProtectorKey([u8; PROTECTOR_KEY_LEN]);
 type Aes256Key = ProtectorKey;
 
+impl From<&[u8; PROTECTOR_KEY_LEN]> for ProtectorKey {
+    fn from(src: &[u8; PROTECTOR_KEY_LEN]) -> Self {
+        ProtectorKey(*src)
+    }
+}
+
 impl Drop for ProtectorKey {
     /// Wipes the key safely from memory on drop.
     fn drop(&mut self) {
-        unsafe { zeroize::zeroize_flat_type(self) }
+        unsafe { zeroize::zeroize_flat_type(&mut self.0) }
     }
 }
 
@@ -252,7 +258,7 @@ mod tests {
             let hmac = decode::<Hmac>(key[2]);
             let wrapped_key = decode::<BitArray256>(key[3]);
             let unwrapped_key = decode::<BitArray256>(key[4]);
-            let enc_key = ProtectorKey(decode::<BitArray256>(key[5]).0);
+            let enc_key = Aes256Key::from(&decode::<BitArray256>(key[5]).0);
 
             // Start with the wrapped key
             let mut data = BitArray256(wrapped_key.0);
@@ -261,7 +267,7 @@ mod tests {
             // Check the key we just unwrapped
             assert_eq!(data, unwrapped_key, "Unwrapped key doesn't match the expected value");
             // Check the key ID
-            assert_eq!(ProtectorKey(data.0).get_id().0, protector_id.0, "Protector ID doesn't match the expected value");
+            assert_eq!(ProtectorKey::from(&data.0).get_id().0, protector_id.0, "Protector ID doesn't match the expected value");
             // Wrap the key again and validate the HMAC
             assert_eq!(aes_enc(&enc_key, &aes_iv, &mut data.0).0, hmac.0, "HMAC validation failed");
             // Check the key we just wrapped
@@ -279,7 +285,7 @@ mod tests {
             let hmac = decode::<Hmac>(key[2]);
             let wrapped_key = decode::<BitArray512>(key[3]);
             let unwrapped_key = decode::<BitArray512>(key[4]);
-            let enc_key = ProtectorKey(decode::<BitArray256>(key[5]).0);
+            let enc_key = Aes256Key::from(&decode::<BitArray256>(key[5]).0);
 
             // Start with the wrapped key
             let mut data = BitArray512(wrapped_key.0);

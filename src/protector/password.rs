@@ -43,7 +43,7 @@ impl PasswordProtector {
 
     /// Unwraps a [`ProtectorKey`] with a password.
     pub fn decrypt(&self, pass: &str) -> Option<ProtectorKey> {
-        let mut raw_key = ProtectorKey(self.wrapped_key);
+        let mut raw_key = ProtectorKey::from(&self.wrapped_key);
         let key = Aes256Key::new_from_password(pass, &self.salt);
         if aes_dec(&key, &self.iv, &self.hmac, &mut raw_key.0) {
             Some(raw_key)
