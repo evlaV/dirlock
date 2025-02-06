@@ -86,7 +86,7 @@ fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
     eprint!("Enter encryption password: ");
     let pass = Zeroizing::new(rpassword::read_password()?);
 
-    fscrypt_rs::unlock_dir(&args.dir, &pass, &cfg)
+    fscrypt_rs::unlock_dir(&args.dir, pass.as_bytes(), &cfg)
 }
 
 fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
@@ -102,7 +102,7 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
     let pass2 = Zeroizing::new(rpassword::read_password()?);
     ensure!(pass1 == pass2, "Passwords don't match");
 
-    let keyid = fscrypt_rs::encrypt_dir(&args.dir, &pass1, &mut cfg)?;
+    let keyid = fscrypt_rs::encrypt_dir(&args.dir, pass1.as_bytes(), &mut cfg)?;
     println!("{}", keyid);
 
     Ok(())

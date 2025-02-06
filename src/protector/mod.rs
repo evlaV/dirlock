@@ -42,10 +42,10 @@ impl ProtectorKey {
     }
 
     /// Generates a new key from `pass` and `salt` using a KDF
-    pub(self) fn new_from_password(pass: &str, salt: &Salt) -> Self {
+    pub(self) fn new_from_password(pass: &[u8], salt: &Salt) -> Self {
         let iterations = 65535;
         let mut key = ProtectorKey::default();
-        pbkdf2_hmac::<sha2::Sha512>(pass.as_bytes(), &salt.0, iterations, &mut key.0);
+        pbkdf2_hmac::<sha2::Sha512>(pass, &salt.0, iterations, &mut key.0);
         key
     }
 
@@ -98,7 +98,7 @@ pub enum Protector {
 
 impl Protector {
     /// Unwraps the key using a password
-    pub fn decrypt(&self, policy: &WrappedPolicyKey, pass: &str) -> Option<PolicyKey> {
+    pub fn decrypt(&self, policy: &WrappedPolicyKey, pass: &[u8]) -> Option<PolicyKey> {
         if let Some(protector_key) = match self {
             Protector::Password(p) => p.decrypt(pass)
         } {

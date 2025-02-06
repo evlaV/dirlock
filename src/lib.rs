@@ -71,11 +71,11 @@ pub fn lock_user(user: &str, cfg: &Config) -> Result<RemovalStatusFlags> {
 }
 
 /// Convenience function to call `unlock_dir` on a user's home directory
-pub fn unlock_user(user: &str, password: &str, cfg: &Config) -> Result<()> {
+pub fn unlock_user(user: &str, password: &[u8], cfg: &Config) -> Result<()> {
     unlock_dir(&util::get_homedir(user)?, password, cfg)
 }
 
-pub fn auth_user(user: &str, password: &str, cfg: &Config) -> Result<bool> {
+pub fn auth_user(user: &str, password: &[u8], cfg: &Config) -> Result<bool> {
     let homedir = util::get_homedir(user)?;
     let dir_data = match get_encrypted_dir_data(&homedir, cfg)? {
         DirStatus::Encrypted(d) => d,
@@ -97,7 +97,7 @@ pub fn auth_user(user: &str, password: &str, cfg: &Config) -> Result<bool> {
 }
 
 /// Unlocks a directory with the given password
-pub fn unlock_dir(path: &Path, password: &str, cfg: &Config) -> Result<()> {
+pub fn unlock_dir(path: &Path, password: &[u8], cfg: &Config) -> Result<()> {
     let dir_data = match get_encrypted_dir_data(path, cfg)? {
         DirStatus::Encrypted(d) => d,
         x => bail!("{}", x),
@@ -143,7 +143,7 @@ pub fn lock_dir(path: &Path, cfg: &Config) -> Result<RemovalStatusFlags> {
 
 
 /// Encrypts a directory
-pub fn encrypt_dir(path: &Path, password: &str, cfg: &mut Config) -> Result<PolicyKeyId> {
+pub fn encrypt_dir(path: &Path, password: &[u8], cfg: &mut Config) -> Result<PolicyKeyId> {
     match get_encrypted_dir_data(path, cfg)? {
         DirStatus::Unencrypted => (),
         x => bail!("{}", x),

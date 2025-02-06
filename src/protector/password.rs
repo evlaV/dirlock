@@ -30,7 +30,7 @@ pub struct PasswordProtector {
 
 impl PasswordProtector {
     /// Creates a new [`PasswordProtector`] that wraps a [`ProtectorKey`] with a password.
-    pub fn new(mut raw_key: ProtectorKey, pass: &str) -> Result<Self> {
+    pub fn new(mut raw_key: ProtectorKey, pass: &[u8]) -> Result<Self> {
         let mut rng = rand::thread_rng();
         let mut iv = AesIv::default();
         rng.try_fill_bytes(&mut iv.0)?;
@@ -42,7 +42,7 @@ impl PasswordProtector {
     }
 
     /// Unwraps a [`ProtectorKey`] with a password.
-    pub fn decrypt(&self, pass: &str) -> Option<ProtectorKey> {
+    pub fn decrypt(&self, pass: &[u8]) -> Option<ProtectorKey> {
         let mut raw_key = ProtectorKey::from(&self.wrapped_key);
         let key = Aes256Key::new_from_password(pass, &self.salt);
         if aes_dec(&key, &self.iv, &self.hmac, &mut raw_key.0) {
