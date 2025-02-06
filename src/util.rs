@@ -1,5 +1,5 @@
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use std::os::linux::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
@@ -21,6 +21,12 @@ pub fn get_mountpoint(dir: &Path) -> Result<PathBuf> {
         }
         current.pop();
     }
+}
+
+/// Get the user's home dir or return an error
+pub(crate) fn get_homedir(user: &str) -> Result<PathBuf> {
+    homedir::home(user)?
+        .ok_or(anyhow!("User {user} not found"))
 }
 
 /// Check if a directory is empty

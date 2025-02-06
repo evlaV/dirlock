@@ -60,16 +60,37 @@ pub fn get_encrypted_dir_data(path: &Path, cfg: &Config) -> Result<DirStatus> {
     Ok(DirStatus::Encrypted(EncryptedDirData { policy, key_status, _key_flags }))
 }
 
-
-/// Return an [`EncryptedDirData`] object for the given user's home directory.
-pub fn get_user_profile(user: &str, cfg: &Config) -> Result<DirStatus> {
-    let Some(homedir) = homedir::home(user)? else {
-        bail!("User {user} not found");
-    };
-
-    get_encrypted_dir_data(&homedir, cfg)
+/// Convenience function to call `get_encrypted_dir_data` on a user's home directory
+pub fn get_homedir_data(user: &str, cfg: &Config) -> Result<DirStatus> {
+    get_encrypted_dir_data(&util::get_homedir(user)?, cfg)
 }
 
+/// Convenience function to call `lock_dir` on a user's home directory
+pub fn lock_user(user: &str, cfg: &Config) -> Result<RemovalStatusFlags> {
+    lock_dir(&util::get_homedir(user)?, cfg)
+}
+
+/// Convenience function to call `unlock_dir` on a user's home directory
+pub fn unlock_user(user: &str, password: &str, cfg: &Config) -> Result<()> {
+    unlock_dir(&util::get_homedir(user)?, password, cfg)
+}
+
+pub fn auth_user(user: &str, password: &str, cfg: &Config) -> Result<bool> {
+    let homedir = util::get_homedir(user)?;
+    let dir_data = match get_encrypted_dir_data(&homedir, cfg)? {
+        DirStatus::Encrypted(d) => d,
+        x => bail!("{}", x),
+    };
+
+    // TODO: At this point we should already know that we have a key
+    // Maybe store it in the dir data?
+    let Some(prot) = cfg.get_protector(&dir_data.policy.master_key_identifier) else {
+        bail!("Unable to find a key to decrypt directory {}", homedir.display());
+    };
+
+    let master_key = prot.decrypt(password.as_bytes());
+    Ok(dir_data.policy.master_key_identifier == master_key.get_id())
+}
 
 /// Unlocks a directory with the given password
 pub fn unlock_dir(path: &Path, password: &str, cfg: &Config) -> Result<()> {
