@@ -17,6 +17,7 @@ struct Args {
 enum Command {
     Lock(LockArgs),
     Unlock(UnlockArgs),
+    ChangePass(ChangePassArgs),
     Encrypt(EncryptArgs),
     Status(StatusArgs),
 }
@@ -34,6 +35,15 @@ struct LockArgs {
 #[argh(subcommand, name = "unlock")]
 /// Unlock a directory
 struct UnlockArgs {
+    /// directory
+    #[argh(positional)]
+    dir: PathBuf,
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "change-password")]
+/// Change the encryption password of a directory
+struct ChangePassArgs {
     /// directory
     #[argh(positional)]
     dir: PathBuf,
@@ -102,6 +112,35 @@ fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
     Ok(())
 }
 
+fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
+    use fscrypt_rs::{DirStatus::*, UnlockAction};
+
+    let mut cfg = config::Config::new_from_file()?;
+    let dir_data = match fscrypt_rs::get_encrypted_dir_data(&args.dir, &cfg)? {
+        Encrypted(d) => d,
+        x => bail!("{}", x),
+    };
+
+    eprint!("Enter the current password: ");
+    let pass = Zeroizing::new(rpassword::read_password()?);
+
+    if ! fscrypt_rs::unlock_dir(&dir_data, pass.as_bytes(), UnlockAction::AuthOnly, &cfg)? {
+        bail!("Password not valid for directory {}", args.dir.display())
+    }
+
+    eprint!("Enter the new password: ");
+    let npass1 = Zeroizing::new(rpassword::read_password()?);
+    eprint!("Repeat the new password: ");
+    let npass2 = Zeroizing::new(rpassword::read_password()?);
+    ensure!(npass1 == npass2, "Passwords don't match");
+
+    if ! fscrypt_rs::change_dir_password(&dir_data, pass.as_bytes(), npass1.as_bytes(), &mut cfg)? {
+        bail!("Unable to change the password for directory {}", args.dir.display())
+    }
+
+    Ok(())
+}
+
 fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
     let mut cfg = config::Config::new_from_file()?;
     match fscrypt_rs::get_encrypted_dir_data(&args.dir, &cfg)? {
@@ -152,6 +191,7 @@ fn main() -> Result<()> {
     match &args.command {
         Lock(args) => cmd_lock(args),
         Unlock(args) => cmd_unlock(args),
+        ChangePass(args) => cmd_change_pass(args),
         Encrypt(args) => cmd_encrypt(args),
         Status(args) => cmd_status(args),
     }

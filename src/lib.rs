@@ -110,6 +110,16 @@ pub fn lock_dir(dir: &EncryptedDirData) -> Result<RemovalStatusFlags> {
         .map_err(|e|anyhow!("Unable to lock directory: {e}"))
 }
 
+/// Locks a directory
+pub fn change_dir_password(dir: &EncryptedDirData, pass: &[u8], newpass: &[u8], cfg: &mut Config) -> Result<bool> {
+    if cfg.change_protector_pass_for_policy(&dir.policy.keyid, pass, newpass)? {
+        cfg.save().map_err(|e| anyhow!("Failed to save config: {e}"))?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
+}
+
 /// Encrypts a directory
 pub fn encrypt_dir(path: &Path, password: &[u8], cfg: &mut Config) -> Result<PolicyKeyId> {
     match get_encrypted_dir_data(path, cfg)? {
