@@ -6,9 +6,9 @@ mod util;
 
 use anyhow::{anyhow, bail, Result};
 use config::Config;
-use fscrypt::{PolicyKeyId, RemovalStatusFlags};
+use fscrypt::{Policy, PolicyKeyId, RemovalStatusFlags};
 use protector::{Protector, PasswordProtector, WrappedPolicyKey};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub enum DirStatus {
     Unencrypted,
@@ -32,9 +32,10 @@ impl std::fmt::Display for DirStatus {
 
 /// Encryption data (policy, key status) of a given directory
 pub struct EncryptedDirData {
+    pub path: PathBuf,
     pub policy: fscrypt::PolicyV2,
     pub key_status: fscrypt::KeyStatus,
-    pub _key_flags: fscrypt::KeyStatusFlags,
+    pub key_flags: fscrypt::KeyStatusFlags,
 }
 
 /// Return an [`EncryptedDirData`] object for the directory.
@@ -45,19 +46,19 @@ pub struct EncryptedDirData {
 pub fn get_encrypted_dir_data(path: &Path, cfg: &Config) -> Result<DirStatus> {
     let policy = match fscrypt::get_policy(path).
         map_err(|e| anyhow!("Failed to get encryption policy: {e}"))? {
-        Some(fscrypt::Policy::V2(p)) => p,
-        None => return Ok(DirStatus::Unencrypted),
-        _    => return Ok(DirStatus::Unsupported),
+        Some(Policy::V2(p)) => p,
+        Some(_) => return Ok(DirStatus::Unsupported),
+        None    => return Ok(DirStatus::Unencrypted),
     };
 
     if cfg.get_protectors_for_policy(&policy.keyid).is_empty() {
         return Ok(DirStatus::KeyMissing);
     };
 
-    let (key_status, _key_flags) = fscrypt::get_key_status(path, &policy.keyid)
+    let (key_status, key_flags) = fscrypt::get_key_status(path, &policy.keyid)
         .map_err(|e| anyhow!("Failed to get key status: {e}"))?;
 
-    Ok(DirStatus::Encrypted(EncryptedDirData { policy, key_status, _key_flags }))
+    Ok(DirStatus::Encrypted(EncryptedDirData { path: path.into(), policy, key_status, key_flags }))
 }
 
 /// Convenience function to call `get_encrypted_dir_data` on a user's home directory
