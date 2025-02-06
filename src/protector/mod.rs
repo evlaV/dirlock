@@ -107,6 +107,13 @@ impl Protector {
             None
         }
     }
+
+    /// Unwraps the key using a password
+    pub fn change_pass(&mut self, pass: &[u8], newpass: &[u8]) -> anyhow::Result<bool> {
+        match self {
+            Protector::Password(p) => Ok(p.change_pass(pass, newpass)?)
+        }
+    }
 }
 
 /// Stretches a 256-bit key into two new keys of the same size using HKDF

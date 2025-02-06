@@ -51,4 +51,14 @@ impl PasswordProtector {
             None
         }
     }
+
+    /// Changes the password of this protector
+    pub fn change_pass(&mut self, pass: &[u8], newpass: &[u8]) -> Result<bool> {
+        if let Some(raw_key) = self.decrypt(pass) {
+            *self = PasswordProtector::new(raw_key, newpass)?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
 }
