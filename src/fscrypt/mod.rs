@@ -9,9 +9,9 @@ use rand::RngCore;
 use serde::{Serialize, Deserialize};
 use serde_with::{serde_as, hex::Hex};
 use std::mem;
-use std::path::Path;
+use std::os::linux::fs::MetadataExt;
+use std::path::{Path, PathBuf};
 use linux::*;
-use crate::util;
 
 /// All our keys use the maximum length allowed by fscrypt
 pub(crate) const POLICY_KEY_LEN: usize = FSCRYPT_MAX_KEY_SIZE;
@@ -257,7 +257,7 @@ nix::ioctl_readwrite!(fscrypt_remove_key_all_users, b'f', 25, fscrypt_remove_key
 nix::ioctl_readwrite!(fscrypt_get_key_status, b'f', 26, fscrypt_get_key_status_arg);
 
 pub fn add_key(dir: &Path, key: &PolicyKey) -> Result<PolicyKeyId> {
-    let fd = std::fs::File::open(util::get_mountpoint(dir)?)?;
+    let fd = std::fs::File::open(get_mountpoint(dir)?)?;
 
     let mut arg : fscrypt_add_key_arg_full = unsafe { mem::zeroed() };
     arg.key_spec.type_ = FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER;
@@ -274,7 +274,7 @@ pub fn add_key(dir: &Path, key: &PolicyKey) -> Result<PolicyKeyId> {
 }
 
 pub fn remove_key(dir: &Path, keyid: &PolicyKeyId, users: RemoveKeyUsers) -> Result<RemovalStatusFlags> {
-    let fd = std::fs::File::open(util::get_mountpoint(dir)?)?;
+    let fd = std::fs::File::open(get_mountpoint(dir)?)?;
 
     let mut arg : fscrypt_remove_key_arg = unsafe { mem::zeroed() };
     arg.key_spec.type_ = FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER;
@@ -328,7 +328,7 @@ pub fn set_policy(dir: &Path, keyid: &PolicyKeyId) -> Result<()> {
 }
 
 pub fn get_key_status(dir: &Path, keyid: &PolicyKeyId) -> Result<(KeyStatus, KeyStatusFlags)> {
-    let fd = std::fs::File::open(util::get_mountpoint(dir)?)?;
+    let fd = std::fs::File::open(get_mountpoint(dir)?)?;
 
     let mut arg : fscrypt_get_key_status_arg = unsafe { mem::zeroed() };
     arg.key_spec.type_ = FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER;
@@ -345,6 +345,27 @@ pub fn get_key_status(dir: &Path, keyid: &PolicyKeyId) -> Result<(KeyStatus, Key
     };
 
     Ok((key_status, KeyStatusFlags::from_bits_truncate(arg.status_flags)))
+}
+
+
+/// Get the mount point of the file system that contains `dir`
+fn get_mountpoint(dir: &Path) -> Result<PathBuf> {
+    let mut current = dir.canonicalize()?;
+    loop {
+        // Compare a directory's metadata with its parent's
+        let parent = current.parent().unwrap_or(&current);
+        let md1 = std::fs::metadata(&current)?;
+        let md2 = std::fs::metadata(parent)?;
+        // Same inode? => We reached the root directory
+        if md2.st_ino() == md1.st_ino() {
+            return Ok(current);
+        }
+        // Different device? => The parent is in a different filesystem
+        if md2.st_dev() != md1.st_dev() {
+            return Ok(current);
+        }
+        current.pop();
+    }
 }
 
 #[cfg(test)]

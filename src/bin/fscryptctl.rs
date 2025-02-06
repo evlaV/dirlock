@@ -1,9 +1,8 @@
 
 use anyhow::{ensure, Result};
 use std::io::Read;
-use std::os::linux::fs::MetadataExt;
 use argh::FromArgs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use fscrypt_rs::fscrypt;
 
@@ -78,19 +77,6 @@ struct RemoveKeyArgs {
     keyid: String
 }
 
-fn get_mountpoint(dir: &Path) -> Result<std::path::PathBuf> {
-    let mut current = dir.canonicalize()?;
-    loop {
-        let parent = current.parent().unwrap_or(&current);
-        let md1 = std::fs::metadata(&current)?;
-        let md2 = std::fs::metadata(parent)?;
-        if md2.st_ino() == md1.st_ino() || md2.st_dev() != md1.st_dev() {
-            return Ok(current);
-        }
-        current.pop();
-    }
-}
-
 fn cmd_get_policy(args: &GetPolicyArgs) -> Result<()> {
     match fscrypt::get_policy(&args.dir)? {
         None => println!("Directory not encrypted"),
@@ -111,9 +97,8 @@ fn cmd_set_policy(args: &SetPolicyArgs) -> Result<()> {
 
 fn cmd_key_status(args: &KeyStatusArgs) -> Result<()> {
     let keyid = fscrypt::PolicyKeyId::try_from(args.keyid.as_str())?;
-    let mnt = get_mountpoint(&args.mountpoint)?;
-    let (status, flags) = fscrypt::get_key_status(&mnt, &keyid)?;
-    println!("Got status of key {} in directory {}: {:?}", &args.keyid, mnt.display(), status);
+    let (status, flags) = fscrypt::get_key_status(&args.mountpoint, &keyid)?;
+    println!("Got status of key {} in directory {}: {:?}", &args.keyid, args.mountpoint.display(), status);
     if flags.contains(fscrypt::KeyStatusFlags::AddedBySelf) {
         println!("(key added by self)");
     }
