@@ -58,8 +58,17 @@ struct StatusArgs {
 }
 
 fn cmd_lock(args: &LockArgs) -> Result<()> {
+    use fscrypt_rs::DirStatus::*;
+
     let cfg = config::Config::new_from_file()?;
-    let flags = fscrypt_rs::lock_dir(&args.dir, &cfg)?;
+    let dir_data = match fscrypt_rs::get_encrypted_dir_data(&args.dir, &cfg)? {
+        Encrypted(d) if d.key_status == fscrypt::KeyStatus::Absent =>
+            bail!("The directory {} is already locked", args.dir.display()),
+        Encrypted(d) => d,
+        x => bail!("{}", x),
+    };
+
+    let flags = fscrypt_rs::lock_dir(&dir_data)?;
 
     if flags.contains(fscrypt::RemovalStatusFlags::FilesBusy) {
         println!("Key removed, but some files are still busy");
@@ -73,20 +82,24 @@ fn cmd_lock(args: &LockArgs) -> Result<()> {
 }
 
 fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
-    use fscrypt_rs::DirStatus::*;
+    use fscrypt_rs::{DirStatus::*, UnlockAction};
 
     let cfg = config::Config::new_from_file()?;
-    match fscrypt_rs::get_encrypted_dir_data(&args.dir, &cfg)? {
+    let dir_data = match fscrypt_rs::get_encrypted_dir_data(&args.dir, &cfg)? {
         Encrypted(d) if d.key_status == fscrypt::KeyStatus::Present =>
             bail!("The directory {} is already unlocked", args.dir.display()),
-        Encrypted(_) => (),
+        Encrypted(d) => d,
         x => bail!("{}", x),
     };
 
     eprint!("Enter encryption password: ");
     let pass = Zeroizing::new(rpassword::read_password()?);
 
-    fscrypt_rs::unlock_dir(&args.dir, pass.as_bytes(), &cfg)
+    if ! fscrypt_rs::unlock_dir(&dir_data, pass.as_bytes(), UnlockAction::AuthAndUnlock, &cfg)? {
+        bail!("Unable to unlock directory {}: wrong password", args.dir.display())
+    }
+
+    Ok(())
 }
 
 fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
