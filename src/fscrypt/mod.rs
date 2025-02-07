@@ -1,17 +1,21 @@
 
 mod linux;
+use linux::*;
 
 use anyhow::{bail, ensure, Result};
-use std::os::fd::AsRawFd;
 use nix::errno::Errno;
 use num_enum::{FromPrimitive, TryFromPrimitive};
 use rand::{RngCore, rngs::OsRng};
 use serde::{Serialize, Deserialize};
 use serde_with::{serde_as, hex::Hex};
-use std::mem;
-use std::os::linux::fs::MetadataExt;
-use std::path::{Path, PathBuf};
-use linux::*;
+use std::{
+    mem,
+    os::{
+        fd::AsRawFd,
+        linux::fs::MetadataExt,
+    },
+    path::{Path, PathBuf},
+};
 
 /// All our keys use the maximum length allowed by fscrypt
 pub(crate) const POLICY_KEY_LEN: usize = FSCRYPT_MAX_KEY_SIZE;
@@ -41,7 +45,7 @@ impl TryFrom<&str> for PolicyKeyId {
 }
 
 
-/// A raw master encryption key. Meant to be loaded directly into the kernel.
+/// A raw master encryption key, meant to be added to the kernel for a specific filesystem.
 #[derive(zeroize::ZeroizeOnDrop)]
 pub struct PolicyKey([u8; POLICY_KEY_LEN]);
 
@@ -100,12 +104,14 @@ impl PolicyKey {
 }
 
 
+/// A fscrypt encryption policy
 pub enum Policy {
     V1(PolicyV1),
     V2(PolicyV2),
     Unknown(u8)
 }
 
+/// A (deprecated) v1 encryption policy. They can be queried but are otherwise unsupported by this tool.
 pub struct PolicyV1 {
     pub contents_mode: EncryptionMode,
     pub filenames_mode: EncryptionMode,
@@ -113,6 +119,7 @@ pub struct PolicyV1 {
     pub keyid: PolicyKeyDescriptor
 }
 
+/// A v2 encryption policy. This is the one supported by this tool.
 pub struct PolicyV2 {
     pub contents_mode: EncryptionMode,
     pub filenames_mode: EncryptionMode,
@@ -185,14 +192,20 @@ impl From<u8> for PolicyFlags {
     }
 }
 
+/// Value indicating what users are affected by a call to [remove_key()].
 pub enum RemoveKeyUsers {
     CurrentUser,
     AllUsers
 }
 
 bitflags::bitflags! {
+    /// Flags indicating the result of removing a [`PolicyKey`] from the kernel.
+    ///
+    /// **Note**: known flags are listed here, but other unknown bits are possible.
     pub struct RemovalStatusFlags: u32 {
+        /// Set if some files are still in use.
         const FilesBusy = FSCRYPT_KEY_REMOVAL_STATUS_FLAG_FILES_BUSY;
+        /// Set if the user's claim to the key was removed but not the key itself.
         const OtherUsers = FSCRYPT_KEY_REMOVAL_STATUS_FLAG_OTHER_USERS;
         const _ = !0; // Unnamed flag for unknown bits
     }
@@ -200,13 +213,20 @@ bitflags::bitflags! {
 
 #[derive(TryFromPrimitive, Debug, PartialEq)]
 #[repr(u32)]
+/// Indicates the presence of a [`PolicyKey`] in the kernel (for a given filesystem).
 pub enum KeyStatus {
+    /// The key is absent from the filesystem.
     Absent = FSCRYPT_KEY_STATUS_ABSENT,
+    /// The key is present in the filesystem.
     Present = FSCRYPT_KEY_STATUS_PRESENT,
+    /// The removal has been initiated but some files are still in use.
     IncompletelyRemoved = FSCRYPT_KEY_STATUS_INCOMPLETELY_REMOVED,
 }
 
 bitflags::bitflags! {
+    /// Flags indicating the status of a [`PolicyKey`] in the kernel (see [get_key_status()]).
+    ///
+    /// **Note**: known flags are listed here, but other unknown bits are possible.
     pub struct KeyStatusFlags: u32 {
         const AddedBySelf = FSCRYPT_KEY_STATUS_FLAG_ADDED_BY_SELF;
         const _ = !0; // Unnamed flag for unknown bits
@@ -215,6 +235,7 @@ bitflags::bitflags! {
 
 #[derive(FromPrimitive)]
 #[repr(u8)]
+/// Encryption mode
 pub enum EncryptionMode {
     Invalid = FS_ENCRYPTION_MODE_INVALID,
     AES256XTS = FS_ENCRYPTION_MODE_AES_256_XTS,
@@ -232,7 +253,7 @@ pub enum EncryptionMode {
 
 // This is fscrypt_add_key_arg with an additional 'raw' field
 #[repr(C)]
-pub struct fscrypt_add_key_arg_full {
+struct fscrypt_add_key_arg_full {
     key_spec: fscrypt_key_specifier,
     raw_size: u32,
     key_id: u32,
@@ -248,13 +269,19 @@ impl Drop for fscrypt_add_key_arg_full {
     }
 }
 
-nix::ioctl_read!(fscrypt_set_policy, b'f', 19, fscrypt_policy_v1);
-nix::ioctl_readwrite!(fscrypt_get_policy_ex, b'f', 22, fscrypt_get_policy_ex_arg_ioctl);
-nix::ioctl_readwrite!(fscrypt_add_key, b'f', 23, fscrypt_add_key_arg);
-nix::ioctl_readwrite!(fscrypt_remove_key, b'f', 24, fscrypt_remove_key_arg);
-nix::ioctl_readwrite!(fscrypt_remove_key_all_users, b'f', 25, fscrypt_remove_key_arg);
-nix::ioctl_readwrite!(fscrypt_get_key_status, b'f', 26, fscrypt_get_key_status_arg);
+// These macros generate public functions so put them in their own module
+mod ioctl {
+    use super::linux;
 
+    nix::ioctl_read!(fscrypt_set_policy, b'f', 19, linux::fscrypt_policy_v1);
+    nix::ioctl_readwrite!(fscrypt_get_policy_ex, b'f', 22, linux::fscrypt_get_policy_ex_arg_ioctl);
+    nix::ioctl_readwrite!(fscrypt_add_key, b'f', 23, linux::fscrypt_add_key_arg);
+    nix::ioctl_readwrite!(fscrypt_remove_key, b'f', 24, linux::fscrypt_remove_key_arg);
+    nix::ioctl_readwrite!(fscrypt_remove_key_all_users, b'f', 25, linux::fscrypt_remove_key_arg);
+    nix::ioctl_readwrite!(fscrypt_get_key_status, b'f', 26, linux::fscrypt_get_key_status_arg);
+}
+
+/// Add a [`PolicyKey`] to the kernel for a given filesystem
 pub fn add_key(dir: &Path, key: &PolicyKey) -> Result<PolicyKeyId> {
     let fd = std::fs::File::open(get_mountpoint(dir)?)?;
 
@@ -266,12 +293,13 @@ pub fn add_key(dir: &Path, key: &PolicyKey) -> Result<PolicyKeyId> {
 
     let raw_fd = fd.as_raw_fd();
     let argptr = std::ptr::addr_of_mut!(arg) as *mut fscrypt_add_key_arg;
-    match unsafe { fscrypt_add_key(raw_fd, argptr) } {
+    match unsafe { ioctl::fscrypt_add_key(raw_fd, argptr) } {
         Err(x) => Err(x.into()),
         _ => Ok(PolicyKeyId(unsafe { arg.key_spec.u.identifier }))
     }
 }
 
+/// Remove a [`PolicyKey`] from the kernel for a given filesystem
 pub fn remove_key(dir: &Path, keyid: &PolicyKeyId, users: RemoveKeyUsers) -> Result<RemovalStatusFlags> {
     let fd = std::fs::File::open(get_mountpoint(dir)?)?;
 
@@ -282,8 +310,8 @@ pub fn remove_key(dir: &Path, keyid: &PolicyKeyId, users: RemoveKeyUsers) -> Res
     let raw_fd = fd.as_raw_fd();
     let argptr = std::ptr::addr_of_mut!(arg);
     if let Err(x) = match users {
-        RemoveKeyUsers::CurrentUser => unsafe { fscrypt_remove_key(raw_fd, argptr) },
-        RemoveKeyUsers::AllUsers => unsafe { fscrypt_remove_key_all_users(raw_fd, argptr) },
+        RemoveKeyUsers::CurrentUser => unsafe { ioctl::fscrypt_remove_key(raw_fd, argptr) },
+        RemoveKeyUsers::AllUsers => unsafe { ioctl::fscrypt_remove_key_all_users(raw_fd, argptr) },
     } {
         return Err(x.into());
     }
@@ -291,6 +319,7 @@ pub fn remove_key(dir: &Path, keyid: &PolicyKeyId, users: RemoveKeyUsers) -> Res
     Ok(RemovalStatusFlags::from_bits_truncate(arg.removal_status_flags))
 }
 
+/// Check if a directory is encrypted and return its [`Policy`] if that's the case
 pub fn get_policy(dir: &Path) -> Result<Option<Policy>> {
     let fd = std::fs::File::open(dir)?;
 
@@ -299,13 +328,14 @@ pub fn get_policy(dir: &Path) -> Result<Option<Policy>> {
 
     let raw_fd = fd.as_raw_fd();
     let argptr = std::ptr::addr_of_mut!(arg) as *mut fscrypt_get_policy_ex_arg_ioctl;
-    match unsafe { fscrypt_get_policy_ex(raw_fd, argptr) } {
+    match unsafe { ioctl::fscrypt_get_policy_ex(raw_fd, argptr) } {
         Err(Errno::ENODATA) => Ok(None),
         Err(x) => Err(x.into()),
         Ok(_) => Ok(Some(arg.policy.into()))
     }
 }
 
+/// Enable encryption on a directory by setting a new [`Policy`]
 pub fn set_policy(dir: &Path, keyid: &PolicyKeyId) -> Result<()> {
     let fd = std::fs::File::open(dir)?;
 
@@ -320,12 +350,13 @@ pub fn set_policy(dir: &Path, keyid: &PolicyKeyId) -> Result<()> {
 
     let raw_fd = fd.as_raw_fd();
     let argptr = std::ptr::addr_of_mut!(arg) as *mut fscrypt_policy_v1;
-    match unsafe { fscrypt_set_policy(raw_fd, argptr) } {
+    match unsafe { ioctl::fscrypt_set_policy(raw_fd, argptr) } {
         Err(x) => Err(x.into()),
         _ => Ok(())
     }
 }
 
+/// Check if a [`PolicyKey`] is loaded into the kernel for a given filesystem
 pub fn get_key_status(dir: &Path, keyid: &PolicyKeyId) -> Result<(KeyStatus, KeyStatusFlags)> {
     let fd = std::fs::File::open(get_mountpoint(dir)?)?;
 
@@ -335,7 +366,7 @@ pub fn get_key_status(dir: &Path, keyid: &PolicyKeyId) -> Result<(KeyStatus, Key
 
     let raw_fd = fd.as_raw_fd();
     let argptr = std::ptr::addr_of_mut!(arg);
-    if let Err(x) = unsafe { fscrypt_get_key_status(raw_fd, argptr) } {
+    if let Err(x) = unsafe { ioctl::fscrypt_get_key_status(raw_fd, argptr) } {
         return Err(x.into());
     };
 
