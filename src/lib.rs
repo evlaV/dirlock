@@ -112,7 +112,7 @@ pub fn lock_dir(dir: &EncryptedDirData) -> Result<RemovalStatusFlags> {
 
 /// Locks a directory
 pub fn change_dir_password(dir: &EncryptedDirData, pass: &[u8], newpass: &[u8], cfg: &mut Config) -> Result<bool> {
-    if cfg.change_protector_pass_for_policy(&dir.policy.keyid, pass, newpass)? {
+    if cfg.change_protector_pass_for_policy(&dir.policy.keyid, pass, newpass) {
         cfg.save().map_err(|e| anyhow!("Failed to save config: {e}"))?;
         Ok(true)
     } else {
@@ -143,10 +143,10 @@ pub fn encrypt_dir(path: &Path, password: &[u8], cfg: &mut Config) -> Result<Pol
     // Generate a protector key and use it to wrap the master key
     let protector_key = protector::ProtectorKey::new_random();
     let protector_id = protector_key.get_id();
-    let policy = WrappedPolicyKey::new(master_key, &protector_key)?;
+    let policy = WrappedPolicyKey::new(master_key, &protector_key);
 
     // Wrap the protector key with a password
-    let protector = PasswordProtector::new(protector_key, password)?;
+    let protector = PasswordProtector::new(protector_key, password);
 
     // Store the new protector and policy in the configuration
     cfg.add_protector(protector_id.clone(), Protector::Password(protector))?;

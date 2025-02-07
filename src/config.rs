@@ -64,7 +64,7 @@ impl Config {
         Ok(())
     }
 
-    pub fn change_protector_pass_for_policy(&mut self, id: &PolicyKeyId, pass: &[u8], newpass: &[u8]) -> Result<bool> {
+    pub fn change_protector_pass_for_policy(&mut self, id: &PolicyKeyId, pass: &[u8], newpass: &[u8]) -> bool {
         if let Some(policies) = self.policies.get(id) {
             for protid in policies.keys() {
                 // TODO if several protectors have the same password
@@ -74,7 +74,7 @@ impl Config {
                 }
             }
         }
-        Ok(false)
+        false
     }
 
     /// Get all protectors that can be used to unlock the policy key identified by `id`

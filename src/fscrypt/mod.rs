@@ -5,7 +5,7 @@ use anyhow::{bail, ensure, Result};
 use std::os::fd::AsRawFd;
 use nix::errno::Errno;
 use num_enum::{FromPrimitive, TryFromPrimitive};
-use rand::RngCore;
+use rand::{RngCore, rngs::OsRng};
 use serde::{Serialize, Deserialize};
 use serde_with::{serde_as, hex::Hex};
 use std::mem;
@@ -73,9 +73,8 @@ impl Default for PolicyKey {
 impl PolicyKey {
     /// Generates a new, random key
     pub fn new_random() -> Self {
-        let mut rng = rand::thread_rng();
         let mut key = PolicyKey::default();
-        rng.try_fill_bytes(&mut key.0).unwrap();
+        OsRng.fill_bytes(&mut key.0);
         key
     }
 

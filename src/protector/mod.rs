@@ -2,7 +2,7 @@
 use ctr::cipher::{KeyIvInit, StreamCipher};
 use hmac::Mac;
 use pbkdf2::pbkdf2_hmac;
-use rand::RngCore;
+use rand::{RngCore, rngs::OsRng};
 use serde::{Serialize, Deserialize};
 use serde_with::{serde_as, hex::Hex, base64::Base64};
 use sha2::{Digest, Sha256, Sha512};
@@ -35,9 +35,8 @@ impl From<&[u8; PROTECTOR_KEY_LEN]> for ProtectorKey {
 impl ProtectorKey {
     /// Generates a new, random key
     pub fn new_random() -> Self {
-        let mut rng = rand::thread_rng();
         let mut key = ProtectorKey::default();
-        rng.try_fill_bytes(&mut key.0).unwrap();
+        OsRng.fill_bytes(&mut key.0);
         key
     }
 
@@ -109,9 +108,9 @@ impl Protector {
     }
 
     /// Unwraps the key using a password
-    pub fn change_pass(&mut self, pass: &[u8], newpass: &[u8]) -> anyhow::Result<bool> {
+    pub fn change_pass(&mut self, pass: &[u8], newpass: &[u8]) -> bool {
         match self {
-            Protector::Password(p) => Ok(p.change_pass(pass, newpass)?)
+            Protector::Password(p) => p.change_pass(pass, newpass)
         }
     }
 }

@@ -1,6 +1,5 @@
 
-use anyhow::Result;
-use rand::RngCore;
+use rand::{RngCore, rngs::OsRng};
 use serde::{Serialize, Deserialize};
 use serde_with::{serde_as, base64::Base64};
 
@@ -30,15 +29,14 @@ pub struct PasswordProtector {
 
 impl PasswordProtector {
     /// Creates a new [`PasswordProtector`] that wraps a [`ProtectorKey`] with a password.
-    pub fn new(mut raw_key: ProtectorKey, pass: &[u8]) -> Result<Self> {
-        let mut rng = rand::thread_rng();
+    pub fn new(mut raw_key: ProtectorKey, pass: &[u8]) -> Self {
         let mut iv = AesIv::default();
-        rng.try_fill_bytes(&mut iv.0)?;
+        OsRng.fill_bytes(&mut iv.0);
         let mut salt = Salt::default();
-        rng.try_fill_bytes(&mut salt.0)?;
+        OsRng.fill_bytes(&mut salt.0);
         let key = Aes256Key::new_from_password(pass, &salt);
         let hmac = aes_enc(&key, &iv, &mut raw_key.0);
-        Ok(PasswordProtector{ wrapped_key: raw_key.0, iv, salt, hmac })
+        PasswordProtector{ wrapped_key: raw_key.0, iv, salt, hmac }
     }
 
     /// Unwraps a [`ProtectorKey`] with a password.
@@ -53,12 +51,12 @@ impl PasswordProtector {
     }
 
     /// Changes the password of this protector
-    pub fn change_pass(&mut self, pass: &[u8], newpass: &[u8]) -> Result<bool> {
+    pub fn change_pass(&mut self, pass: &[u8], newpass: &[u8]) -> bool {
         if let Some(raw_key) = self.decrypt(pass) {
-            *self = PasswordProtector::new(raw_key, newpass)?;
-            Ok(true)
+            *self = PasswordProtector::new(raw_key, newpass);
+            true
         } else {
-            Ok(false)
+            false
         }
     }
 }

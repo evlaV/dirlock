@@ -1,6 +1,5 @@
 
-use anyhow::Result;
-use rand::RngCore;
+use rand::{RngCore, rngs::OsRng};
 use serde::{Serialize, Deserialize};
 use serde_with::{serde_as, base64::Base64};
 
@@ -29,12 +28,11 @@ pub struct WrappedPolicyKey {
 
 impl WrappedPolicyKey {
     /// Creates a new [`WrappedPolicyKey`] that wraps a [`PolicyKey`] with a [`ProtectorKey`]
-    pub fn new(mut raw_key: PolicyKey, protector_key: &ProtectorKey) -> Result<Self> {
-        let mut rng = rand::thread_rng();
+    pub fn new(mut raw_key: PolicyKey, protector_key: &ProtectorKey) -> Self {
         let mut iv = AesIv::default();
-        rng.try_fill_bytes(&mut iv.0)?;
+        OsRng.fill_bytes(&mut iv.0);
         let hmac = aes_enc(protector_key, &iv, raw_key.as_mut());
-        Ok(WrappedPolicyKey{ wrapped_key: *raw_key.as_ref(), iv, hmac })
+        WrappedPolicyKey{ wrapped_key: *raw_key.as_ref(), iv, hmac }
     }
 
     /// Unwraps a [`PolicyKey`] with a [`ProtectorKey`]
