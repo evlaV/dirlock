@@ -70,8 +70,15 @@ pub fn get_encrypted_dir_data(path: &Path, cfg: &Config) -> Result<DirStatus> {
 }
 
 /// Convenience function to call `get_encrypted_dir_data` on a user's home directory
-pub fn get_homedir_data(user: &str, cfg: &Config) -> Result<DirStatus> {
-    get_encrypted_dir_data(&util::get_homedir(user)?, cfg)
+///
+/// Returns None if the user does not exist.
+pub fn get_homedir_data(user: &str, cfg: &Config) -> Result<Option<DirStatus>> {
+    if let Some(dir) = util::get_homedir(user)? {
+        let dir_data = get_encrypted_dir_data(&dir, cfg)?;
+        Ok(Some(dir_data))
+    } else {
+        Ok(None)
+    }
 }
 
 /// Unlocks a directory with the given password
