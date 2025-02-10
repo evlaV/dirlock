@@ -292,7 +292,7 @@ pub fn add_key(dir: &Path, key: &PolicyKey) -> Result<PolicyKeyId> {
     arg.raw = *key.as_ref();
 
     let raw_fd = fd.as_raw_fd();
-    let argptr = std::ptr::addr_of_mut!(arg) as *mut fscrypt_add_key_arg;
+    let argptr = &raw mut arg as *mut fscrypt_add_key_arg;
     match unsafe { ioctl::fscrypt_add_key(raw_fd, argptr) } {
         Err(x) => Err(x.into()),
         _ => Ok(PolicyKeyId(unsafe { arg.key_spec.u.identifier }))
@@ -308,7 +308,7 @@ pub fn remove_key(dir: &Path, keyid: &PolicyKeyId, users: RemoveKeyUsers) -> Res
     arg.key_spec.u.identifier = keyid.0;
 
     let raw_fd = fd.as_raw_fd();
-    let argptr = std::ptr::addr_of_mut!(arg);
+    let argptr = &raw mut arg;
     if let Err(x) = match users {
         RemoveKeyUsers::CurrentUser => unsafe { ioctl::fscrypt_remove_key(raw_fd, argptr) },
         RemoveKeyUsers::AllUsers => unsafe { ioctl::fscrypt_remove_key_all_users(raw_fd, argptr) },
@@ -327,7 +327,7 @@ pub fn get_policy(dir: &Path) -> Result<Option<Policy>> {
     arg.policy_size = mem::size_of::<fscrypt_policy>() as u64;
 
     let raw_fd = fd.as_raw_fd();
-    let argptr = std::ptr::addr_of_mut!(arg) as *mut fscrypt_get_policy_ex_arg_ioctl;
+    let argptr = &raw mut arg as *mut fscrypt_get_policy_ex_arg_ioctl;
     match unsafe { ioctl::fscrypt_get_policy_ex(raw_fd, argptr) } {
         Err(Errno::ENODATA) => Ok(None),
         Err(x) => Err(x.into()),
@@ -349,7 +349,7 @@ pub fn set_policy(dir: &Path, keyid: &PolicyKeyId) -> Result<()> {
     };
 
     let raw_fd = fd.as_raw_fd();
-    let argptr = std::ptr::addr_of_mut!(arg) as *mut fscrypt_policy_v1;
+    let argptr = &raw mut arg as *mut fscrypt_policy_v1;
     match unsafe { ioctl::fscrypt_set_policy(raw_fd, argptr) } {
         Err(x) => Err(x.into()),
         _ => Ok(())
@@ -365,7 +365,7 @@ pub fn get_key_status(dir: &Path, keyid: &PolicyKeyId) -> Result<(KeyStatus, Key
     arg.key_spec.u.identifier = keyid.0;
 
     let raw_fd = fd.as_raw_fd();
-    let argptr = std::ptr::addr_of_mut!(arg);
+    let argptr = &raw mut arg;
     if let Err(x) = unsafe { ioctl::fscrypt_get_key_status(raw_fd, argptr) } {
         return Err(x.into());
     };
