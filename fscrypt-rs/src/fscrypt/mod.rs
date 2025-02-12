@@ -294,7 +294,7 @@ pub fn add_key(dir: &Path, key: &PolicyKey) -> Result<PolicyKeyId> {
     let raw_fd = fd.as_raw_fd();
     let argptr = &raw mut arg as *mut fscrypt_add_key_arg;
     match unsafe { ioctl::fscrypt_add_key(raw_fd, argptr) } {
-        Err(x) => Err(x.into()),
+        Err(x) => Err(describe_error(x)),
         _ => Ok(PolicyKeyId(unsafe { arg.key_spec.u.identifier }))
     }
 }
@@ -313,7 +313,7 @@ pub fn remove_key(dir: &Path, keyid: &PolicyKeyId, users: RemoveKeyUsers) -> Res
         RemoveKeyUsers::CurrentUser => unsafe { ioctl::fscrypt_remove_key(raw_fd, argptr) },
         RemoveKeyUsers::AllUsers => unsafe { ioctl::fscrypt_remove_key_all_users(raw_fd, argptr) },
     } {
-        return Err(x.into());
+        return Err(describe_error(x));
     }
 
     Ok(RemovalStatusFlags::from_bits_truncate(arg.removal_status_flags))
@@ -330,7 +330,7 @@ pub fn get_policy(dir: &Path) -> Result<Option<Policy>> {
     let argptr = &raw mut arg as *mut fscrypt_get_policy_ex_arg_ioctl;
     match unsafe { ioctl::fscrypt_get_policy_ex(raw_fd, argptr) } {
         Err(Errno::ENODATA) => Ok(None),
-        Err(x) => Err(x.into()),
+        Err(x) => Err(describe_error(x)),
         Ok(_) => Ok(Some(arg.policy.into()))
     }
 }
@@ -351,7 +351,7 @@ pub fn set_policy(dir: &Path, keyid: &PolicyKeyId) -> Result<()> {
     let raw_fd = fd.as_raw_fd();
     let argptr = &raw mut arg as *mut fscrypt_policy_v1;
     match unsafe { ioctl::fscrypt_set_policy(raw_fd, argptr) } {
-        Err(x) => Err(x.into()),
+        Err(x) => Err(describe_error(x)),
         _ => Ok(())
     }
 }
@@ -367,7 +367,7 @@ pub fn get_key_status(dir: &Path, keyid: &PolicyKeyId) -> Result<(KeyStatus, Key
     let raw_fd = fd.as_raw_fd();
     let argptr = &raw mut arg;
     if let Err(x) = unsafe { ioctl::fscrypt_get_key_status(raw_fd, argptr) } {
-        return Err(x.into());
+        return Err(describe_error(x));
     };
 
     let Ok(key_status) = KeyStatus::try_from(arg.status) else {
@@ -396,6 +396,19 @@ fn get_mountpoint(dir: &Path) -> Result<PathBuf> {
         }
         current.pop();
     }
+}
+
+/// Describe the errors returned by the fscrypt ioctls
+fn describe_error(err: Errno) -> anyhow::Error {
+    let msg = match err {
+        Errno::EEXIST => "Already encrypted with a different key",
+        Errno::EINVAL => "Invalid or unsupported encryption policy",
+        Errno::ENOTTY => "This filesystem does not support encryption",
+        Errno::EOPNOTSUPP => "Encryption not enabled in the filesystem or in the kernel",
+        Errno::EPERM => "This directory cannot be encrypted (is it the root of that filesystem?)",
+        e => e.desc(), // The default message is fine for everything else
+    };
+    anyhow::anyhow!(msg)
 }
 
 #[cfg(test)]
