@@ -1,8 +1,9 @@
 
 use anyhow::{bail, ensure, Result};
 use argh::FromArgs;
+use std::io::{self, Write};
 use std::path::PathBuf;
-use fscrypt_rs::{fscrypt, config};
+use fscrypt_rs::{fscrypt, config, util};
 use zeroize::Zeroizing;
 
 #[derive(FromArgs)]
@@ -53,6 +54,9 @@ struct ChangePassArgs {
 #[argh(subcommand, name = "encrypt")]
 /// Encrypt a directory
 struct EncryptArgs {
+    /// force encrypting a directory with data
+    #[argh(switch, long = "force")]
+    force: bool,
     /// directory
     #[argh(positional)]
     dir: PathBuf,
@@ -148,13 +152,37 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
         x => bail!("{}", x),
     };
 
+    let empty_dir = util::dir_is_empty(&args.dir)?;
+
+    if args.force && !empty_dir {
+        println!("You are about to encrypt a directory that contains data.");
+        println!("This feature is *experimental*. Make sure that you are not");
+        println!("accessing the files while they are being encrypted in order");
+        println!("to avoid unexpected behaviors.");
+        print!("Do you want to continue? [y/N] ");
+        io::stdout().flush().unwrap();
+        let mut s = String::new();
+        let _ = io::stdin().read_line(&mut s)?;
+        if s.trim() != "y" {
+            return Ok(());
+        }
+        fscrypt_rs::convert::check_can_convert_dir(&args.dir)?;
+    } else if !empty_dir {
+        bail!("The directory is not empty. Use --force to override");
+    }
+
     eprint!("Enter encryption password: ");
     let pass1 = Zeroizing::new(rpassword::read_password()?);
     eprint!("Repeat encryption password: ");
     let pass2 = Zeroizing::new(rpassword::read_password()?);
     ensure!(pass1 == pass2, "Passwords don't match");
 
-    let keyid = fscrypt_rs::encrypt_dir(&args.dir, pass1.as_bytes(), &mut cfg)?;
+    let keyid = if args.force && !empty_dir {
+        println!("Encrypting the contents of {}, this can take a while", args.dir.display());
+        fscrypt_rs::convert::convert_dir(&args.dir, pass1.as_bytes(), &mut cfg)?
+    } else {
+        fscrypt_rs::encrypt_dir(&args.dir, pass1.as_bytes(), &mut cfg)?
+    };
     println!("{}", keyid);
 
     Ok(())

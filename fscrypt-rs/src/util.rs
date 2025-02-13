@@ -9,7 +9,7 @@ pub(crate) fn get_homedir(user: &str) -> Result<Option<PathBuf>> {
 }
 
 /// Check if a directory is empty
-pub(crate) fn dir_is_empty(dir: &Path) -> Result<bool> {
+pub fn dir_is_empty(dir: &Path) -> Result<bool> {
     let empty = std::fs::read_dir(dir)?.next().is_none();
     Ok(empty)
 }

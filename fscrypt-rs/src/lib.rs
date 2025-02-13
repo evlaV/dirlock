@@ -1,8 +1,9 @@
 
 pub mod config;
+pub mod convert;
 pub mod fscrypt;
 pub mod protector;
-mod util;
+pub mod util;
 
 use anyhow::{anyhow, bail, Result};
 use config::Config;
