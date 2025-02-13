@@ -52,10 +52,12 @@ fn load_protector(id: &ProtectorId) -> Result<Option<Protector>> {
 /// Save a protector to disk
 fn save_protector(id: &ProtectorId, prot: &Protector) -> Result<()> {
     let path = &keystore_dirs().protectors;
-    std::fs::create_dir_all(path)?;
+    std::fs::create_dir_all(path)
+        .map_err(|e| anyhow!("Failed to create {}: {e}", path.display()))?;
     let filename = path.join(id.to_string());
     // TODO: create a temporary file first, then rename
-    let mut file = std::fs::File::create(filename)?;
+    let mut file = std::fs::File::create(filename)
+        .map_err(|e| anyhow!("Failed to store protector {id}: {e}"))?;
     serde_json::to_writer_pretty(&file, prot)?;
     file.write_all(b"\n")?;
     Ok(())
@@ -81,10 +83,12 @@ fn load_policy_map(id: &PolicyKeyId) -> Result<PolicyMap> {
 /// Save a policy map to disk
 fn save_policy_map(id: &PolicyKeyId, policy_map: &PolicyMap) -> Result<()> {
     let path = &keystore_dirs().policies;
-    std::fs::create_dir_all(path)?;
+    std::fs::create_dir_all(path)
+        .map_err(|e| anyhow!("Failed to create {}: {e}", path.display()))?;
     let filename = path.join(id.to_string());
     // TODO: create a temporary file first, then rename
-    let mut file = std::fs::File::create(filename)?;
+    let mut file = std::fs::File::create(filename)
+        .map_err(|e| anyhow!("Failed to store policy key {id}: {e}"))?;
     serde_json::to_writer_pretty(&file, policy_map)?;
     file.write_all(b"\n")?;
     Ok(())
