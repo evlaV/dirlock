@@ -67,7 +67,7 @@ fn do_chauthtok(pamh: Pam, flags: PamFlags) -> Result<(), PamError> {
     };
 
     // Get the data of the user's home directory
-    let dir_data = match fscrypt_rs::get_homedir_data(user) {
+    let mut dir_data = match fscrypt_rs::get_homedir_data(user) {
         Ok(Some(DirStatus::Encrypted(d))) => d,
         Ok(Some(_)) => return Err(PamError::USER_UNKNOWN), // The home directory is not encrypted by us
         Ok(None)    => return Err(PamError::USER_UNKNOWN), // The home directory does not exist
@@ -121,7 +121,7 @@ fn do_chauthtok(pamh: Pam, flags: PamFlags) -> Result<(), PamError> {
     }
 
     // Change the password
-    match fscrypt_rs::change_dir_password(&dir_data, pass, newpass) {
+    match fscrypt_rs::change_dir_password(&mut dir_data, pass, newpass) {
         Ok(true) => {
             log_notice(&pamh, format!("password changed for {user}"));
             Ok(())

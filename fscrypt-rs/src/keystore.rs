@@ -105,26 +105,14 @@ pub fn add_protector_to_policy(policy_id: &PolicyKeyId, protector_id: ProtectorI
 }
 
 /// Add a protector to the key store
-pub fn add_protector(id: ProtectorId, prot: Protector) -> Result<()> {
-    let path = keystore_dirs().protectors.join(id.to_string());
-    if path.exists() {
-        bail!("Trying to overwrite an existing protector");
-    }
-    save_protector(&id, &prot)
-}
-
-/// Changes the password of a protector used to lock the given policy
-pub fn change_protector_pass_for_policy(id: &PolicyKeyId, pass: &[u8], newpass: &[u8]) -> Result<bool> {
-    let protectors = get_protectors_for_policy(id)?;
-    for (protid, mut prot, _) in protectors {
-        // TODO if several protectors have the same password
-        // this only changes the first one.
-        if prot.change_pass(pass, newpass) {
-            save_protector(&protid, &prot)?;
-            return Ok(true);
+pub fn add_protector(id: &ProtectorId, prot: &Protector, overwrite: bool) -> Result<()> {
+    if !overwrite {
+        let path = keystore_dirs().protectors.join(id.to_string());
+        if path.exists() {
+            bail!("Trying to overwrite an existing protector");
         }
     }
-    Ok(false)
+    save_protector(id, prot)
 }
 
 /// Get all protectors that can be used to unlock the policy key identified by `id`

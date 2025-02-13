@@ -117,7 +117,7 @@ fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
 fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
     use fscrypt_rs::{DirStatus::*, UnlockAction};
 
-    let dir_data = match fscrypt_rs::get_encrypted_dir_data(&args.dir)? {
+    let mut dir_data = match fscrypt_rs::get_encrypted_dir_data(&args.dir)? {
         Encrypted(d) => d,
         x => bail!("{}", x),
     };
@@ -135,7 +135,7 @@ fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
     let npass2 = Zeroizing::new(rpassword::read_password()?);
     ensure!(npass1 == npass2, "Passwords don't match");
 
-    if ! fscrypt_rs::change_dir_password(&dir_data, pass.as_bytes(), npass1.as_bytes())? {
+    if ! fscrypt_rs::change_dir_password(&mut dir_data, pass.as_bytes(), npass1.as_bytes())? {
         bail!("Unable to change the password for directory {}", args.dir.display())
     }
 
