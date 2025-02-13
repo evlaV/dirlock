@@ -3,7 +3,7 @@ use anyhow::{bail, ensure, Result};
 use argh::FromArgs;
 use std::io::{self, Write};
 use std::path::PathBuf;
-use fscrypt_rs::{fscrypt, config, util};
+use fscrypt_rs::{fscrypt, util};
 use zeroize::Zeroizing;
 
 #[derive(FromArgs)]
@@ -74,8 +74,7 @@ struct StatusArgs {
 fn cmd_lock(args: &LockArgs) -> Result<()> {
     use fscrypt_rs::DirStatus::*;
 
-    let cfg = config::Config::new_from_file()?;
-    let dir_data = match fscrypt_rs::get_encrypted_dir_data(&args.dir, &cfg)? {
+    let dir_data = match fscrypt_rs::get_encrypted_dir_data(&args.dir)? {
         Encrypted(d) if d.key_status == fscrypt::KeyStatus::Absent =>
             bail!("The directory {} is already locked", args.dir.display()),
         Encrypted(d) => d,
@@ -98,8 +97,7 @@ fn cmd_lock(args: &LockArgs) -> Result<()> {
 fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
     use fscrypt_rs::{DirStatus::*, UnlockAction};
 
-    let cfg = config::Config::new_from_file()?;
-    let dir_data = match fscrypt_rs::get_encrypted_dir_data(&args.dir, &cfg)? {
+    let dir_data = match fscrypt_rs::get_encrypted_dir_data(&args.dir)? {
         Encrypted(d) if d.key_status == fscrypt::KeyStatus::Present =>
             bail!("The directory {} is already unlocked", args.dir.display()),
         Encrypted(d) => d,
@@ -109,7 +107,7 @@ fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
     eprint!("Enter encryption password: ");
     let pass = Zeroizing::new(rpassword::read_password()?);
 
-    if ! fscrypt_rs::unlock_dir(&dir_data, pass.as_bytes(), UnlockAction::AuthAndUnlock, &cfg)? {
+    if ! fscrypt_rs::unlock_dir(&dir_data, pass.as_bytes(), UnlockAction::AuthAndUnlock)? {
         bail!("Unable to unlock directory {}: wrong password", args.dir.display())
     }
 
@@ -119,8 +117,7 @@ fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
 fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
     use fscrypt_rs::{DirStatus::*, UnlockAction};
 
-    let mut cfg = config::Config::new_from_file()?;
-    let dir_data = match fscrypt_rs::get_encrypted_dir_data(&args.dir, &cfg)? {
+    let dir_data = match fscrypt_rs::get_encrypted_dir_data(&args.dir)? {
         Encrypted(d) => d,
         x => bail!("{}", x),
     };
@@ -128,7 +125,7 @@ fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
     eprint!("Enter the current password: ");
     let pass = Zeroizing::new(rpassword::read_password()?);
 
-    if ! fscrypt_rs::unlock_dir(&dir_data, pass.as_bytes(), UnlockAction::AuthOnly, &cfg)? {
+    if ! fscrypt_rs::unlock_dir(&dir_data, pass.as_bytes(), UnlockAction::AuthOnly)? {
         bail!("Password not valid for directory {}", args.dir.display())
     }
 
@@ -138,7 +135,7 @@ fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
     let npass2 = Zeroizing::new(rpassword::read_password()?);
     ensure!(npass1 == npass2, "Passwords don't match");
 
-    if ! fscrypt_rs::change_dir_password(&dir_data, pass.as_bytes(), npass1.as_bytes(), &mut cfg)? {
+    if ! fscrypt_rs::change_dir_password(&dir_data, pass.as_bytes(), npass1.as_bytes())? {
         bail!("Unable to change the password for directory {}", args.dir.display())
     }
 
@@ -146,8 +143,7 @@ fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
 }
 
 fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
-    let mut cfg = config::Config::new_from_file()?;
-    match fscrypt_rs::get_encrypted_dir_data(&args.dir, &cfg)? {
+    match fscrypt_rs::get_encrypted_dir_data(&args.dir)? {
         fscrypt_rs::DirStatus::Unencrypted => (),
         x => bail!("{}", x),
     };
@@ -179,9 +175,9 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
 
     let keyid = if args.force && !empty_dir {
         println!("Encrypting the contents of {}, this can take a while", args.dir.display());
-        fscrypt_rs::convert::convert_dir(&args.dir, pass1.as_bytes(), &mut cfg)?
+        fscrypt_rs::convert::convert_dir(&args.dir, pass1.as_bytes())?
     } else {
-        fscrypt_rs::encrypt_dir(&args.dir, pass1.as_bytes(), &mut cfg)?
+        fscrypt_rs::encrypt_dir(&args.dir, pass1.as_bytes())?
     };
     println!("{}", keyid);
 
@@ -192,8 +188,7 @@ fn cmd_status(args: &StatusArgs) -> Result<()> {
     use fscrypt_rs::DirStatus::*;
     use fscrypt::KeyStatus::*;
 
-    let cfg = config::Config::new_from_file()?;
-    let dir_data = match fscrypt_rs::get_encrypted_dir_data(&args.dir, &cfg)? {
+    let dir_data = match fscrypt_rs::get_encrypted_dir_data(&args.dir)? {
         Encrypted(d) => d,
         x => {
             println!("{x}");

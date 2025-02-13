@@ -1,12 +1,11 @@
 
-pub mod config;
 pub mod convert;
 pub mod fscrypt;
+mod keystore;
 pub mod protector;
 pub mod util;
 
 use anyhow::{anyhow, bail, Result};
-use config::Config;
 use fscrypt::{Policy, PolicyKeyId, RemovalStatusFlags};
 use protector::{Protector, PasswordProtector, WrappedPolicyKey};
 use std::path::{Path, PathBuf};
@@ -51,8 +50,8 @@ pub struct EncryptedDirData {
 ///
 /// If a value is returned it implies that:
 /// 1. The directory is encrypted with a supported fscrypt policy (v2).
-/// 2. The configuration contains a protector for that policy.
-pub fn get_encrypted_dir_data(path: &Path, cfg: &Config) -> Result<DirStatus> {
+/// 2. The keystore contains a protector for that policy.
+pub fn get_encrypted_dir_data(path: &Path) -> Result<DirStatus> {
     let policy = match fscrypt::get_policy(path).
         map_err(|e| anyhow!("Failed to get encryption policy: {e}"))? {
         Some(Policy::V2(p)) => p,
@@ -60,7 +59,7 @@ pub fn get_encrypted_dir_data(path: &Path, cfg: &Config) -> Result<DirStatus> {
         None    => return Ok(DirStatus::Unencrypted),
     };
 
-    if cfg.get_protectors_for_policy(&policy.keyid).is_empty() {
+    if keystore::get_protectors_for_policy(&policy.keyid)?.is_empty() {
         return Ok(DirStatus::KeyMissing);
     };
 
@@ -73,9 +72,9 @@ pub fn get_encrypted_dir_data(path: &Path, cfg: &Config) -> Result<DirStatus> {
 /// Convenience function to call `get_encrypted_dir_data` on a user's home directory
 ///
 /// Returns None if the user does not exist.
-pub fn get_homedir_data(user: &str, cfg: &Config) -> Result<Option<DirStatus>> {
+pub fn get_homedir_data(user: &str) -> Result<Option<DirStatus>> {
     if let Some(dir) = util::get_homedir(user)? {
-        let dir_data = get_encrypted_dir_data(&dir, cfg)?;
+        let dir_data = get_encrypted_dir_data(&dir)?;
         Ok(Some(dir_data))
     } else {
         Ok(None)
@@ -87,14 +86,14 @@ pub fn get_homedir_data(user: &str, cfg: &Config) -> Result<Option<DirStatus>> {
 /// Returns true on success, false if the password is incorrect. Note
 /// that this call also succeeds if the directory is already unlocked
 /// as long as the password is correct.
-pub fn unlock_dir(dir: &EncryptedDirData, password: &[u8], action: UnlockAction, cfg: &Config) -> Result<bool> {
-    let protectors = cfg.get_protectors_for_policy(&dir.policy.keyid);
+pub fn unlock_dir(dir: &EncryptedDirData, password: &[u8], action: UnlockAction) -> Result<bool> {
+    let protectors = keystore::get_protectors_for_policy(&dir.policy.keyid)?;
     if protectors.is_empty() {
         bail!("Unable to find a key to decrypt directory {}", dir.path.display());
     }
 
     for (_, prot, policykey) in protectors {
-        if let Some(master_key) = prot.decrypt(policykey, password) {
+        if let Some(master_key) = prot.decrypt(&policykey, password) {
             if action == UnlockAction::AuthAndUnlock {
                 if let Err(e) = fscrypt::add_key(&dir.path, &master_key) {
                     bail!("Unable to unlock directory with master key: {}", e);
@@ -118,19 +117,15 @@ pub fn lock_dir(dir: &EncryptedDirData) -> Result<RemovalStatusFlags> {
         .map_err(|e|anyhow!("Unable to lock directory: {e}"))
 }
 
-/// Locks a directory
-pub fn change_dir_password(dir: &EncryptedDirData, pass: &[u8], newpass: &[u8], cfg: &mut Config) -> Result<bool> {
-    if cfg.change_protector_pass_for_policy(&dir.policy.keyid, pass, newpass) {
-        cfg.save().map_err(|e| anyhow!("Failed to save config: {e}"))?;
-        Ok(true)
-    } else {
-        Ok(false)
-    }
+/// Changes the password of the protector used to lock this directory
+pub fn change_dir_password(dir: &EncryptedDirData, pass: &[u8], newpass: &[u8]) -> Result<bool> {
+    // TODO: Allow selecting one specific protector
+    keystore::change_protector_pass_for_policy(&dir.policy.keyid, pass, newpass)
 }
 
 /// Encrypts a directory
-pub fn encrypt_dir(path: &Path, password: &[u8], cfg: &mut Config) -> Result<PolicyKeyId> {
-    match get_encrypted_dir_data(path, cfg)? {
+pub fn encrypt_dir(path: &Path, password: &[u8]) -> Result<PolicyKeyId> {
+    match get_encrypted_dir_data(path)? {
         DirStatus::Unencrypted => (),
         x => bail!("{}", x),
     };
@@ -140,6 +135,7 @@ pub fn encrypt_dir(path: &Path, password: &[u8], cfg: &mut Config) -> Result<Pol
     }
 
     // Generate a master key and encrypt the directory with it
+    // FIXME: Write the key to disk before encrypting the directory
     let master_key = fscrypt::PolicyKey::new_random();
     let keyid = fscrypt::add_key(path, &master_key)?;
     if let Err(e) = fscrypt::set_policy(path, &keyid) {
@@ -156,10 +152,8 @@ pub fn encrypt_dir(path: &Path, password: &[u8], cfg: &mut Config) -> Result<Pol
     // Wrap the protector key with a password
     let protector = PasswordProtector::new(protector_key, password);
 
-    // Store the new protector and policy in the configuration
-    cfg.add_protector(protector_id.clone(), Protector::Password(protector))?;
-    cfg.add_policy(keyid.clone(), protector_id, policy)?;
-    // FIXME: At this point the directory is encrypted and we don't have a key
-    cfg.save().map_err(|e| anyhow!("Failed to save config: {e}"))?;
+    // Store the new protector and policy
+    keystore::add_protector(protector_id.clone(), Protector::Password(protector))?;
+    keystore::add_protector_to_policy(&keyid, protector_id, policy)?;
     Ok(keyid)
 }
