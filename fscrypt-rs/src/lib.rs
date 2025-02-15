@@ -44,7 +44,7 @@ pub struct EncryptedDirData {
     pub policy: fscrypt::PolicyV2,
     pub key_status: fscrypt::KeyStatus,
     pub key_flags: fscrypt::KeyStatusFlags,
-    protectors: Vec<(ProtectorId, Protector, WrappedPolicyKey)>,
+    pub protectors: Vec<(ProtectorId, Protector, WrappedPolicyKey)>,
 }
 
 /// Return an [`EncryptedDirData`] object for the directory.
@@ -164,4 +164,26 @@ pub fn encrypt_dir(path: &Path, password: &[u8]) -> Result<PolicyKeyId> {
     keystore::add_protector(&protector_id, &Protector::Password(protector), false)?;
     keystore::add_protector_to_policy(&keyid, protector_id, policy)?;
     Ok(keyid)
+}
+
+// TODO: temporary function, used by the import-master-key command
+pub fn import_policy_key(master_key: fscrypt::PolicyKey, password: &[u8]) -> Result<()> {
+    let keyid = master_key.get_id();
+
+    if ! keystore::get_protectors_for_policy(&keyid)?.is_empty() {
+        bail!("This key has already been imported");
+    }
+
+    // Generate a protector key and use it to wrap the master key
+    let protector_key = protector::ProtectorKey::new_random();
+    let protector_id = protector_key.get_id();
+    let policy = WrappedPolicyKey::new(master_key, &protector_key);
+
+    // Wrap the protector key with a password
+    let protector = PasswordProtector::new(protector_key, password);
+
+    // Store the new protector and policy
+    keystore::add_protector(&protector_id, &Protector::Password(protector), false)?;
+    keystore::add_protector_to_policy(&keyid, protector_id, policy)?;
+    Ok(())
 }

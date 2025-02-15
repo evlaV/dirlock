@@ -20,6 +20,8 @@ enum Command {
     Unlock(UnlockArgs),
     ChangePass(ChangePassArgs),
     Encrypt(EncryptArgs),
+    ExportMasterKey(ExportMasterKeyArgs),
+    ImportMasterKey(ImportMasterKeyArgs),
     Status(StatusArgs),
 }
 
@@ -61,6 +63,20 @@ struct EncryptArgs {
     #[argh(positional)]
     dir: PathBuf,
 }
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "export-master-key")]
+/// Export the master encryption key of a given directory
+struct ExportMasterKeyArgs {
+    /// directory
+    #[argh(positional)]
+    dir: PathBuf,
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "import-master-key")]
+/// Import a master encryption key
+struct ImportMasterKeyArgs { }
 
 #[derive(FromArgs)]
 #[argh(subcommand, name = "status")]
@@ -184,6 +200,66 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
     Ok(())
 }
 
+fn cmd_export_master_key(args: &ExportMasterKeyArgs) -> Result<()> {
+    use base64::prelude::*;
+    let dir_data = match fscrypt_rs::get_encrypted_dir_data(&args.dir)? {
+        fscrypt_rs::DirStatus::Encrypted(d) => d,
+        x => {
+            println!("{x}");
+            return Ok(());
+        }
+    };
+
+    eprintln!("This will print to stdout the master key with ID {}", dir_data.policy.keyid);
+    eprintln!("- This is the encryption key for directory {}", args.dir.display());
+    eprintln!("- This feature is only available while this tool is under development");
+    eprintln!("- The printed key is *raw and unprotected*, you are reponsible for keeping it safe");
+    eprintln!();
+    eprint!("Enter the current encryption password: ");
+    let pass = Zeroizing::new(rpassword::read_password()?);
+
+    for (_, prot, policykey) in &dir_data.protectors {
+        if let Some(master_key) = prot.decrypt(policykey, pass.as_bytes()) {
+            println!("{}", BASE64_STANDARD.encode(master_key.as_ref()));
+            return Ok(());
+        }
+    }
+
+    Err(anyhow::anyhow!("Unable to unlock master key for directory {}", args.dir.display()))
+}
+
+fn cmd_import_master_key() -> Result<()> {
+    use base64::prelude::*;
+
+    let mut key = String::new();
+    eprintln!("This will import a previously exported master encryption key");
+    eprintln!("- This feature is only available while this tool is under development");
+    eprintln!("- You cannot import a key that has already been imported");
+    eprintln!("- You will be asked to enter a password to protect the key");
+    eprintln!("- After importing it you can use the key normally to unlock encrypted directories");
+    eprintln!();
+    eprint!("Enter master key: ");
+    io::stdin().read_line(&mut key)?;
+
+    let mut master_key = fscrypt::PolicyKey::default();
+    match BASE64_STANDARD.decode_slice(key.trim(), master_key.as_mut()) {
+        Err(e) => bail!("Unable to decode key: {e}"),
+        Ok(x) if x != 64 => bail!("Wrong key size"),
+        Ok(_) => (),
+    }
+
+    eprint!("Enter password to protect this key: ");
+    let pass1 = Zeroizing::new(rpassword::read_password()?);
+    eprint!("Repeat the password: ");
+    let pass2 = Zeroizing::new(rpassword::read_password()?);
+    ensure!(pass1 == pass2, "Passwords don't match");
+
+    let keyid = master_key.get_id();
+    fscrypt_rs::import_policy_key(master_key, pass1.as_bytes())?;
+    println!("{keyid}");
+    Ok(())
+}
+
 fn cmd_status(args: &StatusArgs) -> Result<()> {
     use fscrypt_rs::DirStatus::*;
     use fscrypt::KeyStatus::*;
@@ -216,6 +292,8 @@ fn main() -> Result<()> {
         Unlock(args) => cmd_unlock(args),
         ChangePass(args) => cmd_change_pass(args),
         Encrypt(args) => cmd_encrypt(args),
+        ExportMasterKey(args) => cmd_export_master_key(args),
+        ImportMasterKey(_) => cmd_import_master_key(),
         Status(args) => cmd_status(args),
     }
 }
