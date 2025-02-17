@@ -220,7 +220,7 @@ fn cmd_export_master_key(args: &ExportMasterKeyArgs) -> Result<()> {
 
     for (_, prot, policykey) in &dir_data.protectors {
         if let Some(master_key) = prot.decrypt(policykey, pass.as_bytes()) {
-            println!("{}", BASE64_STANDARD.encode(master_key.as_ref()));
+            println!("{}", BASE64_STANDARD.encode(master_key.secret()));
             return Ok(());
         }
     }
@@ -242,7 +242,7 @@ fn cmd_import_master_key() -> Result<()> {
     io::stdin().read_line(&mut key)?;
 
     let mut master_key = fscrypt::PolicyKey::default();
-    match BASE64_STANDARD.decode_slice(key.trim(), master_key.as_mut()) {
+    match BASE64_STANDARD.decode_slice(key.trim(), master_key.secret_mut()) {
         Err(e) => bail!("Unable to decode key: {e}"),
         Ok(x) if x != 64 => bail!("Wrong key size"),
         Ok(_) => (),

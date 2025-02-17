@@ -48,46 +48,44 @@ impl TryFrom<&str> for PolicyKeyId {
 
 /// A raw master encryption key, meant to be added to the kernel for a specific filesystem.
 #[derive(zeroize::ZeroizeOnDrop)]
-pub struct PolicyKey([u8; POLICY_KEY_LEN]);
-
-impl AsRef<[u8; POLICY_KEY_LEN]> for PolicyKey {
-    fn as_ref(&self) -> &[u8; POLICY_KEY_LEN] {
-        &self.0
-    }
-}
-
-impl AsMut<[u8; POLICY_KEY_LEN]> for PolicyKey {
-    fn as_mut(&mut self) -> &mut [u8; POLICY_KEY_LEN] {
-        &mut self.0
-    }
-}
+pub struct PolicyKey(Box<[u8; POLICY_KEY_LEN]>);
 
 impl From<&[u8; POLICY_KEY_LEN]> for PolicyKey {
     fn from(src: &[u8; POLICY_KEY_LEN]) -> Self {
-        PolicyKey(*src)
+        PolicyKey(Box::new(*src))
     }
 }
 
 impl Default for PolicyKey {
     /// Returns a key containing only zeroes.
     fn default() -> Self {
-        Self([0u8; POLICY_KEY_LEN])
+        Self(Box::new([0u8; POLICY_KEY_LEN]))
     }
 }
 
 impl PolicyKey {
+    /// Return a reference to the data
+    pub fn secret(&self) -> &[u8; POLICY_KEY_LEN] {
+        self.0.as_ref()
+    }
+
+    /// Return a mutable reference to the data
+    pub fn secret_mut(&mut self) -> &mut [u8; POLICY_KEY_LEN] {
+        self.0.as_mut()
+    }
+
     /// Generates a new, random key
     pub fn new_random() -> Self {
         let mut key = PolicyKey::default();
-        OsRng.fill_bytes(&mut key.0);
+        OsRng.fill_bytes(key.secret_mut());
         key
     }
 
     /// Generates a new key, reading the data from a given source
     pub fn new_from_reader(r: &mut impl std::io::Read) -> Result<Self> {
         let mut key = PolicyKey::default();
-        let len = r.read(&mut key.0)?;
-        ensure!(len == key.0.len(), "Expected {} bytes when reading key, got {len}", key.0.len());
+        let len = r.read(key.secret_mut())?;
+        ensure!(len == POLICY_KEY_LEN, "Expected {POLICY_KEY_LEN} bytes when reading key, got {len}");
         Ok(key)
     }
 
@@ -97,13 +95,12 @@ impl PolicyKey {
     /// <https://github.com/google/fscrypt/blob/v0.3.5/crypto/crypto.go#L183>
     pub fn get_id(&self) -> PolicyKeyId {
         let info = b"fscrypt\x00\x01";
-        let hkdf = hkdf::Hkdf::<sha2::Sha512>::new(None, &self.0);
+        let hkdf = hkdf::Hkdf::<sha2::Sha512>::new(None, self.secret());
         let mut result = PolicyKeyId::default();
         hkdf.expand(info, &mut result.0).unwrap();
         result
     }
 }
-
 
 /// A fscrypt encryption policy
 pub enum Policy {
@@ -286,9 +283,9 @@ pub fn add_key(dir: &Path, key: &PolicyKey) -> Result<PolicyKeyId> {
 
     let mut arg : fscrypt_add_key_arg_full = unsafe { mem::zeroed() };
     arg.key_spec.type_ = FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER;
-    arg.raw_size = key.as_ref().len() as u32;
+    arg.raw_size = key.secret().len() as u32;
     arg.key_id = 0;
-    arg.raw = *key.as_ref();
+    arg.raw = *key.secret();
 
     let raw_fd = fd.as_raw_fd();
     let argptr = &raw mut arg as *mut fscrypt_add_key_arg;

@@ -31,14 +31,14 @@ impl WrappedPolicyKey {
     pub fn new(mut raw_key: PolicyKey, protector_key: &ProtectorKey) -> Self {
         let mut iv = AesIv::default();
         OsRng.fill_bytes(&mut iv.0);
-        let hmac = aes_enc(protector_key, &iv, raw_key.as_mut());
-        WrappedPolicyKey{ wrapped_key: *raw_key.as_ref(), iv, hmac }
+        let hmac = aes_enc(protector_key, &iv, raw_key.secret_mut());
+        WrappedPolicyKey{ wrapped_key: *raw_key.secret(), iv, hmac }
     }
 
     /// Unwraps a [`PolicyKey`] with a [`ProtectorKey`]
     pub fn decrypt(&self, protector_key: ProtectorKey) -> Option<PolicyKey> {
         let mut raw_key = PolicyKey::from(&self.wrapped_key);
-        if aes_dec(&protector_key, &self.iv, &self.hmac, raw_key.as_mut()) {
+        if aes_dec(&protector_key, &self.iv, &self.hmac, raw_key.secret_mut()) {
             Some(raw_key)
         } else {
             None

@@ -35,15 +35,15 @@ impl PasswordProtector {
         let mut salt = Salt::default();
         OsRng.fill_bytes(&mut salt.0);
         let key = Aes256Key::new_from_password(pass, &salt);
-        let hmac = aes_enc(&key, &iv, &mut raw_key.0);
-        PasswordProtector{ wrapped_key: raw_key.0, iv, salt, hmac }
+        let hmac = aes_enc(&key, &iv, raw_key.secret_mut());
+        PasswordProtector{ wrapped_key: *raw_key.secret(), iv, salt, hmac }
     }
 
     /// Unwraps a [`ProtectorKey`] with a password.
     pub fn decrypt(&self, pass: &[u8]) -> Option<ProtectorKey> {
         let mut raw_key = ProtectorKey::from(&self.wrapped_key);
         let key = Aes256Key::new_from_password(pass, &self.salt);
-        if aes_dec(&key, &self.iv, &self.hmac, &mut raw_key.0) {
+        if aes_dec(&key, &self.iv, &self.hmac, raw_key.secret_mut()) {
             Some(raw_key)
         } else {
             None

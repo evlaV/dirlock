@@ -23,20 +23,30 @@ const SALT_LEN: usize = 32;
 /// A raw encryption key used to unwrap the master [`PolicyKey`]
 /// used by fscrypt.
 #[derive(Default, zeroize::ZeroizeOnDrop)]
-pub struct ProtectorKey([u8; PROTECTOR_KEY_LEN]);
+pub struct ProtectorKey(Box<[u8; PROTECTOR_KEY_LEN]>);
 type Aes256Key = ProtectorKey;
 
 impl From<&[u8; PROTECTOR_KEY_LEN]> for ProtectorKey {
     fn from(src: &[u8; PROTECTOR_KEY_LEN]) -> Self {
-        ProtectorKey(*src)
+        ProtectorKey(Box::new(*src))
     }
 }
 
 impl ProtectorKey {
+    /// Return a reference to the data
+    pub fn secret(&self) -> &[u8; PROTECTOR_KEY_LEN] {
+        self.0.as_ref()
+    }
+
+    /// Return a mutable reference to the data
+    pub fn secret_mut(&mut self) -> &mut [u8; PROTECTOR_KEY_LEN] {
+        self.0.as_mut()
+    }
+
     /// Generates a new, random key
     pub fn new_random() -> Self {
         let mut key = ProtectorKey::default();
-        OsRng.fill_bytes(&mut key.0);
+        OsRng.fill_bytes(key.secret_mut());
         key
     }
 
@@ -44,7 +54,7 @@ impl ProtectorKey {
     pub(self) fn new_from_password(pass: &[u8], salt: &Salt) -> Self {
         let iterations = 65535;
         let mut key = ProtectorKey::default();
-        pbkdf2_hmac::<sha2::Sha512>(pass, &salt.0, iterations, &mut key.0);
+        pbkdf2_hmac::<sha2::Sha512>(pass, &salt.0, iterations, key.secret_mut());
         key
     }
 
@@ -53,7 +63,7 @@ impl ProtectorKey {
     /// The ID is calculated by applying SHA512 twice and getting the first 8 bytes
     /// <https://github.com/google/fscrypt/blob/v0.3.5/crypto/crypto.go#L176>
     pub fn get_id(&self) -> ProtectorId {
-        let hash = Sha512::digest(Sha512::digest(self.0));
+        let hash = Sha512::digest(Sha512::digest(self.secret()));
         ProtectorId(hash[0..PROTECTOR_ID_LEN].try_into().unwrap())
     }
 }
@@ -118,7 +128,7 @@ impl Protector {
 /// Stretches a 256-bit key into two new keys of the same size using HKDF
 fn stretch_key<'a>(key: &Aes256Key, buffer: &'a mut [u8; 64]) -> (&'a [u8; 32], &'a [u8; 32]) {
     // Run HKDF-expand to get a 512-bit key
-    let hkdf = hkdf::Hkdf::<sha2::Sha256>::new(None, &key.0);
+    let hkdf = hkdf::Hkdf::<sha2::Sha256>::new(None, key.secret());
     hkdf.expand(&[], buffer).unwrap();
     // Split the generated key in two
     let k1 : &[u8; 32] = buffer[ 0..32].try_into().unwrap();
