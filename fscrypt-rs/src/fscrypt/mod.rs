@@ -16,6 +16,7 @@ use std::{
     },
     path::{Path, PathBuf},
 };
+use zeroize::Zeroize;
 
 /// All our keys use the maximum length allowed by fscrypt
 pub(crate) const POLICY_KEY_LEN: usize = FSCRYPT_MAX_KEY_SIZE;
@@ -263,9 +264,7 @@ struct fscrypt_add_key_arg_full {
 
 impl Drop for fscrypt_add_key_arg_full {
     fn drop(&mut self) {
-        unsafe {
-            zeroize::zeroize_flat_type(self)
-        }
+        self.raw.zeroize();
     }
 }
 
