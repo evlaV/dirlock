@@ -1,3 +1,8 @@
+/*
+ * Copyright © 2025 Valve Corporation
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ */
 
 // fscrypt user API, see <linux/fscrypt.h>
 

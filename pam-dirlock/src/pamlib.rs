@@ -1,3 +1,8 @@
+/*
+ * Copyright © 2025 Valve Corporation
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ */
 
 use pamsm::PamError::*;
 use std::ffi::{c_int, c_char, c_void, CStr};

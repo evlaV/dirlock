@@ -1,3 +1,8 @@
+/*
+ * Copyright © 2025 Valve Corporation
+ *
+ * SPDX-License-Identifier: BSD-3-Clause
+ */
 
 use rand::{RngCore, rngs::OsRng};
 use serde::{Serialize, Deserialize};
