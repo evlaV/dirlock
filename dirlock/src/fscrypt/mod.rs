@@ -413,7 +413,7 @@ mod tests {
     use anyhow::{bail, Result};
     use std::env;
 
-    const MNTPOINT_ENV_VAR : &str = "FSCRYPT_RS_TEST_FS";
+    const MNTPOINT_ENV_VAR : &str = "DIRLOCK_TEST_FS";
 
     #[test]
     fn test_add_key() -> Result<()> {

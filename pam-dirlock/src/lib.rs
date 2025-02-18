@@ -2,15 +2,15 @@
 mod pamlib;
 
 use pamsm::{LogLvl, Pam, PamError, PamFlags, PamLibExt, PamMsgStyle, PamServiceModule, pam_module};
-use fscrypt_rs::{DirStatus, UnlockAction};
+use dirlock::{DirStatus, UnlockAction};
 use std::ffi::c_int;
 
 const PAM_UPDATE_AUTHTOK : c_int = 0x2000;
 const PAM_PRELIM_CHECK   : c_int = 0x4000;
 
 // Use with:
-// auth [success=done user_unknown=ignore default=die] pam_fscryptrs.so
-// password [success=done user_unknown=ignore default=die] pam_fscryptrs.so
+// auth [success=done user_unknown=ignore default=die] pam_dirlock.so
+// password [success=done user_unknown=ignore default=die] pam_dirlock.so
 // We cannot use 'default=ignore' because we don't want the unix
 // module to try to authenticate this
 
@@ -29,7 +29,7 @@ fn do_authenticate(pamh: Pam) -> Result<(), PamError> {
     };
 
     // Get the data of the user's home directory
-    let dir_data = match fscrypt_rs::get_homedir_data(user) {
+    let dir_data = match dirlock::get_homedir_data(user) {
         Ok(Some(DirStatus::Encrypted(d))) => d,
         Ok(Some(_)) => return Err(PamError::USER_UNKNOWN), // The home directory is not encrypted by us
         Ok(None)    => return Err(PamError::USER_UNKNOWN), // The home directory does not exist
@@ -42,7 +42,7 @@ fn do_authenticate(pamh: Pam) -> Result<(), PamError> {
         .ok_or(PamError::AUTH_ERR)?;
 
     // Unlock the home directory with the password
-    match fscrypt_rs::unlock_dir(&dir_data, pass, UnlockAction::AuthAndUnlock) {
+    match dirlock::unlock_dir(&dir_data, pass, UnlockAction::AuthAndUnlock) {
         Ok(true) => Ok(()),
         Ok(false) => {
             log_notice(&pamh, format!("authentication failure; user={user}"));
@@ -67,7 +67,7 @@ fn do_chauthtok(pamh: Pam, flags: PamFlags) -> Result<(), PamError> {
     };
 
     // Get the data of the user's home directory
-    let mut dir_data = match fscrypt_rs::get_homedir_data(user) {
+    let mut dir_data = match dirlock::get_homedir_data(user) {
         Ok(Some(DirStatus::Encrypted(d))) => d,
         Ok(Some(_)) => return Err(PamError::USER_UNKNOWN), // The home directory is not encrypted by us
         Ok(None)    => return Err(PamError::USER_UNKNOWN), // The home directory does not exist
@@ -87,7 +87,7 @@ fn do_chauthtok(pamh: Pam, flags: PamFlags) -> Result<(), PamError> {
     let pass = pamlib::get_oldauthtok(&pamh).map(|p| p.to_bytes())?;
 
     // Check that the password is correct
-    match fscrypt_rs::unlock_dir(&dir_data, pass, UnlockAction::AuthOnly) {
+    match dirlock::unlock_dir(&dir_data, pass, UnlockAction::AuthOnly) {
         Ok(true) => (),
         Ok(false) => {
             log_notice(&pamh, format!("authentication failure; user={user}"));
@@ -121,7 +121,7 @@ fn do_chauthtok(pamh: Pam, flags: PamFlags) -> Result<(), PamError> {
     }
 
     // Change the password
-    match fscrypt_rs::change_dir_password(&mut dir_data, pass, newpass) {
+    match dirlock::change_dir_password(&mut dir_data, pass, newpass) {
         Ok(true) => {
             log_notice(&pamh, format!("password changed for {user}"));
             Ok(())

@@ -4,7 +4,7 @@ use std::io::Read;
 use argh::FromArgs;
 use std::path::PathBuf;
 
-use fscrypt_rs::fscrypt;
+use dirlock::fscrypt;
 
 #[derive(FromArgs)]
 /// Disk encryption tool.

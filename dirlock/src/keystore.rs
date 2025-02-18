@@ -8,8 +8,8 @@ use crate::protector::{Protector, ProtectorId, WrappedPolicyKey};
 use crate::fscrypt::PolicyKeyId;
 
 // If this variable is set use this keystore dir instead of the default one
-const KEYSTORE_DIR_ENV_VAR : &str = "FSCRYPT_RS_KEYSTORE";
-const DEFAULT_KEYSTORE_DIR : &str = "/var/lib/fscrypt-rs";
+const KEYSTORE_DIR_ENV_VAR : &str = "DIRLOCK_KEYSTORE";
+const DEFAULT_KEYSTORE_DIR : &str = "/var/lib/dirlock";
 
 struct KeystoreDirs {
     policies: PathBuf,

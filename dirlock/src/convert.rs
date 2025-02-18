@@ -51,7 +51,7 @@ pub fn convert_dir(dir: &Path, pass: &[u8]) -> Result<fscrypt::PolicyKeyId> {
     let parent = dir.parent().unwrap_or(&dir);
 
     // Create a temporary work dir in the parent directory
-    let tempdir = TempDir::new_in(parent, ".fscrypt-rs")?;
+    let tempdir = TempDir::new_in(parent, ".dirlock")?;
     let workdir = tempdir.path();
     fs::set_permissions(workdir, {
         let mut perms = fs::metadata(workdir)?.permissions();

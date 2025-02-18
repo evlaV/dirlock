@@ -3,7 +3,7 @@ use anyhow::{bail, ensure, Result};
 use argh::FromArgs;
 use std::io::{self, Write};
 use std::path::PathBuf;
-use fscrypt_rs::{fscrypt, util};
+use dirlock::{fscrypt, util};
 use zeroize::Zeroizing;
 
 #[derive(FromArgs)]
@@ -88,16 +88,16 @@ struct StatusArgs {
 }
 
 fn cmd_lock(args: &LockArgs) -> Result<()> {
-    use fscrypt_rs::DirStatus::*;
+    use dirlock::DirStatus::*;
 
-    let dir_data = match fscrypt_rs::get_encrypted_dir_data(&args.dir)? {
+    let dir_data = match dirlock::get_encrypted_dir_data(&args.dir)? {
         Encrypted(d) if d.key_status == fscrypt::KeyStatus::Absent =>
             bail!("The directory {} is already locked", args.dir.display()),
         Encrypted(d) => d,
         x => bail!("{}", x),
     };
 
-    let flags = fscrypt_rs::lock_dir(&dir_data)?;
+    let flags = dirlock::lock_dir(&dir_data)?;
 
     if flags.contains(fscrypt::RemovalStatusFlags::FilesBusy) {
         println!("Key removed, but some files are still busy");
@@ -111,9 +111,9 @@ fn cmd_lock(args: &LockArgs) -> Result<()> {
 }
 
 fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
-    use fscrypt_rs::{DirStatus::*, UnlockAction};
+    use dirlock::{DirStatus::*, UnlockAction};
 
-    let dir_data = match fscrypt_rs::get_encrypted_dir_data(&args.dir)? {
+    let dir_data = match dirlock::get_encrypted_dir_data(&args.dir)? {
         Encrypted(d) if d.key_status == fscrypt::KeyStatus::Present =>
             bail!("The directory {} is already unlocked", args.dir.display()),
         Encrypted(d) => d,
@@ -123,7 +123,7 @@ fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
     eprint!("Enter encryption password: ");
     let pass = Zeroizing::new(rpassword::read_password()?);
 
-    if ! fscrypt_rs::unlock_dir(&dir_data, pass.as_bytes(), UnlockAction::AuthAndUnlock)? {
+    if ! dirlock::unlock_dir(&dir_data, pass.as_bytes(), UnlockAction::AuthAndUnlock)? {
         bail!("Unable to unlock directory {}: wrong password", args.dir.display())
     }
 
@@ -131,9 +131,9 @@ fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
 }
 
 fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
-    use fscrypt_rs::{DirStatus::*, UnlockAction};
+    use dirlock::{DirStatus::*, UnlockAction};
 
-    let mut dir_data = match fscrypt_rs::get_encrypted_dir_data(&args.dir)? {
+    let mut dir_data = match dirlock::get_encrypted_dir_data(&args.dir)? {
         Encrypted(d) => d,
         x => bail!("{}", x),
     };
@@ -141,7 +141,7 @@ fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
     eprint!("Enter the current password: ");
     let pass = Zeroizing::new(rpassword::read_password()?);
 
-    if ! fscrypt_rs::unlock_dir(&dir_data, pass.as_bytes(), UnlockAction::AuthOnly)? {
+    if ! dirlock::unlock_dir(&dir_data, pass.as_bytes(), UnlockAction::AuthOnly)? {
         bail!("Password not valid for directory {}", args.dir.display())
     }
 
@@ -151,7 +151,7 @@ fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
     let npass2 = Zeroizing::new(rpassword::read_password()?);
     ensure!(npass1 == npass2, "Passwords don't match");
 
-    if ! fscrypt_rs::change_dir_password(&mut dir_data, pass.as_bytes(), npass1.as_bytes())? {
+    if ! dirlock::change_dir_password(&mut dir_data, pass.as_bytes(), npass1.as_bytes())? {
         bail!("Unable to change the password for directory {}", args.dir.display())
     }
 
@@ -159,8 +159,8 @@ fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
 }
 
 fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
-    match fscrypt_rs::get_encrypted_dir_data(&args.dir)? {
-        fscrypt_rs::DirStatus::Unencrypted => (),
+    match dirlock::get_encrypted_dir_data(&args.dir)? {
+        dirlock::DirStatus::Unencrypted => (),
         x => bail!("{}", x),
     };
 
@@ -178,7 +178,7 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
         if s.trim() != "y" {
             return Ok(());
         }
-        fscrypt_rs::convert::check_can_convert_dir(&args.dir)?;
+        dirlock::convert::check_can_convert_dir(&args.dir)?;
     } else if !empty_dir {
         bail!("The directory is not empty. Use --force to override");
     }
@@ -191,9 +191,9 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
 
     let keyid = if args.force && !empty_dir {
         println!("Encrypting the contents of {}, this can take a while", args.dir.display());
-        fscrypt_rs::convert::convert_dir(&args.dir, pass1.as_bytes())?
+        dirlock::convert::convert_dir(&args.dir, pass1.as_bytes())?
     } else {
-        fscrypt_rs::encrypt_dir(&args.dir, pass1.as_bytes())?
+        dirlock::encrypt_dir(&args.dir, pass1.as_bytes())?
     };
     println!("{}", keyid);
 
@@ -202,8 +202,8 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
 
 fn cmd_export_master_key(args: &ExportMasterKeyArgs) -> Result<()> {
     use base64::prelude::*;
-    let dir_data = match fscrypt_rs::get_encrypted_dir_data(&args.dir)? {
-        fscrypt_rs::DirStatus::Encrypted(d) => d,
+    let dir_data = match dirlock::get_encrypted_dir_data(&args.dir)? {
+        dirlock::DirStatus::Encrypted(d) => d,
         x => {
             println!("{x}");
             return Ok(());
@@ -255,16 +255,16 @@ fn cmd_import_master_key() -> Result<()> {
     ensure!(pass1 == pass2, "Passwords don't match");
 
     let keyid = master_key.get_id();
-    fscrypt_rs::import_policy_key(master_key, pass1.as_bytes())?;
+    dirlock::import_policy_key(master_key, pass1.as_bytes())?;
     println!("{keyid}");
     Ok(())
 }
 
 fn cmd_status(args: &StatusArgs) -> Result<()> {
-    use fscrypt_rs::DirStatus::*;
+    use dirlock::DirStatus::*;
     use fscrypt::KeyStatus::*;
 
-    let dir_data = match fscrypt_rs::get_encrypted_dir_data(&args.dir)? {
+    let dir_data = match dirlock::get_encrypted_dir_data(&args.dir)? {
         Encrypted(d) => d,
         x => {
             println!("{x}");

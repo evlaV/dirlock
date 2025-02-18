@@ -1,6 +1,6 @@
 [workspace]
 members = [
-   "fscrypt-rs",
-   "pam-fscryptrs",
+   "dirlock",
+   "pam-dirlock",
 ]
 resolver = "2"
