@@ -4,3 +4,6 @@ members = [
    "pam-dirlock",
 ]
 resolver = "2"
+
+[profile.release]
+strip="symbols"
