@@ -172,10 +172,11 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
     let empty_dir = util::dir_is_empty(&args.dir)?;
 
     if args.force && !empty_dir {
-        println!("You are about to encrypt a directory that contains data.");
-        println!("This feature is *experimental*. Make sure that you are not");
-        println!("accessing the files while they are being encrypted in order");
-        println!("to avoid unexpected behaviors.");
+        println!("You are about to encrypt a directory that contains data.\n\
+                  This feature is *experimental*. Make sure that you are not\n\
+                  accessing the files while they are being encrypted in order\n\
+                  to avoid unexpected behaviors. If this is a home directory\n\
+                  the user should be ideally logged out.\n");
         print!("Do you want to continue? [y/N] ");
         io::stdout().flush().unwrap();
         let mut s = String::new();
@@ -195,12 +196,17 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
     ensure!(pass1 == pass2, "Passwords don't match");
 
     let keyid = if args.force && !empty_dir {
-        println!("Encrypting the contents of {}, this can take a while", args.dir.display());
-        dirlock::convert::convert_dir(&args.dir, pass1.as_bytes())?
+        println!("\nEncrypting the contents of {}, this can take a while", args.dir.display());
+        let k = dirlock::convert::convert_dir(&args.dir, pass1.as_bytes())?;
+        println!("\nThe directory is now encrypted. If this was a home directory\n\
+                  and you plan to log in using PAM you need to use the encryption\n\
+                  password from now on. The old password in /etc/shadow is no longer\n\
+                  used and you can disable it with usermod -p '*' USERNAME\n");
+        k
     } else {
         dirlock::encrypt_dir(&args.dir, pass1.as_bytes())?
     };
-    println!("{}", keyid);
+    println!("Directory encrypted with key id {}", keyid);
 
     Ok(())
 }
