@@ -1,0 +1,29 @@
+post_install() {
+    local pamfile=/etc/pam.d/system-auth
+
+    local authjump=$(sed -En '/^-?auth.*success=[0-9]/{s|.*success=([0-9]).*|\1|;p}' \
+                   "$pamfile" | sort -nr | head -n 1)
+
+    local passjump=$(sed -En '/^-?password.*success=[0-9]/{s|.*success=([0-9]).*|\1|;p}' \
+                   "$pamfile" | sort -nr | head -n 1)
+
+    if [ -z "$authjump" ] || [ -z "$passjump" ]; then
+        echo "WARNING: could not update $pamfile - you need to enable the dirlock PAM module manually" >&2
+        return
+    fi
+
+    local authnext=$(($authjump + 1))
+    local passnext=$(($passjump + 1))
+
+    sed -f - -i "$pamfile" <<-EOF
+	/^-\?auth.*success=$authjump/ {
+		i\
+		auth       [success=$authnext user_unknown=ignore default=die]   /var/lib/dirlock/pam_dirlock.so
+	}
+
+	/^-\?password.*success=$passjump/ {
+		i\
+		password   [success=$passnext user_unknown=ignore default=die]   /var/lib/dirlock/pam_dirlock.so
+	}
+	EOF
+}
