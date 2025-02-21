@@ -301,6 +301,12 @@ sha256sums=('SKIP'
             'ce36e65b0d2999d2aafac989fb249189a141aee1f53c612c1f37d72631959f69')
 install=dirlock.install
 
+pkgver() {
+  cd "$srcdir/$pkgname"
+
+  echo 0.0.1.$(git rev-list --count HEAD).$(git rev-parse --short HEAD)
+}
+
 prepare() {
   cd "$srcdir"
 
