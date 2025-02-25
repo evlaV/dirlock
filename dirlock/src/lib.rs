@@ -12,7 +12,7 @@ pub mod util;
 
 use anyhow::{anyhow, bail, Result};
 use fscrypt::{Policy, PolicyKeyId, RemovalStatusFlags};
-use protector::{Protector, ProtectorId, PasswordProtector, WrappedPolicyKey};
+use protector::{ProtectorId, ProtectedPolicyKey};
 use std::path::{Path, PathBuf};
 
 #[derive(PartialEq)]
@@ -49,7 +49,7 @@ pub struct EncryptedDirData {
     pub policy: fscrypt::PolicyV2,
     pub key_status: fscrypt::KeyStatus,
     pub key_flags: fscrypt::KeyStatusFlags,
-    pub protectors: Vec<(ProtectorId, Protector, WrappedPolicyKey)>,
+    pub protectors: Vec<ProtectedPolicyKey>,
 }
 
 /// Return an [`EncryptedDirData`] object for the directory.
@@ -98,8 +98,8 @@ pub fn unlock_dir(dir: &EncryptedDirData, password: &[u8], action: UnlockAction)
         bail!("Unable to find a key to decrypt directory {}", dir.path.display());
     }
 
-    for (_, prot, policykey) in &dir.protectors {
-        if let Some(master_key) = prot.decrypt(policykey, password) {
+    for p in &dir.protectors {
+        if let Some(master_key) = p.protector.decrypt(&p.policy_key, password) {
             if action == UnlockAction::AuthAndUnlock {
                 if let Err(e) = fscrypt::add_key(&dir.path, &master_key) {
                     bail!("Unable to unlock directory with master key: {}", e);
@@ -127,9 +127,9 @@ pub fn lock_dir(dir: &EncryptedDirData) -> Result<RemovalStatusFlags> {
 pub fn change_dir_password(dir: &mut EncryptedDirData, pass: &[u8], newpass: &[u8]) -> Result<bool> {
     // TODO: Allow selecting one specific protector. If several
     // protectors have the same password this only changes the first one.
-    for (protid, ref mut prot, _) in &mut dir.protectors {
-        if prot.change_pass(pass, newpass) {
-            keystore::add_protector(protid, prot, true)?;
+    for p in &mut dir.protectors {
+        if p.protector.change_pass(pass, newpass) {
+            keystore::add_protector(&p.protector_id, &p.protector, true)?;
             return Ok(true);
         }
     }
@@ -140,18 +140,16 @@ pub fn change_dir_password(dir: &mut EncryptedDirData, pass: &[u8], newpass: &[u
 pub fn add_protector_to_dir(dir: &EncryptedDirData, pass: &[u8], newpass: &[u8]) -> Result<Option<ProtectorId>> {
     // TODO: Allow selecting one specific protector. This tries
     // all protectors until one can be unlocked with pass
-    for (_, prot, policykey) in &dir.protectors {
-        if let Some(master_key) = prot.decrypt(policykey, pass) {
-            // Generate a protector key and use it to wrap the master key
-            let protector_key = protector::ProtectorKey::new_random();
-            let protector_id = protector_key.get_id();
-            let policy = WrappedPolicyKey::new(master_key, &protector_key);
-            let protector = PasswordProtector::new(protector_key, newpass);
+    for ProtectedPolicyKey { protector_id: _, protector, policy_key } in &dir.protectors {
+        if let Some(master_key) = protector.decrypt(policy_key, pass) {
+            // Generate a protector and use it to wrap the master key
+            let p = ProtectedPolicyKey::new_with_password(master_key, newpass);
+            let protid = p.protector_id.clone();
 
             // Store the new protector and policy
-            keystore::add_protector(&protector_id, &Protector::Password(protector), false)?;
-            keystore::add_protector_to_policy(&dir.policy.keyid, protector_id.clone(), policy)?;
-            return Ok(Some(protector_id))
+            keystore::add_protector(&p.protector_id, &p.protector, false)?;
+            keystore::add_protector_to_policy(&dir.policy.keyid, p)?;
+            return Ok(Some(protid))
         }
     }
 
@@ -179,17 +177,12 @@ pub fn encrypt_dir(path: &Path, password: &[u8]) -> Result<PolicyKeyId> {
         bail!("Failed to encrypt directory: {e}");
     }
 
-    // Generate a protector key and use it to wrap the master key
-    let protector_key = protector::ProtectorKey::new_random();
-    let protector_id = protector_key.get_id();
-    let policy = WrappedPolicyKey::new(master_key, &protector_key);
-
-    // Wrap the protector key with a password
-    let protector = PasswordProtector::new(protector_key, password);
+    // Generate a protector and use it to wrap the master key
+    let k = ProtectedPolicyKey::new_with_password(master_key, password);
 
     // Store the new protector and policy
-    keystore::add_protector(&protector_id, &Protector::Password(protector), false)?;
-    keystore::add_protector_to_policy(&keyid, protector_id, policy)?;
+    keystore::add_protector(&k.protector_id, &k.protector, false)?;
+    keystore::add_protector_to_policy(&keyid, k)?;
     Ok(keyid)
 }
 
@@ -201,16 +194,11 @@ pub fn import_policy_key(master_key: fscrypt::PolicyKey, password: &[u8]) -> Res
         bail!("This key has already been imported");
     }
 
-    // Generate a protector key and use it to wrap the master key
-    let protector_key = protector::ProtectorKey::new_random();
-    let protector_id = protector_key.get_id();
-    let policy = WrappedPolicyKey::new(master_key, &protector_key);
-
-    // Wrap the protector key with a password
-    let protector = PasswordProtector::new(protector_key, password);
+    // Generate a protector and use it to wrap the master key
+    let k = ProtectedPolicyKey::new_with_password(master_key, password);
 
     // Store the new protector and policy
-    keystore::add_protector(&protector_id, &Protector::Password(protector), false)?;
-    keystore::add_protector_to_policy(&keyid, protector_id, policy)?;
+    keystore::add_protector(&k.protector_id, &k.protector, false)?;
+    keystore::add_protector_to_policy(&keyid, k)?;
     Ok(())
 }

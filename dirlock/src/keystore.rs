@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
-use crate::protector::{Protector, ProtectorId, WrappedPolicyKey};
+use crate::protector::{Protector, ProtectorId, ProtectedPolicyKey, WrappedPolicyKey};
 use crate::fscrypt::PolicyKeyId;
 
 // If this variable is set use this keystore dir instead of the default one
@@ -99,13 +99,13 @@ fn save_policy_map(id: &PolicyKeyId, policy_map: &PolicyMap) -> Result<()> {
     Ok(())
 }
 
-/// Add a (wrapped) policy key together with the ID of the protector used to unwrap it
-pub fn add_protector_to_policy(policy_id: &PolicyKeyId, protector_id: ProtectorId, policy: WrappedPolicyKey) -> Result<()> {
+/// Add a protected policy key to the key store
+pub fn add_protector_to_policy(policy_id: &PolicyKeyId, protected_key: ProtectedPolicyKey) -> Result<()> {
     let mut policy_map = load_policy_map(policy_id)?;
-    if policy_map.contains_key(&protector_id) {
+    if policy_map.contains_key(&protected_key.protector_id) {
         bail!("Trying to add a duplicate protector for a policy");
     };
-    policy_map.insert(protector_id, policy);
+    policy_map.insert(protected_key.protector_id, protected_key.policy_key);
     save_policy_map(policy_id, &policy_map)
 }
 
@@ -121,15 +121,15 @@ pub fn add_protector(id: &ProtectorId, prot: &Protector, overwrite: bool) -> Res
 }
 
 /// Get all protectors that can be used to unlock the policy key identified by `id`
-pub fn get_protectors_for_policy(id: &PolicyKeyId) -> Result<Vec<(ProtectorId, Protector, WrappedPolicyKey)>> {
+pub fn get_protectors_for_policy(id: &PolicyKeyId) -> Result<Vec<ProtectedPolicyKey>> {
     let mut result = vec![];
     let policies = load_policy_map(id)?;
-    for (protid, policy) in policies {
+    for (protector_id, policy_key) in policies {
         // TODO if this fails it means that there's a policy
         // wrapped with a protector but the protector is
         // missing. We should report this.
-        if let Some(prot) = load_protector(&protid)? {
-            result.push((protid, prot, policy));
+        if let Some(protector) = load_protector(&protector_id)? {
+            result.push(ProtectedPolicyKey{ protector_id, protector, policy_key });
         }
     }
     Ok(result)

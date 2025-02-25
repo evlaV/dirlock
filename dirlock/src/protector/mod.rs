@@ -102,6 +102,24 @@ struct Salt(
     [u8; SALT_LEN]
 );
 
+/// A wrapped [`PolicyKey`] together with a [`Protector`] that can unwrap it
+pub struct ProtectedPolicyKey {
+    pub protector_id: ProtectorId,
+    pub protector: Protector,
+    pub policy_key: WrappedPolicyKey,
+}
+
+impl ProtectedPolicyKey {
+    /// Wrap a [`PolicyKey`] with a new [`PasswordProtector`]
+    pub fn new_with_password(key: PolicyKey, password: &[u8]) -> Self {
+        let protector_key = ProtectorKey::new_random();
+        let protector_id = protector_key.get_id();
+        let policy_key = WrappedPolicyKey::new(key, &protector_key);
+        let protector = Protector::Password(PasswordProtector::new(protector_key, password));
+        ProtectedPolicyKey { protector_id, protector, policy_key }
+    }
+}
+
 /// A wrapped [`ProtectorKey`] using one of several available methods
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
