@@ -102,7 +102,7 @@ struct Salt(
     [u8; SALT_LEN]
 );
 
-/// A wrapped [`PolicyKey`] using one of several available methods
+/// A wrapped [`ProtectorKey`] using one of several available methods
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Protector {
