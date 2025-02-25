@@ -136,6 +136,28 @@ pub fn change_dir_password(dir: &mut EncryptedDirData, pass: &[u8], newpass: &[u
     Ok(false)
 }
 
+/// Adds a new protector to a directory
+pub fn add_protector_to_dir(dir: &EncryptedDirData, pass: &[u8], newpass: &[u8]) -> Result<Option<ProtectorId>> {
+    // TODO: Allow selecting one specific protector. This tries
+    // all protectors until one can be unlocked with pass
+    for (_, prot, policykey) in &dir.protectors {
+        if let Some(master_key) = prot.decrypt(policykey, pass) {
+            // Generate a protector key and use it to wrap the master key
+            let protector_key = protector::ProtectorKey::new_random();
+            let protector_id = protector_key.get_id();
+            let policy = WrappedPolicyKey::new(master_key, &protector_key);
+            let protector = PasswordProtector::new(protector_key, newpass);
+
+            // Store the new protector and policy
+            keystore::add_protector(&protector_id, &Protector::Password(protector), false)?;
+            keystore::add_protector_to_policy(&dir.policy.keyid, protector_id.clone(), policy)?;
+            return Ok(Some(protector_id))
+        }
+    }
+
+    Ok(None)
+}
+
 /// Encrypts a directory
 pub fn encrypt_dir(path: &Path, password: &[u8]) -> Result<PolicyKeyId> {
     match get_encrypted_dir_data(path)? {

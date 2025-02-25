@@ -24,6 +24,7 @@ enum Command {
     Lock(LockArgs),
     Unlock(UnlockArgs),
     ChangePass(ChangePassArgs),
+    AddProtector(AddProtectorArgs),
     Encrypt(EncryptArgs),
     ExportMasterKey(ExportMasterKeyArgs),
     ImportMasterKey(ImportMasterKeyArgs),
@@ -52,6 +53,15 @@ struct UnlockArgs {
 #[argh(subcommand, name = "change-password")]
 /// Change the encryption password of a directory
 struct ChangePassArgs {
+    /// directory
+    #[argh(positional)]
+    dir: PathBuf,
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "add-protector")]
+/// Adds a new protector to a directory
+struct AddProtectorArgs {
     /// directory
     #[argh(positional)]
     dir: PathBuf,
@@ -158,6 +168,42 @@ fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
 
     if ! dirlock::change_dir_password(&mut dir_data, pass.as_bytes(), npass1.as_bytes())? {
         bail!("Unable to change the password for directory {}", args.dir.display())
+    }
+
+    Ok(())
+}
+
+fn cmd_add_protector(args: &AddProtectorArgs) -> Result<()> {
+    use dirlock::{DirStatus::*, UnlockAction};
+
+    let dir_data = match dirlock::get_encrypted_dir_data(&args.dir)? {
+        Encrypted(d) => d,
+        x => bail!("{}", x),
+    };
+
+    eprint!("Enter the current password: ");
+    let pass = Zeroizing::new(rpassword::read_password()?);
+
+    if ! dirlock::unlock_dir(&dir_data, pass.as_bytes(), UnlockAction::AuthOnly)? {
+        bail!("Password not valid for directory {}", args.dir.display())
+    }
+
+    eprint!("Enter password for the new protector: ");
+    let npass1 = Zeroizing::new(rpassword::read_password()?);
+    eprint!("Repeat the password: ");
+    let npass2 = Zeroizing::new(rpassword::read_password()?);
+    ensure!(npass1 == npass2, "Passwords don't match");
+
+    if dirlock::unlock_dir(&dir_data, npass1.as_bytes(), UnlockAction::AuthOnly)? {
+        bail!("There is already a protector with that password");
+    }
+
+    if let Some(protid) = dirlock::add_protector_to_dir(&dir_data, pass.as_bytes(), npass1.as_bytes())? {
+        println!("Added protector {protid} to directory {}", args.dir.display());
+    } else {
+        // FIXME: this should not happen because we checked earlier
+        // that the password is correct.
+        bail!("Unexpected error adding protector to directory {}", args.dir.display())
     }
 
     Ok(())
@@ -302,6 +348,7 @@ fn main() -> Result<()> {
         Lock(args) => cmd_lock(args),
         Unlock(args) => cmd_unlock(args),
         ChangePass(args) => cmd_change_pass(args),
+        AddProtector(args) => cmd_add_protector(args),
         Encrypt(args) => cmd_encrypt(args),
         ExportMasterKey(args) => cmd_export_master_key(args),
         ImportMasterKey(_) => cmd_import_master_key(),
