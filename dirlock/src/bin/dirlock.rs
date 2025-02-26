@@ -25,6 +25,7 @@ enum Command {
     Unlock(UnlockArgs),
     ChangePass(ChangePassArgs),
     AddProtector(AddProtectorArgs),
+    RemoveProtector(RemoveProtectorArgs),
     Encrypt(EncryptArgs),
     ExportMasterKey(ExportMasterKeyArgs),
     ImportMasterKey(ImportMasterKeyArgs),
@@ -62,6 +63,15 @@ struct ChangePassArgs {
 #[argh(subcommand, name = "add-protector")]
 /// Adds a new protector to a directory
 struct AddProtectorArgs {
+    /// directory
+    #[argh(positional)]
+    dir: PathBuf,
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "remove-protector")]
+/// Remove a protector from a directory
+struct RemoveProtectorArgs {
     /// directory
     #[argh(positional)]
     dir: PathBuf,
@@ -209,6 +219,28 @@ fn cmd_add_protector(args: &AddProtectorArgs) -> Result<()> {
     Ok(())
 }
 
+fn cmd_remove_protector(args: &RemoveProtectorArgs) -> Result<()> {
+    use dirlock::{DirStatus::*};
+
+    let dir_data = match dirlock::get_encrypted_dir_data(&args.dir)? {
+        Encrypted(d) => d,
+        x => bail!("{}", x),
+    };
+
+    if dir_data.protectors.len() == 1 {
+        bail!("Only one protector left in that directory, refusing to remove it");
+    }
+
+    eprint!("Enter the password of the protector that you want to remove: ");
+    let pass = Zeroizing::new(rpassword::read_password()?);
+
+    if ! dirlock::remove_protector_from_dir(&dir_data, pass.as_bytes())? {
+        bail!("No protector found with that password");
+    }
+
+    Ok(())
+}
+
 fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
     match dirlock::get_encrypted_dir_data(&args.dir)? {
         dirlock::DirStatus::Unencrypted => (),
@@ -349,6 +381,7 @@ fn main() -> Result<()> {
         Unlock(args) => cmd_unlock(args),
         ChangePass(args) => cmd_change_pass(args),
         AddProtector(args) => cmd_add_protector(args),
+        RemoveProtector(args) => cmd_remove_protector(args),
         Encrypt(args) => cmd_encrypt(args),
         ExportMasterKey(args) => cmd_export_master_key(args),
         ImportMasterKey(_) => cmd_import_master_key(),

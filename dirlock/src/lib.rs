@@ -156,6 +156,21 @@ pub fn add_protector_to_dir(dir: &EncryptedDirData, pass: &[u8], newpass: &[u8])
     Ok(None)
 }
 
+/// Remove a protector from a directory.
+/// Note this will remove the protector even if it's the only one left.
+pub fn remove_protector_from_dir(dir: &EncryptedDirData, pass: &[u8]) -> Result<bool> {
+    // TODO: Allow selecting one specific protector. This tries
+    // all protectors until one can be unlocked with the password.
+    for ProtectedPolicyKey { protector_id, protector, policy_key } in &dir.protectors {
+        if protector.decrypt(policy_key, pass).is_some() {
+            // TODO: remove the protector is no one else is using
+            return keystore::remove_protector_from_policy(&dir.policy.keyid, protector_id);
+        }
+    }
+
+    Ok(false)
+}
+
 /// Encrypts a directory
 pub fn encrypt_dir(path: &Path, password: &[u8]) -> Result<PolicyKeyId> {
     match get_encrypted_dir_data(path)? {

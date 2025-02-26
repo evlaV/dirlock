@@ -109,6 +109,15 @@ pub fn add_protector_to_policy(policy_id: &PolicyKeyId, protected_key: Protected
     save_policy_map(policy_id, &policy_map)
 }
 
+/// Remove a protected policy key from the key store
+pub fn remove_protector_from_policy(policy_id: &PolicyKeyId, protector_id: &ProtectorId) -> Result<bool> {
+    let mut policy_map = load_policy_map(policy_id)?;
+    if policy_map.remove(protector_id).is_none() {
+        return Ok(false);
+    };
+    save_policy_map(policy_id, &policy_map).and(Ok(true))
+}
+
 /// Add a protector to the key store
 pub fn add_protector(id: &ProtectorId, prot: &Protector, overwrite: bool) -> Result<()> {
     if !overwrite {
