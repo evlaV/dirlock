@@ -6,6 +6,8 @@
 
 use anyhow::{anyhow, bail, Result};
 use std::collections::HashMap;
+use std::ffi::OsStr;
+use std::fs::DirEntry;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -31,6 +33,21 @@ fn keystore_dirs() -> &'static KeystoreDirs {
         let protectors = Path::new(&dir).join("protectors");
         KeystoreDirs{ policies, protectors }
     })
+}
+
+/// Return an iterator to the IDs of all policy keys available in the key store
+fn policy_key_ids() -> Result<impl Iterator<Item = PolicyKeyId>> {
+    fn id_from_entry(d: DirEntry) -> Option<PolicyKeyId> {
+        let path = d.path();
+        if let Some(path_str) = path.file_name().and_then(OsStr::to_str) {
+            PolicyKeyId::try_from(path_str).ok()
+        } else {
+            None
+        }
+    }
+
+    let policy_dir = &keystore_dirs().policies;
+    Ok(std::fs::read_dir(policy_dir)?.flatten().filter_map(id_from_entry))
 }
 
 /// This contains several instances of the same fscrypt policy key
@@ -127,6 +144,18 @@ pub fn add_protector(id: &ProtectorId, prot: &Protector, overwrite: bool) -> Res
         }
     }
     save_protector(id, prot)
+}
+
+/// Removes a protector if it's not being used in any policy
+pub fn remove_protector_if_unused(protector_id: &ProtectorId) -> Result<bool> {
+    for policy_id in policy_key_ids()? {
+        if load_policy_map(&policy_id)?.contains_key(protector_id) {
+            return Ok(false);
+        }
+    }
+
+    let filename = keystore_dirs().protectors.join(protector_id.to_string());
+    Ok(std::fs::remove_file(&filename).and(Ok(true))?)
 }
 
 /// Get all protectors that can be used to unlock the policy key identified by `id`

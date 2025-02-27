@@ -234,7 +234,9 @@ fn cmd_remove_protector(args: &RemoveProtectorArgs) -> Result<()> {
     eprint!("Enter the password of the protector that you want to remove: ");
     let pass = Zeroizing::new(rpassword::read_password()?);
 
-    if ! dirlock::remove_protector_from_dir(&dir_data, pass.as_bytes())? {
+    if let Some(id) = dirlock::remove_protector_from_dir(&dir_data, pass.as_bytes())? {
+        println!("Removed protector {id}");
+    } else {
         bail!("No protector found with that password");
     }
 
