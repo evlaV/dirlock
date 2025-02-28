@@ -99,7 +99,7 @@ pub fn unlock_dir(dir: &EncryptedDirData, password: &[u8], action: UnlockAction)
     }
 
     for p in &dir.protectors {
-        if let Some(master_key) = p.protector.decrypt(&p.policy_key, password) {
+        if let Some(master_key) = p.protector.unwrap_policy_key(&p.policy_key, password) {
             if action == UnlockAction::AuthAndUnlock {
                 if let Err(e) = fscrypt::add_key(&dir.path, &master_key) {
                     bail!("Unable to unlock directory with master key: {}", e);
@@ -141,7 +141,7 @@ pub fn add_protector_to_dir(dir: &EncryptedDirData, pass: &[u8], newpass: &[u8])
     // TODO: Allow selecting one specific protector. This tries
     // all protectors until one can be unlocked with pass
     for ProtectedPolicyKey { protector_id: _, protector, policy_key } in &dir.protectors {
-        if let Some(master_key) = protector.decrypt(policy_key, pass) {
+        if let Some(master_key) = protector.unwrap_policy_key(policy_key, pass) {
             // Generate a protector and use it to wrap the master key
             let p = ProtectedPolicyKey::new_with_password(master_key, newpass);
             let protid = p.protector_id.clone();
@@ -162,7 +162,7 @@ pub fn remove_protector_from_dir(dir: &EncryptedDirData, pass: &[u8]) -> Result<
     // TODO: Allow selecting one specific protector. This tries
     // all protectors until one can be unlocked with the password.
     for ProtectedPolicyKey { protector_id, protector, policy_key } in &dir.protectors {
-        if protector.decrypt(policy_key, pass).is_some() {
+        if protector.unwrap_policy_key(policy_key, pass).is_some() {
             if keystore::remove_protector_from_policy(&dir.policy.keyid, protector_id)? {
                 // TODO: add an option to make this conditional
                 keystore::remove_protector_if_unused(protector_id)?;

@@ -310,7 +310,7 @@ fn cmd_export_master_key(args: &ExportMasterKeyArgs) -> Result<()> {
     let pass = Zeroizing::new(rpassword::read_password()?);
 
     for p in &dir_data.protectors {
-        if let Some(master_key) = p.protector.decrypt(&p.policy_key, pass.as_bytes()) {
+        if let Some(master_key) = p.protector.unwrap_policy_key(&p.policy_key, pass.as_bytes()) {
             println!("{}", BASE64_STANDARD.encode(master_key.secret()));
             return Ok(());
         }

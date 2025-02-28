@@ -129,15 +129,16 @@ pub enum Protector {
 }
 
 impl Protector {
-    /// Unwraps the key using a password
-    pub fn decrypt(&self, policy: &WrappedPolicyKey, pass: &[u8]) -> Option<PolicyKey> {
-        if let Some(protector_key) = match self {
-            Protector::Password(p) => p.decrypt(pass)
-        } {
-            policy.decrypt(protector_key)
-        } else {
-            None
+    /// Unwraps this protector's [`ProtectorKey`] using a password
+    pub fn unwrap_key(&self, pass: &[u8]) -> Option<ProtectorKey> {
+        match self {
+            Protector::Password(p) => p.unwrap_key(pass)
         }
+    }
+
+    /// Unwraps a [`PolicyKey`] using this protector's key
+    pub fn unwrap_policy_key(&self, policy: &WrappedPolicyKey, pass: &[u8]) -> Option<PolicyKey> {
+        self.unwrap_key(pass).and_then(|k| policy.unwrap_key(k))
     }
 
     /// Unwraps the key using a password

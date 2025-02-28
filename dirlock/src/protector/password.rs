@@ -45,7 +45,7 @@ impl PasswordProtector {
     }
 
     /// Unwraps a [`ProtectorKey`] with a password.
-    pub fn decrypt(&self, pass: &[u8]) -> Option<ProtectorKey> {
+    pub fn unwrap_key(&self, pass: &[u8]) -> Option<ProtectorKey> {
         let mut raw_key = ProtectorKey::from(&self.wrapped_key);
         let key = Aes256Key::new_from_password(pass, &self.salt);
         if aes_dec(&key, &self.iv, &self.hmac, raw_key.secret_mut()) {
@@ -57,7 +57,7 @@ impl PasswordProtector {
 
     /// Changes the password of this protector
     pub fn change_pass(&mut self, pass: &[u8], newpass: &[u8]) -> bool {
-        if let Some(raw_key) = self.decrypt(pass) {
+        if let Some(raw_key) = self.unwrap_key(pass) {
             *self = PasswordProtector::new(raw_key, newpass);
             true
         } else {

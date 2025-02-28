@@ -41,7 +41,7 @@ impl WrappedPolicyKey {
     }
 
     /// Unwraps a [`PolicyKey`] with a [`ProtectorKey`]
-    pub fn decrypt(&self, protector_key: ProtectorKey) -> Option<PolicyKey> {
+    pub fn unwrap_key(&self, protector_key: ProtectorKey) -> Option<PolicyKey> {
         let mut raw_key = PolicyKey::from(&self.wrapped_key);
         if aes_dec(&protector_key, &self.iv, &self.hmac, raw_key.secret_mut()) {
             Some(raw_key)
