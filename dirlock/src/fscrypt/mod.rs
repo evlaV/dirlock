@@ -14,6 +14,7 @@ use rand::{RngCore, rngs::OsRng};
 use serde::{Serialize, Deserialize};
 use serde_with::{serde_as, hex::Hex};
 use std::{
+    fs::File,
     mem,
     os::{
         fd::AsRawFd,
@@ -284,7 +285,7 @@ mod ioctl {
 
 /// Add a [`PolicyKey`] to the kernel for a given filesystem
 pub fn add_key(dir: &Path, key: &PolicyKey) -> Result<PolicyKeyId> {
-    let fd = std::fs::File::open(get_mountpoint(dir)?)?;
+    let fd = File::open(get_mountpoint(dir)?)?;
 
     let mut arg : fscrypt_add_key_arg_full = unsafe { mem::zeroed() };
     arg.key_spec.type_ = FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER;
@@ -302,7 +303,7 @@ pub fn add_key(dir: &Path, key: &PolicyKey) -> Result<PolicyKeyId> {
 
 /// Remove a [`PolicyKey`] from the kernel for a given filesystem
 pub fn remove_key(dir: &Path, keyid: &PolicyKeyId, users: RemoveKeyUsers) -> Result<RemovalStatusFlags> {
-    let fd = std::fs::File::open(get_mountpoint(dir)?)?;
+    let fd = File::open(get_mountpoint(dir)?)?;
 
     let mut arg : fscrypt_remove_key_arg = unsafe { mem::zeroed() };
     arg.key_spec.type_ = FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER;
@@ -322,7 +323,7 @@ pub fn remove_key(dir: &Path, keyid: &PolicyKeyId, users: RemoveKeyUsers) -> Res
 
 /// Check if a directory is encrypted and return its [`Policy`] if that's the case
 pub fn get_policy(dir: &Path) -> Result<Option<Policy>> {
-    let fd = std::fs::File::open(dir)?;
+    let fd = File::open(dir)?;
 
     let mut arg : fscrypt_get_policy_ex_arg = unsafe { mem::zeroed() };
     arg.policy_size = mem::size_of::<fscrypt_policy>() as u64;
@@ -338,7 +339,7 @@ pub fn get_policy(dir: &Path) -> Result<Option<Policy>> {
 
 /// Enable encryption on a directory by setting a new [`Policy`]
 pub fn set_policy(dir: &Path, keyid: &PolicyKeyId) -> Result<()> {
-    let fd = std::fs::File::open(dir)?;
+    let fd = File::open(dir)?;
 
     let mut arg = fscrypt_policy_v2 {
         version : FSCRYPT_POLICY_V2,
@@ -359,7 +360,7 @@ pub fn set_policy(dir: &Path, keyid: &PolicyKeyId) -> Result<()> {
 
 /// Check if a [`PolicyKey`] is loaded into the kernel for a given filesystem
 pub fn get_key_status(dir: &Path, keyid: &PolicyKeyId) -> Result<(KeyStatus, KeyStatusFlags)> {
-    let fd = std::fs::File::open(get_mountpoint(dir)?)?;
+    let fd = File::open(get_mountpoint(dir)?)?;
 
     let mut arg : fscrypt_get_key_status_arg = unsafe { mem::zeroed() };
     arg.key_spec.type_ = FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER;

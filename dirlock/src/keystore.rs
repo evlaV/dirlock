@@ -5,12 +5,14 @@
  */
 
 use anyhow::{anyhow, bail, Result};
-use std::collections::HashMap;
-use std::ffi::OsStr;
-use std::fs::DirEntry;
-use std::io::Write;
-use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::{
+    collections::HashMap,
+    ffi::OsStr,
+    fs,
+    io::Write,
+    path::{Path, PathBuf},
+    sync::OnceLock,
+};
 use crate::protector::{Protector, ProtectorId, ProtectedPolicyKey, WrappedPolicyKey};
 use crate::fscrypt::PolicyKeyId;
 
@@ -37,7 +39,7 @@ fn keystore_dirs() -> &'static KeystoreDirs {
 
 /// Return an iterator to the IDs of all policy keys available in the key store
 fn policy_key_ids() -> Result<impl Iterator<Item = PolicyKeyId>> {
-    fn id_from_entry(d: DirEntry) -> Option<PolicyKeyId> {
+    fn id_from_entry(d: fs::DirEntry) -> Option<PolicyKeyId> {
         let path = d.path();
         if let Some(path_str) = path.file_name().and_then(OsStr::to_str) {
             PolicyKeyId::try_from(path_str).ok()
@@ -47,7 +49,7 @@ fn policy_key_ids() -> Result<impl Iterator<Item = PolicyKeyId>> {
     }
 
     let policy_dir = &keystore_dirs().policies;
-    Ok(std::fs::read_dir(policy_dir)?.flatten().filter_map(id_from_entry))
+    Ok(fs::read_dir(policy_dir)?.flatten().filter_map(id_from_entry))
 }
 
 /// This contains several instances of the same fscrypt policy key
@@ -62,7 +64,7 @@ fn load_protector(id: &ProtectorId) -> Result<Option<Protector>> {
         return Ok(None);
     }
 
-    let protector = match std::fs::OpenOptions::new().read(true).open(protector_file) {
+    let protector = match fs::OpenOptions::new().read(true).open(protector_file) {
         Ok(f) => serde_json::from_reader(f)
             .map_err(|e| anyhow!("Error reading data for protector {id}: {e}"))?,
         Err(e) => bail!("Error opening protector {id}: {e}"),
@@ -74,11 +76,11 @@ fn load_protector(id: &ProtectorId) -> Result<Option<Protector>> {
 /// Save a protector to disk
 fn save_protector(id: &ProtectorId, prot: &Protector) -> Result<()> {
     let path = &keystore_dirs().protectors;
-    std::fs::create_dir_all(path)
+    fs::create_dir_all(path)
         .map_err(|e| anyhow!("Failed to create {}: {e}", path.display()))?;
     let filename = path.join(id.to_string());
     // TODO: create a temporary file first, then rename
-    let mut file = std::fs::File::create(filename)
+    let mut file = fs::File::create(filename)
         .map_err(|e| anyhow!("Failed to store protector {id}: {e}"))?;
     serde_json::to_writer_pretty(&file, prot)?;
     file.write_all(b"\n")?;
@@ -93,7 +95,7 @@ fn load_policy_map(id: &PolicyKeyId) -> Result<PolicyMap> {
         return Ok(HashMap::new());
     }
 
-    let policy = match std::fs::OpenOptions::new().read(true).open(policy_file) {
+    let policy = match fs::OpenOptions::new().read(true).open(policy_file) {
         Ok(f) => serde_json::from_reader(f)
             .map_err(|e| anyhow!("Error reading data for policy {id}: {e}"))?,
         Err(e) => bail!("Error opening policy {id}: {e}"),
@@ -105,11 +107,11 @@ fn load_policy_map(id: &PolicyKeyId) -> Result<PolicyMap> {
 /// Save a policy map to disk
 fn save_policy_map(id: &PolicyKeyId, policy_map: &PolicyMap) -> Result<()> {
     let path = &keystore_dirs().policies;
-    std::fs::create_dir_all(path)
+    fs::create_dir_all(path)
         .map_err(|e| anyhow!("Failed to create {}: {e}", path.display()))?;
     let filename = path.join(id.to_string());
     // TODO: create a temporary file first, then rename
-    let mut file = std::fs::File::create(filename)
+    let mut file = fs::File::create(filename)
         .map_err(|e| anyhow!("Failed to store policy key {id}: {e}"))?;
     serde_json::to_writer_pretty(&file, policy_map)?;
     file.write_all(b"\n")?;
@@ -155,7 +157,7 @@ pub fn remove_protector_if_unused(protector_id: &ProtectorId) -> Result<bool> {
     }
 
     let filename = keystore_dirs().protectors.join(protector_id.to_string());
-    Ok(std::fs::remove_file(&filename).and(Ok(true))?)
+    Ok(fs::remove_file(&filename).and(Ok(true))?)
 }
 
 /// Get all protectors that can be used to unlock the policy key identified by `id`
