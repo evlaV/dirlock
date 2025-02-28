@@ -95,7 +95,7 @@ pub fn get_homedir_data(user: &str) -> Result<Option<DirStatus>> {
 /// as long as the password is correct.
 pub fn unlock_dir(dir: &EncryptedDirData, password: &[u8], action: UnlockAction) -> Result<bool> {
     if dir.protectors.is_empty() {
-        bail!("Unable to find a key to decrypt directory {}", dir.path.display());
+        bail!("Unable to find a key to unlock directory {}", dir.path.display());
     }
 
     for p in &dir.protectors {
