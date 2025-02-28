@@ -123,6 +123,15 @@ pub fn lock_dir(dir: &EncryptedDirData) -> Result<RemovalStatusFlags> {
         .map_err(|e|anyhow!("Unable to lock directory: {e}"))
 }
 
+pub fn get_protector_id_by_pass(dir: &EncryptedDirData, pass: &[u8]) -> Option<ProtectorId> {
+    for p in &dir.protectors {
+        if p.protector.unwrap_key(pass).is_some() {
+            return Some(p.protector_id.clone());
+        }
+    }
+    None
+}
+
 /// Changes the password of the protector used to lock this directory
 pub fn change_dir_password(dir: &mut EncryptedDirData, pass: &[u8], newpass: &[u8]) -> Result<bool> {
     // TODO: Allow selecting one specific protector. If several
@@ -157,22 +166,20 @@ pub fn add_protector_to_dir(dir: &EncryptedDirData, pass: &[u8], newpass: &[u8])
 }
 
 /// Remove a protector from a directory.
-/// Note this will remove the protector even if it's the only one left.
-pub fn remove_protector_from_dir(dir: &EncryptedDirData, pass: &[u8]) -> Result<Option<ProtectorId>> {
-    // TODO: Allow selecting one specific protector. This tries
-    // all protectors until one can be unlocked with the password.
-    for ProtectedPolicyKey { protector_id, protector, policy_key } in &dir.protectors {
-        if protector.unwrap_policy_key(policy_key, pass).is_some() {
+/// Note: this will remove the protector even if it's the only one left.
+pub fn remove_protector_from_dir(dir: &EncryptedDirData, id: &ProtectorId) -> Result<bool> {
+    for ProtectedPolicyKey { protector_id, .. } in &dir.protectors {
+        if protector_id == id {
             if keystore::remove_protector_from_policy(&dir.policy.keyid, protector_id)? {
                 // TODO: add an option to make this conditional
                 keystore::remove_protector_if_unused(protector_id)?;
-                return Ok(Some(protector_id.clone()));
+                return Ok(true);
             }
-            return Ok(None);
+            return Ok(false);
         }
     }
 
-    Ok(None)
+    Ok(false)
 }
 
 /// Encrypts a directory

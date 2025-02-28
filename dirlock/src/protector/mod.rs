@@ -81,6 +81,16 @@ pub struct ProtectorId(
     [u8; PROTECTOR_ID_LEN]
 );
 
+impl TryFrom<&str> for ProtectorId {
+    type Error = anyhow::Error;
+    fn try_from(s: &str) -> anyhow::Result<Self> {
+        let mut ret = ProtectorId::default();
+        hex::decode_to_slice(s, &mut ret.0)?;
+        Ok(ret)
+    }
+}
+
+
 #[serde_as]
 #[derive(Default, Serialize, Deserialize)]
 struct AesIv(

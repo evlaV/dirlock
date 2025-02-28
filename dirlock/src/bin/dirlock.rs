@@ -4,11 +4,11 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
-use anyhow::{bail, ensure, Result};
+use anyhow::{anyhow, bail, ensure, Result};
 use argh::FromArgs;
 use std::io::{self, Write};
 use std::path::PathBuf;
-use dirlock::{fscrypt, util};
+use dirlock::{fscrypt, util, protector::ProtectorId};
 use zeroize::Zeroizing;
 
 #[derive(FromArgs)]
@@ -72,6 +72,9 @@ struct AddProtectorArgs {
 #[argh(subcommand, name = "remove-protector")]
 /// Remove a protector from a directory
 struct RemoveProtectorArgs {
+    /// ID of the protector to remove
+    #[argh(option)]
+    protector: Option<String>,
     /// directory
     #[argh(positional)]
     dir: PathBuf,
@@ -231,13 +234,21 @@ fn cmd_remove_protector(args: &RemoveProtectorArgs) -> Result<()> {
         bail!("Only one protector left in that directory, refusing to remove it");
     }
 
-    eprint!("Enter the password of the protector that you want to remove: ");
-    let pass = Zeroizing::new(rpassword::read_password()?);
+    let protector_id = match &args.protector {
+        Some(id_str) => ProtectorId::try_from(id_str.as_str())
+                            .map_err(|e| anyhow!("Invalid protector ID: {e}"))?,
+        None => {
+            eprint!("Enter the password of the protector that you want to remove: ");
+            let pass = Zeroizing::new(rpassword::read_password()?);
+            dirlock::get_protector_id_by_pass(&dir_data, pass.as_bytes())
+                .ok_or(anyhow!("No protector found with that password"))?
+        }
+    };
 
-    if let Some(id) = dirlock::remove_protector_from_dir(&dir_data, pass.as_bytes())? {
-        println!("Removed protector {id}");
+    if dirlock::remove_protector_from_dir(&dir_data, &protector_id)? {
+        println!("Removed protector {protector_id}");
     } else {
-        bail!("No protector found with that password");
+        bail!("Protector {protector_id} not found in directory {}", args.dir.display());
     }
 
     Ok(())
