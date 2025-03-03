@@ -34,7 +34,7 @@ fn do_authenticate(pamh: Pam) -> Result<(), PamError> {
     };
 
     // Get the data of the user's home directory
-    let dir_data = match dirlock::get_homedir_data(user) {
+    let encrypted_dir = match dirlock::open_home(user) {
         Ok(Some(DirStatus::Encrypted(d))) => d,
         Ok(Some(_)) => return Err(PamError::USER_UNKNOWN), // The home directory is not encrypted by us
         Ok(None)    => return Err(PamError::USER_UNKNOWN), // The home directory does not exist
@@ -47,7 +47,7 @@ fn do_authenticate(pamh: Pam) -> Result<(), PamError> {
         .ok_or(PamError::AUTH_ERR)?;
 
     // Unlock the home directory with the password
-    match dirlock::unlock_dir(&dir_data, pass, UnlockAction::AuthAndUnlock) {
+    match encrypted_dir.unlock(pass, UnlockAction::AuthAndUnlock) {
         Ok(true) => Ok(()),
         Ok(false) => {
             log_notice(&pamh, format!("authentication failure; user={user}"));
@@ -72,7 +72,7 @@ fn do_chauthtok(pamh: Pam, flags: PamFlags) -> Result<(), PamError> {
     };
 
     // Get the data of the user's home directory
-    let mut dir_data = match dirlock::get_homedir_data(user) {
+    let mut encrypted_dir = match dirlock::open_home(user) {
         Ok(Some(DirStatus::Encrypted(d))) => d,
         Ok(Some(_)) => return Err(PamError::USER_UNKNOWN), // The home directory is not encrypted by us
         Ok(None)    => return Err(PamError::USER_UNKNOWN), // The home directory does not exist
@@ -92,7 +92,7 @@ fn do_chauthtok(pamh: Pam, flags: PamFlags) -> Result<(), PamError> {
     let pass = pamlib::get_oldauthtok(&pamh).map(|p| p.to_bytes())?;
 
     // Check that the password is correct
-    match dirlock::unlock_dir(&dir_data, pass, UnlockAction::AuthOnly) {
+    match encrypted_dir.unlock(pass, UnlockAction::AuthOnly) {
         Ok(true) => (),
         Ok(false) => {
             log_notice(&pamh, format!("authentication failure; user={user}"));
@@ -126,7 +126,7 @@ fn do_chauthtok(pamh: Pam, flags: PamFlags) -> Result<(), PamError> {
     }
 
     // Change the password
-    match dirlock::change_dir_password(&mut dir_data, pass, newpass) {
+    match encrypted_dir.change_password(pass, newpass) {
         Ok(true) => {
             log_notice(&pamh, format!("password changed for {user}"));
             Ok(())

@@ -118,14 +118,14 @@ struct StatusArgs {
 fn cmd_lock(args: &LockArgs) -> Result<()> {
     use dirlock::DirStatus::*;
 
-    let dir_data = match dirlock::get_encrypted_dir_data(&args.dir)? {
+    let encrypted_dir = match dirlock::open_dir(&args.dir)? {
         Encrypted(d) if d.key_status == fscrypt::KeyStatus::Absent =>
             bail!("The directory {} is already locked", args.dir.display()),
         Encrypted(d) => d,
         x => bail!("{}", x),
     };
 
-    let flags = dirlock::lock_dir(&dir_data)?;
+    let flags = encrypted_dir.lock()?;
 
     if flags.contains(fscrypt::RemovalStatusFlags::FilesBusy) {
         println!("Key removed, but some files are still busy");
@@ -141,7 +141,7 @@ fn cmd_lock(args: &LockArgs) -> Result<()> {
 fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
     use dirlock::{DirStatus::*, UnlockAction};
 
-    let dir_data = match dirlock::get_encrypted_dir_data(&args.dir)? {
+    let encrypted_dir = match dirlock::open_dir(&args.dir)? {
         Encrypted(d) if d.key_status == fscrypt::KeyStatus::Present =>
             bail!("The directory {} is already unlocked", args.dir.display()),
         Encrypted(d) => d,
@@ -151,7 +151,7 @@ fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
     eprint!("Enter encryption password: ");
     let pass = Zeroizing::new(rpassword::read_password()?);
 
-    if ! dirlock::unlock_dir(&dir_data, pass.as_bytes(), UnlockAction::AuthAndUnlock)? {
+    if ! encrypted_dir.unlock(pass.as_bytes(), UnlockAction::AuthAndUnlock)? {
         bail!("Unable to unlock directory {}: wrong password", args.dir.display())
     }
 
@@ -161,7 +161,7 @@ fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
 fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
     use dirlock::{DirStatus::*, UnlockAction};
 
-    let mut dir_data = match dirlock::get_encrypted_dir_data(&args.dir)? {
+    let mut encrypted_dir = match dirlock::open_dir(&args.dir)? {
         Encrypted(d) => d,
         x => bail!("{}", x),
     };
@@ -169,7 +169,7 @@ fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
     eprint!("Enter the current password: ");
     let pass = Zeroizing::new(rpassword::read_password()?);
 
-    if ! dirlock::unlock_dir(&dir_data, pass.as_bytes(), UnlockAction::AuthOnly)? {
+    if ! encrypted_dir.unlock(pass.as_bytes(), UnlockAction::AuthOnly)? {
         bail!("Password not valid for directory {}", args.dir.display())
     }
 
@@ -179,7 +179,7 @@ fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
     let npass2 = Zeroizing::new(rpassword::read_password()?);
     ensure!(npass1 == npass2, "Passwords don't match");
 
-    if ! dirlock::change_dir_password(&mut dir_data, pass.as_bytes(), npass1.as_bytes())? {
+    if ! encrypted_dir.change_password(pass.as_bytes(), npass1.as_bytes())? {
         bail!("Unable to change the password for directory {}", args.dir.display())
     }
 
@@ -189,7 +189,7 @@ fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
 fn cmd_add_protector(args: &AddProtectorArgs) -> Result<()> {
     use dirlock::{DirStatus::*, UnlockAction};
 
-    let dir_data = match dirlock::get_encrypted_dir_data(&args.dir)? {
+    let encrypted_dir = match dirlock::open_dir(&args.dir)? {
         Encrypted(d) => d,
         x => bail!("{}", x),
     };
@@ -197,7 +197,7 @@ fn cmd_add_protector(args: &AddProtectorArgs) -> Result<()> {
     eprint!("Enter the current password: ");
     let pass = Zeroizing::new(rpassword::read_password()?);
 
-    if ! dirlock::unlock_dir(&dir_data, pass.as_bytes(), UnlockAction::AuthOnly)? {
+    if ! encrypted_dir.unlock(pass.as_bytes(), UnlockAction::AuthOnly)? {
         bail!("Password not valid for directory {}", args.dir.display())
     }
 
@@ -207,11 +207,11 @@ fn cmd_add_protector(args: &AddProtectorArgs) -> Result<()> {
     let npass2 = Zeroizing::new(rpassword::read_password()?);
     ensure!(npass1 == npass2, "Passwords don't match");
 
-    if dirlock::unlock_dir(&dir_data, npass1.as_bytes(), UnlockAction::AuthOnly)? {
+    if encrypted_dir.unlock(npass1.as_bytes(), UnlockAction::AuthOnly)? {
         bail!("There is already a protector with that password");
     }
 
-    if let Some(protid) = dirlock::add_protector_to_dir(&dir_data, pass.as_bytes(), npass1.as_bytes())? {
+    if let Some(protid) = encrypted_dir.add_protector(pass.as_bytes(), npass1.as_bytes())? {
         println!("Added protector {protid} to directory {}", args.dir.display());
     } else {
         // FIXME: this should not happen because we checked earlier
@@ -225,12 +225,12 @@ fn cmd_add_protector(args: &AddProtectorArgs) -> Result<()> {
 fn cmd_remove_protector(args: &RemoveProtectorArgs) -> Result<()> {
     use dirlock::{DirStatus::*};
 
-    let dir_data = match dirlock::get_encrypted_dir_data(&args.dir)? {
+    let encrypted_dir = match dirlock::open_dir(&args.dir)? {
         Encrypted(d) => d,
         x => bail!("{}", x),
     };
 
-    if dir_data.protectors.len() == 1 {
+    if encrypted_dir.protectors.len() == 1 {
         bail!("Only one protector left in that directory, refusing to remove it");
     }
 
@@ -240,12 +240,12 @@ fn cmd_remove_protector(args: &RemoveProtectorArgs) -> Result<()> {
         None => {
             eprint!("Enter the password of the protector that you want to remove: ");
             let pass = Zeroizing::new(rpassword::read_password()?);
-            dirlock::get_protector_id_by_pass(&dir_data, pass.as_bytes())
+            encrypted_dir.get_protector_id_by_pass(pass.as_bytes())
                 .ok_or(anyhow!("No protector found with that password"))?
         }
     };
 
-    if dirlock::remove_protector_from_dir(&dir_data, &protector_id)? {
+    if encrypted_dir.remove_protector(&protector_id)? {
         println!("Removed protector {protector_id}");
     } else {
         bail!("Protector {protector_id} not found in directory {}", args.dir.display());
@@ -255,7 +255,7 @@ fn cmd_remove_protector(args: &RemoveProtectorArgs) -> Result<()> {
 }
 
 fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
-    match dirlock::get_encrypted_dir_data(&args.dir)? {
+    match dirlock::open_dir(&args.dir)? {
         dirlock::DirStatus::Unencrypted => (),
         x => bail!("{}", x),
     };
@@ -304,7 +304,7 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
 
 fn cmd_export_master_key(args: &ExportMasterKeyArgs) -> Result<()> {
     use base64::prelude::*;
-    let dir_data = match dirlock::get_encrypted_dir_data(&args.dir)? {
+    let encrypted_dir = match dirlock::open_dir(&args.dir)? {
         dirlock::DirStatus::Encrypted(d) => d,
         x => {
             println!("{x}");
@@ -312,7 +312,7 @@ fn cmd_export_master_key(args: &ExportMasterKeyArgs) -> Result<()> {
         }
     };
 
-    eprintln!("This will print to stdout the master key with ID {}", dir_data.policy.keyid);
+    eprintln!("This will print to stdout the master key with ID {}", encrypted_dir.policy.keyid);
     eprintln!("- This is the encryption key for directory {}", args.dir.display());
     eprintln!("- This feature is only available while this tool is under development");
     eprintln!("- The printed key is *raw and unprotected*, you are reponsible for keeping it safe");
@@ -320,7 +320,7 @@ fn cmd_export_master_key(args: &ExportMasterKeyArgs) -> Result<()> {
     eprint!("Enter the current encryption password: ");
     let pass = Zeroizing::new(rpassword::read_password()?);
 
-    for p in &dir_data.protectors {
+    for p in &encrypted_dir.protectors {
         if let Some(master_key) = p.protector.unwrap_policy_key(&p.policy_key, pass.as_bytes()) {
             println!("{}", BASE64_STANDARD.encode(master_key.secret()));
             return Ok(());
@@ -366,7 +366,7 @@ fn cmd_status(args: &StatusArgs) -> Result<()> {
     use dirlock::DirStatus::*;
     use fscrypt::KeyStatus::*;
 
-    let dir_data = match dirlock::get_encrypted_dir_data(&args.dir)? {
+    let encrypted_dir = match dirlock::open_dir(&args.dir)? {
         Encrypted(d) => d,
         x => {
             println!("{x}");
@@ -374,12 +374,12 @@ fn cmd_status(args: &StatusArgs) -> Result<()> {
         }
     };
 
-    let locked = match dir_data.key_status {
+    let locked = match encrypted_dir.key_status {
         Absent => "locked",
         Present => "unlocked",
         IncompletelyRemoved => "partially locked",
     };
-    println!("Encrypted, {locked} (key id {})", dir_data.policy.keyid);
+    println!("Encrypted, {locked} (key id {})", encrypted_dir.policy.keyid);
 
     Ok(())
 }

@@ -25,7 +25,7 @@ pub enum UnlockAction {
 
 pub enum DirStatus {
     Unencrypted,
-    Encrypted(EncryptedDirData),
+    Encrypted(EncryptedDir),
     KeyMissing,
     Unsupported,
 }
@@ -44,7 +44,7 @@ impl std::fmt::Display for DirStatus {
 }
 
 /// Encryption data (policy, key status) of a given directory
-pub struct EncryptedDirData {
+pub struct EncryptedDir {
     pub path: PathBuf,
     pub policy: fscrypt::PolicyV2,
     pub key_status: fscrypt::KeyStatus,
@@ -52,12 +52,12 @@ pub struct EncryptedDirData {
     pub protectors: Vec<ProtectedPolicyKey>,
 }
 
-/// Return an [`EncryptedDirData`] object for the directory.
+/// Gets the encryption status of a directory.
 ///
-/// If a value is returned it implies that:
+/// If [`DirStatus::Encrypted`] is returned it implies that:
 /// 1. The directory is encrypted with a supported fscrypt policy (v2).
 /// 2. The keystore contains a protector for that policy.
-pub fn get_encrypted_dir_data(path: &Path) -> Result<DirStatus> {
+pub fn open_dir(path: &Path) -> Result<DirStatus> {
     let policy = match fscrypt::get_policy(path).
         map_err(|e| anyhow!("Failed to get encryption policy: {e}"))? {
         Some(Policy::V2(p)) => p,
@@ -73,118 +73,122 @@ pub fn get_encrypted_dir_data(path: &Path) -> Result<DirStatus> {
     let (key_status, key_flags) = fscrypt::get_key_status(path, &policy.keyid)
         .map_err(|e| anyhow!("Failed to get key status: {e}"))?;
 
-    Ok(DirStatus::Encrypted(EncryptedDirData { path: path.into(), policy, key_status, key_flags, protectors }))
+    Ok(DirStatus::Encrypted(EncryptedDir { path: path.into(), policy, key_status, key_flags, protectors }))
 }
 
-/// Convenience function to call `get_encrypted_dir_data` on a user's home directory
+/// Convenience function to call `open_dir` on a user's home directory
 ///
 /// Returns None if the user does not exist.
-pub fn get_homedir_data(user: &str) -> Result<Option<DirStatus>> {
+pub fn open_home(user: &str) -> Result<Option<DirStatus>> {
     if let Some(dir) = util::get_homedir(user)? {
-        let dir_data = get_encrypted_dir_data(&dir)?;
-        Ok(Some(dir_data))
+        let dir = open_dir(&dir)?;
+        Ok(Some(dir))
     } else {
         Ok(None)
     }
 }
 
-/// Unlocks a directory with the given password
-///
-/// Returns true on success, false if the password is incorrect. Note
-/// that this call also succeeds if the directory is already unlocked
-/// as long as the password is correct.
-pub fn unlock_dir(dir: &EncryptedDirData, password: &[u8], action: UnlockAction) -> Result<bool> {
-    if dir.protectors.is_empty() {
-        bail!("Unable to find a key to unlock directory {}", dir.path.display());
-    }
+impl EncryptedDir {
+    /// Unlocks a directory with the given password
+    ///
+    /// Returns true on success, false if the password is incorrect. Note
+    /// that this call also succeeds if the directory is already unlocked
+    /// as long as the password is correct.
+    pub fn unlock(&self, password: &[u8], action: UnlockAction) -> Result<bool> {
+        if self.protectors.is_empty() {
+            bail!("Unable to find a key to unlock directory {}", self.path.display());
+        }
 
-    for p in &dir.protectors {
-        if let Some(master_key) = p.protector.unwrap_policy_key(&p.policy_key, password) {
-            if action == UnlockAction::AuthAndUnlock {
-                if let Err(e) = fscrypt::add_key(&dir.path, &master_key) {
-                    bail!("Unable to unlock directory with master key: {}", e);
+        for p in &self.protectors {
+            if let Some(master_key) = p.protector.unwrap_policy_key(&p.policy_key, password) {
+                if action == UnlockAction::AuthAndUnlock {
+                    if let Err(e) = fscrypt::add_key(&self.path, &master_key) {
+                        bail!("Unable to unlock directory with master key: {}", e);
+                    }
                 }
+                return Ok(true)
             }
-            return Ok(true)
         }
+
+        Ok(false)
     }
 
-    Ok(false)
-}
-
-/// Locks a directory
-pub fn lock_dir(dir: &EncryptedDirData) -> Result<RemovalStatusFlags> {
-    if dir.key_status == fscrypt::KeyStatus::Absent {
-        bail!("The directory {} is already locked", dir.path.display());
-    }
-
-    let user = fscrypt::RemoveKeyUsers::CurrentUser;
-    fscrypt::remove_key(&dir.path, &dir.policy.keyid, user)
-        .map_err(|e|anyhow!("Unable to lock directory: {e}"))
-}
-
-pub fn get_protector_id_by_pass(dir: &EncryptedDirData, pass: &[u8]) -> Option<ProtectorId> {
-    for p in &dir.protectors {
-        if p.protector.unwrap_key(pass).is_some() {
-            return Some(p.protector_id.clone());
+    /// Locks a directory
+    pub fn lock(&self) -> Result<RemovalStatusFlags> {
+        if self.key_status == fscrypt::KeyStatus::Absent {
+            bail!("The directory {} is already locked", self.path.display());
         }
-    }
-    None
-}
 
-/// Changes the password of the protector used to lock this directory
-pub fn change_dir_password(dir: &mut EncryptedDirData, pass: &[u8], newpass: &[u8]) -> Result<bool> {
-    // TODO: Allow selecting one specific protector. If several
-    // protectors have the same password this only changes the first one.
-    for p in &mut dir.protectors {
-        if p.protector.change_pass(pass, newpass) {
-            keystore::add_protector(&p.protector_id, &p.protector, true)?;
-            return Ok(true);
+        let user = fscrypt::RemoveKeyUsers::CurrentUser;
+        fscrypt::remove_key(&self.path, &self.policy.keyid, user)
+            .map_err(|e|anyhow!("Unable to lock directory: {e}"))
+    }
+
+    /// Finds a protector that can be unlocked with the given password
+    pub fn get_protector_id_by_pass(&self, pass: &[u8]) -> Option<ProtectorId> {
+        for p in &self.protectors {
+            if p.protector.unwrap_key(pass).is_some() {
+                return Some(p.protector_id.clone());
+            }
         }
-    }
-    Ok(false)
-}
-
-/// Adds a new protector to a directory
-pub fn add_protector_to_dir(dir: &EncryptedDirData, pass: &[u8], newpass: &[u8]) -> Result<Option<ProtectorId>> {
-    // TODO: Allow selecting one specific protector. This tries
-    // all protectors until one can be unlocked with pass
-    for ProtectedPolicyKey { protector_id: _, protector, policy_key } in &dir.protectors {
-        if let Some(master_key) = protector.unwrap_policy_key(policy_key, pass) {
-            // Generate a protector and use it to wrap the master key
-            let p = ProtectedPolicyKey::new_with_password(master_key, newpass);
-            let protid = p.protector_id.clone();
-
-            // Store the new protector and policy
-            keystore::add_protector(&p.protector_id, &p.protector, false)?;
-            keystore::add_protector_to_policy(&dir.policy.keyid, p)?;
-            return Ok(Some(protid))
-        }
+        None
     }
 
-    Ok(None)
-}
-
-/// Remove a protector from a directory.
-/// Note: this will remove the protector even if it's the only one left.
-pub fn remove_protector_from_dir(dir: &EncryptedDirData, id: &ProtectorId) -> Result<bool> {
-    for ProtectedPolicyKey { protector_id, .. } in &dir.protectors {
-        if protector_id == id {
-            if keystore::remove_protector_from_policy(&dir.policy.keyid, protector_id)? {
-                // TODO: add an option to make this conditional
-                keystore::remove_protector_if_unused(protector_id)?;
+    /// Changes the password of the protector used to lock this directory
+    pub fn change_password(&mut self, pass: &[u8], newpass: &[u8]) -> Result<bool> {
+        // TODO: Allow selecting one specific protector. If several
+        // protectors have the same password this only changes the first one.
+        for p in &mut self.protectors {
+            if p.protector.change_pass(pass, newpass) {
+                keystore::add_protector(&p.protector_id, &p.protector, true)?;
                 return Ok(true);
             }
-            return Ok(false);
         }
+        Ok(false)
     }
 
-    Ok(false)
+    /// Adds a new protector to a directory
+    pub fn add_protector(&self, pass: &[u8], newpass: &[u8]) -> Result<Option<ProtectorId>> {
+        // TODO: Allow selecting one specific protector. This tries
+        // all protectors until one can be unlocked with pass
+        for ProtectedPolicyKey { protector_id: _, protector, policy_key } in &self.protectors {
+            if let Some(master_key) = protector.unwrap_policy_key(policy_key, pass) {
+                // Generate a protector and use it to wrap the master key
+                let p = ProtectedPolicyKey::new_with_password(master_key, newpass);
+                let protid = p.protector_id.clone();
+
+                // Store the new protector and policy
+                keystore::add_protector(&p.protector_id, &p.protector, false)?;
+                keystore::add_protector_to_policy(&self.policy.keyid, p)?;
+                return Ok(Some(protid))
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Remove a protector from a directory.
+    /// Note: this will remove the protector even if it's the only one left.
+    pub fn remove_protector(&self, id: &ProtectorId) -> Result<bool> {
+        for ProtectedPolicyKey { protector_id, .. } in &self.protectors {
+            if protector_id == id {
+                if keystore::remove_protector_from_policy(&self.policy.keyid, protector_id)? {
+                    // TODO: add an option to make this conditional
+                    keystore::remove_protector_if_unused(protector_id)?;
+                    return Ok(true);
+                }
+                return Ok(false);
+            }
+        }
+
+        Ok(false)
+    }
 }
+
 
 /// Encrypts a directory
 pub fn encrypt_dir(path: &Path, password: &[u8]) -> Result<PolicyKeyId> {
-    match get_encrypted_dir_data(path)? {
+    match open_dir(path)? {
         DirStatus::Unencrypted => (),
         x => bail!("{}", x),
     };
