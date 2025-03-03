@@ -8,7 +8,7 @@ use anyhow::{anyhow, bail, ensure, Result};
 use argh::FromArgs;
 use std::io::{self, Write};
 use std::path::PathBuf;
-use dirlock::{fscrypt, util, protector::ProtectorId};
+use dirlock::{fscrypt, util, DirStatus, protector::ProtectorId};
 use zeroize::Zeroizing;
 
 #[derive(FromArgs)]
@@ -116,12 +116,10 @@ struct StatusArgs {
 }
 
 fn cmd_lock(args: &LockArgs) -> Result<()> {
-    use dirlock::DirStatus::*;
-
     let encrypted_dir = match dirlock::open_dir(&args.dir)? {
-        Encrypted(d) if d.key_status == fscrypt::KeyStatus::Absent =>
+        DirStatus::Encrypted(d) if d.key_status == fscrypt::KeyStatus::Absent =>
             bail!("The directory {} is already locked", args.dir.display()),
-        Encrypted(d) => d,
+        DirStatus::Encrypted(d) => d,
         x => bail!("{}", x),
     };
 
@@ -139,12 +137,10 @@ fn cmd_lock(args: &LockArgs) -> Result<()> {
 }
 
 fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
-    use dirlock::DirStatus::*;
-
     let encrypted_dir = match dirlock::open_dir(&args.dir)? {
-        Encrypted(d) if d.key_status == fscrypt::KeyStatus::Present =>
+        DirStatus::Encrypted(d) if d.key_status == fscrypt::KeyStatus::Present =>
             bail!("The directory {} is already unlocked", args.dir.display()),
-        Encrypted(d) => d,
+        DirStatus::Encrypted(d) => d,
         x => bail!("{}", x),
     };
 
@@ -159,10 +155,8 @@ fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
 }
 
 fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
-    use dirlock::DirStatus::*;
-
     let mut encrypted_dir = match dirlock::open_dir(&args.dir)? {
-        Encrypted(d) => d,
+        DirStatus::Encrypted(d) => d,
         x => bail!("{}", x),
     };
 
@@ -187,10 +181,8 @@ fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
 }
 
 fn cmd_add_protector(args: &AddProtectorArgs) -> Result<()> {
-    use dirlock::DirStatus::*;
-
     let encrypted_dir = match dirlock::open_dir(&args.dir)? {
-        Encrypted(d) => d,
+        DirStatus::Encrypted(d) => d,
         x => bail!("{}", x),
     };
 
@@ -223,10 +215,8 @@ fn cmd_add_protector(args: &AddProtectorArgs) -> Result<()> {
 }
 
 fn cmd_remove_protector(args: &RemoveProtectorArgs) -> Result<()> {
-    use dirlock::{DirStatus::*};
-
     let encrypted_dir = match dirlock::open_dir(&args.dir)? {
-        Encrypted(d) => d,
+        DirStatus::Encrypted(d) => d,
         x => bail!("{}", x),
     };
 
@@ -256,7 +246,7 @@ fn cmd_remove_protector(args: &RemoveProtectorArgs) -> Result<()> {
 
 fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
     match dirlock::open_dir(&args.dir)? {
-        dirlock::DirStatus::Unencrypted => (),
+        DirStatus::Unencrypted => (),
         x => bail!("{}", x),
     };
 
@@ -305,7 +295,7 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
 fn cmd_export_master_key(args: &ExportMasterKeyArgs) -> Result<()> {
     use base64::prelude::*;
     let encrypted_dir = match dirlock::open_dir(&args.dir)? {
-        dirlock::DirStatus::Encrypted(d) => d,
+        DirStatus::Encrypted(d) => d,
         x => bail!("{x}"),
     };
 
@@ -358,11 +348,10 @@ fn cmd_import_master_key() -> Result<()> {
 }
 
 fn cmd_status(args: &StatusArgs) -> Result<()> {
-    use dirlock::DirStatus::*;
     use fscrypt::KeyStatus::*;
 
     let encrypted_dir = match dirlock::open_dir(&args.dir)? {
-        Encrypted(d) => d,
+        DirStatus::Encrypted(d) => d,
         x => {
             println!("{x}");
             return Ok(());
