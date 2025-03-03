@@ -11,17 +11,9 @@ pub mod protector;
 pub mod util;
 
 use anyhow::{anyhow, bail, Result};
-use fscrypt::{Policy, PolicyKeyId, RemovalStatusFlags};
+use fscrypt::{Policy, PolicyKey, PolicyKeyId, RemovalStatusFlags};
 use protector::{ProtectorId, ProtectedPolicyKey};
 use std::path::{Path, PathBuf};
-
-#[derive(PartialEq)]
-pub enum UnlockAction {
-    /// Check that the password is valid but don't unlock the directory.
-    AuthOnly,
-    /// Check that the password is valid and unlock the directory.
-    AuthAndUnlock,
-}
 
 pub enum DirStatus {
     Unencrypted,
@@ -89,25 +81,35 @@ pub fn open_home(user: &str) -> Result<Option<DirStatus>> {
 }
 
 impl EncryptedDir {
+    /// Get a directory's master encryption key using the password of one of its protectors
+    pub fn get_master_key(&self, pass: &[u8]) -> Option<PolicyKey> {
+        for p in &self.protectors {
+            if let Some(k) = p.protector.unwrap_policy_key(&p.policy_key, pass) {
+                return Some(k);
+            }
+        }
+        None
+    }
+
+    /// Checks if the given password is valid to unlock this directory
+    ///
+    /// This call only checks the password and nothing else, and it
+    /// also does not care if the directory is locked or unlocked.
+    pub fn check_pass(&self, password: &[u8]) -> bool {
+        self.get_master_key(password).is_some()
+    }
+
     /// Unlocks a directory with the given password
     ///
-    /// Returns true on success, false if the password is incorrect. Note
-    /// that this call also succeeds if the directory is already unlocked
+    /// Returns true on success, false if the password is incorrect.
+    /// This call also succeeds if the directory is already unlocked
     /// as long as the password is correct.
-    pub fn unlock(&self, password: &[u8], action: UnlockAction) -> Result<bool> {
-        if self.protectors.is_empty() {
-            bail!("Unable to find a key to unlock directory {}", self.path.display());
-        }
-
-        for p in &self.protectors {
-            if let Some(master_key) = p.protector.unwrap_policy_key(&p.policy_key, password) {
-                if action == UnlockAction::AuthAndUnlock {
-                    if let Err(e) = fscrypt::add_key(&self.path, &master_key) {
-                        bail!("Unable to unlock directory with master key: {}", e);
-                    }
-                }
-                return Ok(true)
+    pub fn unlock(&self, password: &[u8]) -> Result<bool> {
+        if let Some(master_key) = self.get_master_key(password) {
+            if let Err(e) = fscrypt::add_key(&self.path, &master_key) {
+                bail!("Unable to unlock directory with master key: {}", e);
             }
+            return Ok(true)
         }
 
         Ok(false)

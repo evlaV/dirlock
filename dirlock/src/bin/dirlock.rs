@@ -139,7 +139,7 @@ fn cmd_lock(args: &LockArgs) -> Result<()> {
 }
 
 fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
-    use dirlock::{DirStatus::*, UnlockAction};
+    use dirlock::DirStatus::*;
 
     let encrypted_dir = match dirlock::open_dir(&args.dir)? {
         Encrypted(d) if d.key_status == fscrypt::KeyStatus::Present =>
@@ -151,7 +151,7 @@ fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
     eprint!("Enter encryption password: ");
     let pass = Zeroizing::new(rpassword::read_password()?);
 
-    if ! encrypted_dir.unlock(pass.as_bytes(), UnlockAction::AuthAndUnlock)? {
+    if ! encrypted_dir.unlock(pass.as_bytes())? {
         bail!("Unable to unlock directory {}: wrong password", args.dir.display())
     }
 
@@ -159,7 +159,7 @@ fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
 }
 
 fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
-    use dirlock::{DirStatus::*, UnlockAction};
+    use dirlock::DirStatus::*;
 
     let mut encrypted_dir = match dirlock::open_dir(&args.dir)? {
         Encrypted(d) => d,
@@ -169,7 +169,7 @@ fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
     eprint!("Enter the current password: ");
     let pass = Zeroizing::new(rpassword::read_password()?);
 
-    if ! encrypted_dir.unlock(pass.as_bytes(), UnlockAction::AuthOnly)? {
+    if ! encrypted_dir.check_pass(pass.as_bytes()) {
         bail!("Password not valid for directory {}", args.dir.display())
     }
 
@@ -187,7 +187,7 @@ fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
 }
 
 fn cmd_add_protector(args: &AddProtectorArgs) -> Result<()> {
-    use dirlock::{DirStatus::*, UnlockAction};
+    use dirlock::DirStatus::*;
 
     let encrypted_dir = match dirlock::open_dir(&args.dir)? {
         Encrypted(d) => d,
@@ -197,7 +197,7 @@ fn cmd_add_protector(args: &AddProtectorArgs) -> Result<()> {
     eprint!("Enter the current password: ");
     let pass = Zeroizing::new(rpassword::read_password()?);
 
-    if ! encrypted_dir.unlock(pass.as_bytes(), UnlockAction::AuthOnly)? {
+    if ! encrypted_dir.check_pass(pass.as_bytes()) {
         bail!("Password not valid for directory {}", args.dir.display())
     }
 
@@ -207,7 +207,7 @@ fn cmd_add_protector(args: &AddProtectorArgs) -> Result<()> {
     let npass2 = Zeroizing::new(rpassword::read_password()?);
     ensure!(npass1 == npass2, "Passwords don't match");
 
-    if encrypted_dir.unlock(npass1.as_bytes(), UnlockAction::AuthOnly)? {
+    if encrypted_dir.check_pass(npass1.as_bytes()) {
         bail!("There is already a protector with that password");
     }
 
@@ -306,10 +306,7 @@ fn cmd_export_master_key(args: &ExportMasterKeyArgs) -> Result<()> {
     use base64::prelude::*;
     let encrypted_dir = match dirlock::open_dir(&args.dir)? {
         dirlock::DirStatus::Encrypted(d) => d,
-        x => {
-            println!("{x}");
-            return Ok(());
-        }
+        x => bail!("{x}"),
     };
 
     eprintln!("This will print to stdout the master key with ID {}", encrypted_dir.policy.keyid);
@@ -320,14 +317,12 @@ fn cmd_export_master_key(args: &ExportMasterKeyArgs) -> Result<()> {
     eprint!("Enter the current encryption password: ");
     let pass = Zeroizing::new(rpassword::read_password()?);
 
-    for p in &encrypted_dir.protectors {
-        if let Some(master_key) = p.protector.unwrap_policy_key(&p.policy_key, pass.as_bytes()) {
-            println!("{}", BASE64_STANDARD.encode(master_key.secret()));
-            return Ok(());
-        }
-    }
+    let Some(k) = encrypted_dir.get_master_key(pass.as_bytes()) else {
+        bail!("Unable to unlock master key for directory {}", args.dir.display());
+    };
 
-    Err(anyhow::anyhow!("Unable to unlock master key for directory {}", args.dir.display()))
+    println!("{}", BASE64_STANDARD.encode(k.secret()));
+    Ok(())
 }
 
 fn cmd_import_master_key() -> Result<()> {

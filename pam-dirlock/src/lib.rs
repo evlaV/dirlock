@@ -7,7 +7,7 @@
 mod pamlib;
 
 use pamsm::{LogLvl, Pam, PamError, PamFlags, PamLibExt, PamMsgStyle, PamServiceModule, pam_module};
-use dirlock::{DirStatus, UnlockAction};
+use dirlock::DirStatus;
 use std::ffi::c_int;
 
 const PAM_UPDATE_AUTHTOK : c_int = 0x2000;
@@ -47,7 +47,7 @@ fn do_authenticate(pamh: Pam) -> Result<(), PamError> {
         .ok_or(PamError::AUTH_ERR)?;
 
     // Unlock the home directory with the password
-    match encrypted_dir.unlock(pass, UnlockAction::AuthAndUnlock) {
+    match encrypted_dir.unlock(pass) {
         Ok(true) => Ok(()),
         Ok(false) => {
             log_notice(&pamh, format!("authentication failure; user={user}"));
@@ -92,16 +92,9 @@ fn do_chauthtok(pamh: Pam, flags: PamFlags) -> Result<(), PamError> {
     let pass = pamlib::get_oldauthtok(&pamh).map(|p| p.to_bytes())?;
 
     // Check that the password is correct
-    match encrypted_dir.unlock(pass, UnlockAction::AuthOnly) {
-        Ok(true) => (),
-        Ok(false) => {
-            log_notice(&pamh, format!("authentication failure; user={user}"));
-            return Err(PamError::AUTH_ERR)
-        },
-        Err(e) => {
-            log_notice(&pamh, format!("authentication failure; user={user} error={e}"));
-            return Err(PamError::AUTH_ERR)
-        }
+    if ! encrypted_dir.check_pass(pass) {
+        log_notice(&pamh, format!("authentication failure; user={user}"));
+        return Err(PamError::AUTH_ERR);
     }
 
     // Get the new pasword
