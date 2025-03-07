@@ -110,6 +110,9 @@ struct ImportMasterKeyArgs { }
 #[argh(subcommand, name = "status")]
 /// Get the status of a directory
 struct StatusArgs {
+    /// verbose output (list protectors and encryption parameters)
+    #[argh(switch, short = 'v', long = "verbose")]
+    verbose: bool,
     /// directory
     #[argh(positional)]
     dir: PathBuf,
@@ -363,7 +366,25 @@ fn cmd_status(args: &StatusArgs) -> Result<()> {
         Present => "unlocked",
         IncompletelyRemoved => "partially locked",
     };
-    println!("Encrypted, {locked} (key id {})", encrypted_dir.policy.keyid);
+    println!("Encrypted, {locked}, key id {}", encrypted_dir.policy.keyid);
+
+    if ! args.verbose {
+        return Ok(());
+    }
+
+    println!("Contents: {}",  encrypted_dir.policy.contents_mode);
+    println!("Filenames: {}", encrypted_dir.policy.filenames_mode);
+    println!("Padding: {}",   encrypted_dir.policy.flags.pad);
+
+    if encrypted_dir.policy.flags.flags.is_empty() {
+        println!("Flags: None");
+    } else {
+        println!("Flags: {}", encrypted_dir.policy.flags.flags);
+    }
+
+    for p in encrypted_dir.protectors {
+        println!("Protector: {}, type {}", &p.protector_id, p.protector.name());
+    }
 
     Ok(())
 }

@@ -157,6 +157,13 @@ impl Protector {
             Protector::Password(p) => p.change_pass(pass, newpass)
         }
     }
+
+    /// Gets the name of this protector
+    pub fn name(&self) -> &'static str {
+        match self {
+            Protector::Password(_) => "password",
+        }
+    }
 }
 
 /// Stretches a 256-bit key into two new keys of the same size using HKDF

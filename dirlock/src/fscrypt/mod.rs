@@ -164,16 +164,22 @@ impl From<fscrypt_policy> for Policy {
     }
 }
 
+#[derive(derive_more::Display)]
 #[derive(TryFromPrimitive, Debug)]
 #[repr(u8)]
 pub enum PolicyFlagsPad {
+    #[display("4")]
     Pad4 = FSCRYPT_POLICY_FLAGS_PAD_4,
+    #[display("8")]
     Pad8 = FSCRYPT_POLICY_FLAGS_PAD_8,
+    #[display("16")]
     Pad16 = FSCRYPT_POLICY_FLAGS_PAD_16,
+    #[display("32")]
     Pad32 = FSCRYPT_POLICY_FLAGS_PAD_32,
 }
 
 bitflags::bitflags! {
+    #[derive(derive_more::Display)]
     pub struct PolicyFlagsFlags: u8 {
         const DirectKey = FSCRYPT_POLICY_FLAG_DIRECT_KEY;
         const IvInoLblk64 = FSCRYPT_POLICY_FLAG_IV_INO_LBLK_64;
@@ -237,20 +243,22 @@ bitflags::bitflags! {
     }
 }
 
-#[derive(FromPrimitive)]
+#[derive(FromPrimitive, derive_more::Display)]
+#[allow(non_camel_case_types)]
 #[repr(u8)]
 /// Encryption mode
 pub enum EncryptionMode {
     Invalid = FS_ENCRYPTION_MODE_INVALID,
-    AES256XTS = FS_ENCRYPTION_MODE_AES_256_XTS,
-    AES256GCM = FS_ENCRYPTION_MODE_AES_256_GCM,
-    AES256CBC = FS_ENCRYPTION_MODE_AES_256_CBC,
-    AES256CTS = FS_ENCRYPTION_MODE_AES_256_CTS,
-    AES128CBC = FS_ENCRYPTION_MODE_AES_128_CBC,
-    AES128CTS = FS_ENCRYPTION_MODE_AES_128_CTS,
-    SPECK128_256XTS = FS_ENCRYPTION_MODE_SPECK128_256_XTS,
-    SPECK128_256CTS = FS_ENCRYPTION_MODE_SPECK128_256_CTS,
+    AES_256_XTS = FS_ENCRYPTION_MODE_AES_256_XTS,
+    AES_256_GCM = FS_ENCRYPTION_MODE_AES_256_GCM,
+    AES_256_CBC = FS_ENCRYPTION_MODE_AES_256_CBC,
+    AES_256_CTS = FS_ENCRYPTION_MODE_AES_256_CTS,
+    AES_128_CBC = FS_ENCRYPTION_MODE_AES_128_CBC,
+    AES_128_CTS = FS_ENCRYPTION_MODE_AES_128_CTS,
+    SPECK128_256_XTS = FS_ENCRYPTION_MODE_SPECK128_256_XTS,
+    SPECK128_256_CTS = FS_ENCRYPTION_MODE_SPECK128_256_CTS,
     Adiantum = FS_ENCRYPTION_MODE_ADIANTUM,
+    #[display("Unknown({_0})")]
     #[num_enum(catch_all)]
     Unknown(u8)
 }
