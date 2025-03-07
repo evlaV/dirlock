@@ -85,7 +85,8 @@ impl TryFrom<&str> for ProtectorId {
     type Error = anyhow::Error;
     fn try_from(s: &str) -> anyhow::Result<Self> {
         let mut ret = ProtectorId::default();
-        hex::decode_to_slice(s, &mut ret.0)?;
+        hex::decode_to_slice(s, &mut ret.0)
+            .map_err(|_| anyhow::anyhow!("Invalid protector ID: {s}"))?;
         Ok(ret)
     }
 }

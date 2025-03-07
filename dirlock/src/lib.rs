@@ -82,8 +82,13 @@ pub fn open_home(user: &str) -> Result<Option<DirStatus>> {
 
 impl EncryptedDir {
     /// Get a directory's master encryption key using the password of one of its protectors
-    pub fn get_master_key(&self, pass: &[u8]) -> Option<PolicyKey> {
+    pub fn get_master_key(&self, pass: &[u8], protector_id: Option<ProtectorId>) -> Option<PolicyKey> {
         for p in &self.protectors {
+            if let Some(ref id) = protector_id {
+                if *id != p.protector_id {
+                    continue;
+                }
+            }
             if let Some(k) = p.protector.unwrap_policy_key(&p.policy_key, pass) {
                 return Some(k);
             }
@@ -96,7 +101,7 @@ impl EncryptedDir {
     /// This call only checks the password and nothing else, and it
     /// also does not care if the directory is locked or unlocked.
     pub fn check_pass(&self, password: &[u8]) -> bool {
-        self.get_master_key(password).is_some()
+        self.get_master_key(password, None).is_some()
     }
 
     /// Unlocks a directory with the given password
@@ -104,8 +109,8 @@ impl EncryptedDir {
     /// Returns true on success, false if the password is incorrect.
     /// This call also succeeds if the directory is already unlocked
     /// as long as the password is correct.
-    pub fn unlock(&self, password: &[u8]) -> Result<bool> {
-        if let Some(master_key) = self.get_master_key(password) {
+    pub fn unlock(&self, password: &[u8], protector_id: Option<ProtectorId>) -> Result<bool> {
+        if let Some(master_key) = self.get_master_key(password, protector_id) {
             if let Err(e) = fscrypt::add_key(&self.path, &master_key) {
                 bail!("Unable to unlock directory with master key: {}", e);
             }

@@ -45,6 +45,9 @@ struct LockArgs {
 #[argh(subcommand, name = "unlock")]
 /// Unlock a directory
 struct UnlockArgs {
+    /// ID of the protector used to unlock this directory
+    #[argh(option)]
+    protector: Option<String>,
     /// directory
     #[argh(positional)]
     dir: PathBuf,
@@ -140,6 +143,12 @@ fn cmd_lock(args: &LockArgs) -> Result<()> {
 }
 
 fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
+    // TODO: bail early if the given protector is not used in this directory
+    let protector_id = match &args.protector {
+        Some(id_str) => Some(ProtectorId::try_from(id_str.as_str())?),
+        None => None
+    };
+
     let encrypted_dir = match dirlock::open_dir(&args.dir)? {
         DirStatus::Encrypted(d) if d.key_status == fscrypt::KeyStatus::Present =>
             bail!("The directory {} is already unlocked", args.dir.display()),
@@ -150,7 +159,7 @@ fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
     eprint!("Enter encryption password: ");
     let pass = Zeroizing::new(rpassword::read_password()?);
 
-    if ! encrypted_dir.unlock(pass.as_bytes())? {
+    if ! encrypted_dir.unlock(pass.as_bytes(), protector_id)? {
         bail!("Unable to unlock directory {}: wrong password", args.dir.display())
     }
 
@@ -228,8 +237,7 @@ fn cmd_remove_protector(args: &RemoveProtectorArgs) -> Result<()> {
     }
 
     let protector_id = match &args.protector {
-        Some(id_str) => ProtectorId::try_from(id_str.as_str())
-                            .map_err(|e| anyhow!("Invalid protector ID: {e}"))?,
+        Some(id_str) => ProtectorId::try_from(id_str.as_str())?,
         None => {
             eprint!("Enter the password of the protector that you want to remove: ");
             let pass = Zeroizing::new(rpassword::read_password()?);
@@ -310,7 +318,7 @@ fn cmd_export_master_key(args: &ExportMasterKeyArgs) -> Result<()> {
     eprint!("Enter the current encryption password: ");
     let pass = Zeroizing::new(rpassword::read_password()?);
 
-    let Some(k) = encrypted_dir.get_master_key(pass.as_bytes()) else {
+    let Some(k) = encrypted_dir.get_master_key(pass.as_bytes(), None) else {
         bail!("Unable to unlock master key for directory {}", args.dir.display());
     };
 

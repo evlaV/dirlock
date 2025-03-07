@@ -47,7 +47,7 @@ fn do_authenticate(pamh: Pam) -> Result<(), PamError> {
         .ok_or(PamError::AUTH_ERR)?;
 
     // Unlock the home directory with the password
-    match encrypted_dir.unlock(pass) {
+    match encrypted_dir.unlock(pass, None) {
         Ok(true) => Ok(()),
         Ok(false) => {
             log_notice(&pamh, format!("authentication failure; user={user}"));
