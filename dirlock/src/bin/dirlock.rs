@@ -36,6 +36,9 @@ enum Command {
 #[argh(subcommand, name = "lock")]
 /// Lock a directory
 struct LockArgs {
+    /// lock the directory no matter who unlocked it
+    #[argh(switch, long = "all-users")]
+    all_users: bool,
     /// directory
     #[argh(positional)]
     dir: PathBuf,
@@ -129,7 +132,12 @@ fn cmd_lock(args: &LockArgs) -> Result<()> {
         x => bail!("{}", x),
     };
 
-    let flags = encrypted_dir.lock()?;
+    let user = if args.all_users {
+        fscrypt::RemoveKeyUsers::AllUsers
+    } else {
+        fscrypt::RemoveKeyUsers::CurrentUser
+    };
+    let flags = encrypted_dir.lock(user)?;
 
     if flags.contains(fscrypt::RemovalStatusFlags::FilesBusy) {
         println!("Key removed, but some files are still busy");

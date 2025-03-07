@@ -310,7 +310,7 @@ pub fn add_key(dir: &Path, key: &PolicyKey) -> Result<PolicyKeyId> {
 }
 
 /// Remove a [`PolicyKey`] from the kernel for a given filesystem
-pub fn remove_key(dir: &Path, keyid: &PolicyKeyId, users: RemoveKeyUsers) -> Result<RemovalStatusFlags> {
+pub fn remove_key(dir: &Path, keyid: &PolicyKeyId, user: RemoveKeyUsers) -> Result<RemovalStatusFlags> {
     let fd = File::open(get_mountpoint(dir)?)?;
 
     let mut arg : fscrypt_remove_key_arg = unsafe { mem::zeroed() };
@@ -319,7 +319,7 @@ pub fn remove_key(dir: &Path, keyid: &PolicyKeyId, users: RemoveKeyUsers) -> Res
 
     let raw_fd = fd.as_raw_fd();
     let argptr = &raw mut arg;
-    if let Err(x) = match users {
+    if let Err(x) = match user {
         RemoveKeyUsers::CurrentUser => unsafe { ioctl::fscrypt_remove_key(raw_fd, argptr) },
         RemoveKeyUsers::AllUsers => unsafe { ioctl::fscrypt_remove_key_all_users(raw_fd, argptr) },
     } {

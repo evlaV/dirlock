@@ -11,7 +11,7 @@ pub mod protector;
 pub mod util;
 
 use anyhow::{anyhow, bail, Result};
-use fscrypt::{Policy, PolicyKey, PolicyKeyId, RemovalStatusFlags};
+use fscrypt::{Policy, PolicyKey, PolicyKeyId, RemoveKeyUsers, RemovalStatusFlags};
 use protector::{ProtectorId, ProtectedPolicyKey};
 use std::path::{Path, PathBuf};
 
@@ -121,12 +121,11 @@ impl EncryptedDir {
     }
 
     /// Locks a directory
-    pub fn lock(&self) -> Result<RemovalStatusFlags> {
+    pub fn lock(&self, user: RemoveKeyUsers) -> Result<RemovalStatusFlags> {
         if self.key_status == fscrypt::KeyStatus::Absent {
             bail!("The directory {} is already locked", self.path.display());
         }
 
-        let user = fscrypt::RemoveKeyUsers::CurrentUser;
         fscrypt::remove_key(&self.path, &self.policy.keyid, user)
             .map_err(|e|anyhow!("Unable to lock directory: {e}"))
     }
@@ -209,7 +208,7 @@ pub fn encrypt_dir(path: &Path, password: &[u8]) -> Result<PolicyKeyId> {
     let master_key = fscrypt::PolicyKey::new_random();
     let keyid = fscrypt::add_key(path, &master_key)?;
     if let Err(e) = fscrypt::set_policy(path, &keyid) {
-        let user = fscrypt::RemoveKeyUsers::CurrentUser;
+        let user = RemoveKeyUsers::CurrentUser;
         let _ = fscrypt::remove_key(path, &keyid, user);
         bail!("Failed to encrypt directory: {e}");
     }
