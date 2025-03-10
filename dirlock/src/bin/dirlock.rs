@@ -167,7 +167,7 @@ fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
     eprint!("Enter encryption password: ");
     let pass = Zeroizing::new(rpassword::read_password()?);
 
-    if ! encrypted_dir.unlock(pass.as_bytes(), protector_id)? {
+    if ! encrypted_dir.unlock(pass.as_bytes(), protector_id.as_ref())? {
         bail!("Unable to unlock directory {}: wrong password", args.dir.display())
     }
 
