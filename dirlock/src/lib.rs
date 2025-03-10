@@ -82,6 +82,8 @@ pub fn open_home(user: &str) -> Result<Option<DirStatus>> {
 
 impl EncryptedDir {
     /// Get a directory's master encryption key using the password of one of its protectors
+    ///
+    /// If `protector_id` is `None` try all available protectors.
     pub fn get_master_key(&self, pass: &[u8], protector_id: Option<&ProtectorId>) -> Option<PolicyKey> {
         for p in &self.protectors {
             if let Some(id) = protector_id {
@@ -100,8 +102,10 @@ impl EncryptedDir {
     ///
     /// This call only checks the password and nothing else, and it
     /// also does not care if the directory is locked or unlocked.
-    pub fn check_pass(&self, password: &[u8]) -> bool {
-        self.get_master_key(password, None).is_some()
+    ///
+    /// If `protector_id` is `None` try all available protectors.
+    pub fn check_pass(&self, password: &[u8], protector_id: Option<&ProtectorId>) -> bool {
+        self.get_master_key(password, protector_id).is_some()
     }
 
     /// Unlocks a directory with the given password
@@ -140,11 +144,16 @@ impl EncryptedDir {
         None
     }
 
-    /// Changes the password of the protector used to lock this directory
-    pub fn change_password(&mut self, pass: &[u8], newpass: &[u8]) -> Result<bool> {
-        // TODO: Allow selecting one specific protector. If several
-        // protectors have the same password this only changes the first one.
+    /// Changes the password of a protector used to lock this directory
+    ///
+    /// If `protector_id` is `None`, change the first protector with a matching password.
+    pub fn change_password(&mut self, pass: &[u8], newpass: &[u8], protector_id: Option<&ProtectorId>) -> Result<bool> {
         for p in &mut self.protectors {
+            if let Some(id) = protector_id {
+                if *id != p.protector_id {
+                    continue;
+                }
+            }
             if p.protector.change_pass(pass, newpass) {
                 keystore::add_protector(&p.protector_id, &p.protector, true)?;
                 return Ok(true);

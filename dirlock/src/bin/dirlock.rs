@@ -60,6 +60,9 @@ struct UnlockArgs {
 #[argh(subcommand, name = "change-password")]
 /// Change the encryption password of a directory
 struct ChangePassArgs {
+    /// ID of the protector whose password is to be changed
+    #[argh(option)]
+    protector: Option<String>,
     /// directory
     #[argh(positional)]
     dir: PathBuf,
@@ -175,6 +178,11 @@ fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
 }
 
 fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
+    let protector_id = match &args.protector {
+        Some(id_str) => Some(ProtectorId::try_from(id_str.as_str())?),
+        None => None
+    };
+
     let mut encrypted_dir = match dirlock::open_dir(&args.dir)? {
         DirStatus::Encrypted(d) => d,
         x => bail!("{}", x),
@@ -183,7 +191,7 @@ fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
     eprint!("Enter the current password: ");
     let pass = Zeroizing::new(rpassword::read_password()?);
 
-    if ! encrypted_dir.check_pass(pass.as_bytes()) {
+    if ! encrypted_dir.check_pass(pass.as_bytes(), protector_id.as_ref()) {
         bail!("Password not valid for directory {}", args.dir.display())
     }
 
@@ -193,7 +201,7 @@ fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
     let npass2 = Zeroizing::new(rpassword::read_password()?);
     ensure!(npass1 == npass2, "Passwords don't match");
 
-    if ! encrypted_dir.change_password(pass.as_bytes(), npass1.as_bytes())? {
+    if ! encrypted_dir.change_password(pass.as_bytes(), npass1.as_bytes(), protector_id.as_ref())? {
         bail!("Unable to change the password for directory {}", args.dir.display())
     }
 
@@ -209,7 +217,7 @@ fn cmd_add_protector(args: &AddProtectorArgs) -> Result<()> {
     eprint!("Enter the current password: ");
     let pass = Zeroizing::new(rpassword::read_password()?);
 
-    if ! encrypted_dir.check_pass(pass.as_bytes()) {
+    if ! encrypted_dir.check_pass(pass.as_bytes(), None) {
         bail!("Password not valid for directory {}", args.dir.display())
     }
 
@@ -219,7 +227,7 @@ fn cmd_add_protector(args: &AddProtectorArgs) -> Result<()> {
     let npass2 = Zeroizing::new(rpassword::read_password()?);
     ensure!(npass1 == npass2, "Passwords don't match");
 
-    if encrypted_dir.check_pass(npass1.as_bytes()) {
+    if encrypted_dir.check_pass(npass1.as_bytes(), None) {
         bail!("There is already a protector with that password");
     }
 
