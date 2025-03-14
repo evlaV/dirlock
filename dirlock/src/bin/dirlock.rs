@@ -8,7 +8,15 @@ use anyhow::{anyhow, bail, ensure, Result};
 use argh::FromArgs;
 use std::io::{self, Write};
 use std::path::PathBuf;
-use dirlock::{fscrypt, util, DirStatus, protector::ProtectorId};
+use dirlock::{
+    DirStatus,
+    fscrypt,
+    protector::{
+        ProtectorId,
+        ProtectorType,
+    },
+    util,
+};
 use zeroize::Zeroizing;
 
 #[derive(FromArgs)]
@@ -72,6 +80,9 @@ struct ChangePassArgs {
 #[argh(subcommand, name = "add-protector")]
 /// Adds a new protector to a directory
 struct AddProtectorArgs {
+    /// type of the protector to add (default: 'password')
+    #[argh(option)]
+    type_: Option<String>,
     /// directory
     #[argh(positional)]
     dir: PathBuf,
@@ -214,6 +225,12 @@ fn cmd_add_protector(args: &AddProtectorArgs) -> Result<()> {
         x => bail!("{}", x),
     };
 
+    let protector_type = if let Some(s) = &args.type_ {
+        ProtectorType::try_from(s.as_str())?
+    } else {
+        ProtectorType::Password
+    };
+
     eprint!("Enter the current password: ");
     let pass = Zeroizing::new(rpassword::read_password()?);
 
@@ -231,7 +248,7 @@ fn cmd_add_protector(args: &AddProtectorArgs) -> Result<()> {
         bail!("There is already a protector with that password");
     }
 
-    if let Some(protid) = encrypted_dir.add_protector(pass.as_bytes(), npass1.as_bytes())? {
+    if let Some(protid) = encrypted_dir.add_protector(protector_type, pass.as_bytes(), npass1.as_bytes())? {
         println!("Added protector {protid} to directory {}", args.dir.display());
     } else {
         // FIXME: this should not happen because we checked earlier
@@ -407,7 +424,7 @@ fn cmd_status(args: &StatusArgs) -> Result<()> {
     }
 
     for p in encrypted_dir.protectors {
-        println!("Protector: {}, type {}", &p.protector_id, p.protector.name());
+        println!("Protector: {}, type {}", &p.protector_id, p.protector.get_type());
     }
 
     Ok(())

@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
+use anyhow::{anyhow, Result};
 use ctr::cipher::{KeyIvInit, StreamCipher};
 use hmac::Mac;
 use pbkdf2::pbkdf2_hmac;
@@ -11,6 +12,7 @@ use rand::{RngCore, rngs::OsRng};
 use serde::{Serialize, Deserialize};
 use serde_with::{serde_as, hex::Hex, base64::Base64};
 use sha2::{Digest, Sha256, Sha512};
+use std::fmt;
 
 use crate::fscrypt::PolicyKey;
 
@@ -83,10 +85,10 @@ pub struct ProtectorId(
 
 impl TryFrom<&str> for ProtectorId {
     type Error = anyhow::Error;
-    fn try_from(s: &str) -> anyhow::Result<Self> {
+    fn try_from(s: &str) -> Result<Self> {
         let mut ret = ProtectorId::default();
         hex::decode_to_slice(s, &mut ret.0)
-            .map_err(|_| anyhow::anyhow!("Invalid protector ID: {s}"))?;
+            .map_err(|_| anyhow!("Invalid protector ID: {s}"))?;
         Ok(ret)
     }
 }
@@ -122,14 +124,49 @@ pub struct ProtectedPolicyKey {
 
 impl ProtectedPolicyKey {
     /// Wrap a [`PolicyKey`] with a new [`PasswordProtector`]
-    pub fn new_with_password(key: PolicyKey, password: &[u8]) -> Self {
+    pub fn new(ptype: ProtectorType, key: PolicyKey, password: &[u8]) -> Result<Self> {
         let protector_key = ProtectorKey::new_random();
         let protector_id = protector_key.get_id();
         let policy_key = WrappedPolicyKey::new(key, &protector_key);
-        let protector = Protector::Password(PasswordProtector::new(protector_key, password));
-        ProtectedPolicyKey { protector_id, protector, policy_key }
+        let protector = Protector::new(ptype, protector_key, password)?;
+        Ok(ProtectedPolicyKey { protector_id, protector, policy_key })
     }
 }
+
+
+/// An enum of the existing protector types
+#[derive(Copy, Clone, PartialEq)]
+pub enum ProtectorType {
+    Password,
+}
+
+const PROTECTOR_TYPE_NAMES: &[(&str, ProtectorType)] = &[
+    ("password", ProtectorType::Password),
+];
+
+impl fmt::Display for ProtectorType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = PROTECTOR_TYPE_NAMES.iter()
+            .find(|x| &x.1 == self)
+            .map(|x| x.0)
+            .unwrap();
+        write!(f, "{name}")
+    }
+}
+
+impl TryFrom<&str> for ProtectorType {
+    type Error = anyhow::Error;
+    fn try_from(s: &str) -> Result<Self> {
+        PROTECTOR_TYPE_NAMES.iter()
+            .find(|x| x.0 == s)
+            .map(|x| x.1)
+            .ok_or(anyhow!("Unknown protector type '{s}'. Available types: {}",
+                           PROTECTOR_TYPE_NAMES.iter()
+                           .map(|x| x.0)
+                           .collect::<Vec<_>>().join(", ")))
+    }
+}
+
 
 /// A wrapped [`ProtectorKey`] using one of several available methods
 #[derive(Serialize, Deserialize)]
@@ -140,6 +177,13 @@ pub enum Protector {
 }
 
 impl Protector {
+    pub fn new(ptype: ProtectorType, raw_key: ProtectorKey, pass: &[u8]) -> Result<Self> {
+        let prot = match ptype {
+            ProtectorType::Password => Protector::Password(PasswordProtector::new(raw_key, pass)),
+        };
+        Ok(prot)
+    }
+
     /// Unwraps this protector's [`ProtectorKey`] using a password
     pub fn unwrap_key(&self, pass: &[u8]) -> Option<ProtectorKey> {
         match self {
@@ -159,10 +203,10 @@ impl Protector {
         }
     }
 
-    /// Gets the name of this protector
-    pub fn name(&self) -> &'static str {
+    /// Gets the type of this protector
+    pub fn get_type(&self) -> ProtectorType {
         match self {
-            Protector::Password(_) => "password",
+            Protector::Password(_) => ProtectorType::Password
         }
     }
 }
@@ -218,7 +262,6 @@ fn aes_enc(key: &Aes256Key, iv: &AesIv, data: &mut [u8]) -> Hmac {
 
 #[cfg(test)]
 mod tests {
-    use anyhow::Result;
     use crate::fscrypt::PolicyKeyId;
     use super::*;
 

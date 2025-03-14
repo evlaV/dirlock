@@ -12,7 +12,7 @@ pub mod util;
 
 use anyhow::{anyhow, bail, Result};
 use fscrypt::{Policy, PolicyKey, PolicyKeyId, RemoveKeyUsers, RemovalStatusFlags};
-use protector::{ProtectorId, ProtectedPolicyKey};
+use protector::{ProtectorId, ProtectedPolicyKey, ProtectorType};
 use std::path::{Path, PathBuf};
 
 pub enum DirStatus {
@@ -163,13 +163,13 @@ impl EncryptedDir {
     }
 
     /// Adds a new protector to a directory
-    pub fn add_protector(&self, pass: &[u8], newpass: &[u8]) -> Result<Option<ProtectorId>> {
+    pub fn add_protector(&self, ptype: ProtectorType, pass: &[u8], newpass: &[u8]) -> Result<Option<ProtectorId>> {
         // TODO: Allow selecting one specific protector. This tries
         // all protectors until one can be unlocked with pass
         for ProtectedPolicyKey { protector_id: _, protector, policy_key } in &self.protectors {
             if let Some(master_key) = protector.unwrap_policy_key(policy_key, pass) {
                 // Generate a protector and use it to wrap the master key
-                let p = ProtectedPolicyKey::new_with_password(master_key, newpass);
+                let p = ProtectedPolicyKey::new(ptype, master_key, newpass)?;
                 let protid = p.protector_id.clone();
 
                 // Store the new protector and policy
@@ -223,7 +223,7 @@ pub fn encrypt_dir(path: &Path, password: &[u8]) -> Result<PolicyKeyId> {
     }
 
     // Generate a protector and use it to wrap the master key
-    let k = ProtectedPolicyKey::new_with_password(master_key, password);
+    let k = ProtectedPolicyKey::new(ProtectorType::Password, master_key, password)?;
 
     // Store the new protector and policy
     keystore::add_protector(&k.protector_id, &k.protector, false)?;
@@ -240,7 +240,7 @@ pub fn import_policy_key(master_key: fscrypt::PolicyKey, password: &[u8]) -> Res
     }
 
     // Generate a protector and use it to wrap the master key
-    let k = ProtectedPolicyKey::new_with_password(master_key, password);
+    let k = ProtectedPolicyKey::new(ProtectorType::Password, master_key, password)?;
 
     // Store the new protector and policy
     keystore::add_protector(&k.protector_id, &k.protector, false)?;
