@@ -29,20 +29,20 @@ struct Args {
 #[derive(FromArgs)]
 #[argh(subcommand)]
 enum Command {
+    Status(StatusArgs),
+    Encrypt(EncryptArgs),
     Lock(LockArgs),
     Unlock(UnlockArgs),
     ChangePass(ChangePassArgs),
     AddProtector(AddProtectorArgs),
     RemoveProtector(RemoveProtectorArgs),
-    Encrypt(EncryptArgs),
     ExportMasterKey(ExportMasterKeyArgs),
     ImportMasterKey(ImportMasterKeyArgs),
-    Status(StatusArgs),
 }
 
 #[derive(FromArgs)]
 #[argh(subcommand, name = "lock")]
-/// Lock a directory
+/// Lock an encrypted directory
 struct LockArgs {
     /// lock the directory no matter who unlocked it
     #[argh(switch, long = "all-users")]
@@ -54,7 +54,7 @@ struct LockArgs {
 
 #[derive(FromArgs)]
 #[argh(subcommand, name = "unlock")]
-/// Unlock a directory
+/// Unlock an encrypted directory
 struct UnlockArgs {
     /// ID of the protector used to unlock this directory
     #[argh(option)]
@@ -114,7 +114,7 @@ struct EncryptArgs {
 
 #[derive(FromArgs)]
 #[argh(subcommand, name = "export-master-key")]
-/// Export the master encryption key of a given directory
+/// Export the master encryption key of a directory
 struct ExportMasterKeyArgs {
     /// directory
     #[argh(positional)]
@@ -128,7 +128,7 @@ struct ImportMasterKeyArgs { }
 
 #[derive(FromArgs)]
 #[argh(subcommand, name = "status")]
-/// Get the status of a directory
+/// Get the encryption status of a directory
 struct StatusArgs {
     /// verbose output (list protectors and encryption parameters)
     #[argh(switch, short = 'v', long = "verbose")]
