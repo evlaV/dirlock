@@ -2,6 +2,7 @@
 name = "dirlock"
 version = "0.0.1"
 edition = "2021"
+default-run = "dirlock"
 
 [dependencies]
 nix = { version = "0.29.0", features = ["fs", "ioctl"] }
