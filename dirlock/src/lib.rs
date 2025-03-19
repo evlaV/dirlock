@@ -247,3 +247,13 @@ pub fn import_policy_key(master_key: fscrypt::PolicyKey, password: &[u8]) -> Res
     keystore::add_protector_to_policy(&keyid, k)?;
     Ok(())
 }
+
+/// Initialize the dirlock library
+pub fn init() {
+    use std::sync::Once;
+    static DIRLOCK_INIT: Once = Once::new();
+    DIRLOCK_INIT.call_once(|| {
+        // Disable log messages from the TPM2 library
+        std::env::set_var("TSS2_LOG", "all+NONE");
+    });
+}

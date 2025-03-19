@@ -17,9 +17,11 @@ use std::fmt;
 use crate::fscrypt::PolicyKey;
 
 pub use password::PasswordProtector as PasswordProtector;
+pub use tpm2::Tpm2Protector as Tpm2Protector;
 pub use policy::WrappedPolicyKey as WrappedPolicyKey;
 pub mod password;
 pub mod policy;
+pub mod tpm2;
 
 const PROTECTOR_KEY_LEN: usize = 32;
 const PROTECTOR_ID_LEN: usize = 8;
@@ -138,10 +140,12 @@ impl ProtectedPolicyKey {
 #[derive(Copy, Clone, PartialEq)]
 pub enum ProtectorType {
     Password,
+    Tpm2,
 }
 
 const PROTECTOR_TYPE_NAMES: &[(&str, ProtectorType)] = &[
     ("password", ProtectorType::Password),
+    ("tpm2", ProtectorType::Tpm2),
 ];
 
 impl fmt::Display for ProtectorType {
@@ -173,13 +177,16 @@ impl TryFrom<&str> for ProtectorType {
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Protector {
     /// The key is wrapped with a password.
-    Password(PasswordProtector)
+    Password(PasswordProtector),
+    /// The key is wrapped by the TPM.
+    Tpm2(Tpm2Protector),
 }
 
 impl Protector {
     pub fn new(ptype: ProtectorType, raw_key: ProtectorKey, pass: &[u8]) -> Result<Self> {
         let prot = match ptype {
             ProtectorType::Password => Protector::Password(PasswordProtector::new(raw_key, pass)),
+            ProtectorType::Tpm2 => Protector::Tpm2(Tpm2Protector::new(raw_key, pass)?),
         };
         Ok(prot)
     }
@@ -187,7 +194,8 @@ impl Protector {
     /// Unwraps this protector's [`ProtectorKey`] using a password
     pub fn unwrap_key(&self, pass: &[u8]) -> Option<ProtectorKey> {
         match self {
-            Protector::Password(p) => p.unwrap_key(pass)
+            Protector::Password(p) => p.unwrap_key(pass),
+            Protector::Tpm2(p) => p.unwrap_key(pass).unwrap_or(None), // TODO return the error here
         }
     }
 
@@ -199,14 +207,16 @@ impl Protector {
     /// Unwraps the key using a password
     pub fn change_pass(&mut self, pass: &[u8], newpass: &[u8]) -> bool {
         match self {
-            Protector::Password(p) => p.change_pass(pass, newpass)
+            Protector::Password(p) => p.change_pass(pass, newpass),
+            Protector::Tpm2(p) => p.change_pass(pass, newpass),
         }
     }
 
     /// Gets the type of this protector
     pub fn get_type(&self) -> ProtectorType {
         match self {
-            Protector::Password(_) => ProtectorType::Password
+            Protector::Password(_) => ProtectorType::Password,
+            Protector::Tpm2(_) => ProtectorType::Tpm2,
         }
     }
 }
