@@ -171,6 +171,8 @@ source=("git+ssh://git@gitlab.steamos.cloud/holo/$pkgname.git#branch=master"
         'zerocopy-derive-0.7.35.tar.gz::https://crates.io/api/v1/crates/zerocopy-derive/0.7.35/download'
         'zeroize-1.8.1.tar.gz::https://crates.io/api/v1/crates/zeroize/1.8.1/download'
         'zeroize_derive-1.4.2.tar.gz::https://crates.io/api/v1/crates/zeroize_derive/1.4.2/download')
+depends=('tpm2-tss'
+         'pam')
 makedepends=('cargo'
              'holo-rust-packaging-tools')
 license=('BSD-3-Clause')
@@ -370,12 +372,12 @@ prepare() {
 build () {
   cd "$srcdir/$pkgname"
 
-  cargo build --offline --release --target-dir target
+  cargo build -F tpm2 --offline --release --target-dir target
 }
 
 package() {
   # Runtime dependency
-  depends=('qt6-virtualkeyboard')
+  depends+=('qt6-virtualkeyboard')
 
   cd "$srcdir/$pkgname"
 
