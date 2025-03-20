@@ -12,11 +12,16 @@ use serde_with::{serde_as, base64::Base64};
 use {
     anyhow::anyhow,
     rand::{RngCore, rngs::OsRng},
+    std::fmt,
     tss_esapi::{
         Context,
         TctiNameConf,
         attributes::ObjectAttributesBuilder,
-        constants::tss,
+        constants::{
+            CapabilityType,
+            PropertyTag,
+            tss,
+        },
         handles::{
             KeyHandle,
             ObjectHandle,
@@ -31,6 +36,7 @@ use {
         },
         structures::{
             Auth,
+            CapabilityData,
             Digest,
             EccPoint,
             EccScheme,
@@ -276,4 +282,68 @@ fn unseal_data(mut ctx: Context, primary_key: KeyHandle, sealed_pub: Public, sea
     })?;
 
     Ok(unsealed)
+}
+
+#[cfg(feature = "tpm2")]
+pub struct TpmStatus {
+    pub manufacturer: String,
+    pub lockout_counter: u32,
+    pub max_auth_fail: u32,
+    pub lockout_interval: u32,
+}
+
+#[cfg(feature = "tpm2")]
+impl fmt::Display for TpmStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Manufacturer: {}\n\
+                   Lockout counter: {} / {}\n\
+                   Counter decreased every {} seconds",
+               self.manufacturer,
+               self.lockout_counter,
+               self.max_auth_fail,
+               self.lockout_interval)
+    }
+}
+
+#[cfg(feature = "tpm2")]
+pub fn get_status() -> Result<TpmStatus> {
+    use PropertyTag::*;
+
+    let mut ctx = Context::new(TctiNameConf::Device(DeviceConfig::default()))
+        .map_err(|e| anyhow!("Unable to access the TPM: {e}"))?;
+
+    let manufacturer = if let Some(val) = ctx.get_tpm_property(Manufacturer)? {
+        val.to_be_bytes().iter()
+            .filter(|x| **x != 0)
+            .map(|x| char::from(*x))
+            .collect()
+    } else {
+        String::from("Unknown")
+    };
+
+    let caps = ctx.get_capability(CapabilityType::TpmProperties, tss::TPM2_PT_LOCKOUT_COUNTER, 4)?;
+
+    if let (CapabilityData::TpmProperties(data), _) = caps {
+        let props = [LockoutCounter, MaxAuthFail, LockoutInterval];
+        let values : Vec<_> = props.iter()
+            .filter_map(|p| data.find(*p))
+            .map(|p| p.value())
+            .collect();
+
+        if props.len() == values.len() {
+            return Ok(TpmStatus {
+                manufacturer,
+                lockout_counter: values[0],
+                max_auth_fail: values[1],
+                lockout_interval: values[2],
+            });
+        }
+    }
+
+    Err(anyhow!("Error getting the status of the TPM"))
+}
+
+#[cfg(not(feature = "tpm2"))]
+pub fn get_status() -> Result<&'static str> {
+    Ok("TPM support not enabled")
 }

@@ -35,6 +35,7 @@ enum Command {
     ChangePass(ChangePassArgs),
     AddProtector(AddProtectorArgs),
     RemoveProtector(RemoveProtectorArgs),
+    SystemInfo(SystemInfoArgs),
     ExportMasterKey(ExportMasterKeyArgs),
     ImportMasterKey(ImportMasterKeyArgs),
 }
@@ -109,6 +110,12 @@ struct EncryptArgs {
     /// directory
     #[argh(positional)]
     dir: PathBuf,
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "system-info")]
+/// Show information about the system
+struct SystemInfoArgs {
 }
 
 #[derive(FromArgs)]
@@ -333,6 +340,16 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
     Ok(())
 }
 
+fn cmd_system_info(_args: &SystemInfoArgs) -> Result<()> {
+    let tpm_status = dirlock::protector::tpm2::get_status()?;
+
+    println!("TPM information\n\
+              ---------------\n\
+              {tpm_status}");
+
+    Ok(())
+}
+
 fn cmd_export_master_key(args: &ExportMasterKeyArgs) -> Result<()> {
     use base64::prelude::*;
     let encrypted_dir = match dirlock::open_dir(&args.dir)? {
@@ -441,6 +458,7 @@ fn main() -> Result<()> {
         AddProtector(args) => cmd_add_protector(args),
         RemoveProtector(args) => cmd_remove_protector(args),
         Encrypt(args) => cmd_encrypt(args),
+        SystemInfo(args) => cmd_system_info(args),
         ExportMasterKey(args) => cmd_export_master_key(args),
         ImportMasterKey(_) => cmd_import_master_key(),
         Status(args) => cmd_status(args),
