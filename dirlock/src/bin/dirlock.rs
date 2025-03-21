@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
-use anyhow::{anyhow, bail, ensure, Result};
+use anyhow::{bail, ensure, Result};
 use argh::FromArgs;
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -12,7 +12,6 @@ use dirlock::{
     DirStatus,
     fscrypt,
     protector::{
-        ProtectorId,
         ProtectorType,
     },
     util,
@@ -165,17 +164,16 @@ fn cmd_lock(args: &LockArgs) -> Result<()> {
 }
 
 fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
-    // TODO: bail early if the given protector is not used in this directory
-    let protector_id = match &args.protector {
-        Some(id_str) => Some(ProtectorId::try_from(id_str.as_str())?),
-        None => None
-    };
-
     let encrypted_dir = match dirlock::open_dir(&args.dir)? {
         DirStatus::Encrypted(d) if d.key_status == fscrypt::KeyStatus::Present =>
             bail!("The directory {} is already unlocked", args.dir.display()),
         DirStatus::Encrypted(d) => d,
         x => bail!("{}", x),
+    };
+
+    let protector_id = match &args.protector {
+        Some(id_str) => Some(encrypted_dir.get_protector_id_by_str(id_str)?),
+        None => None
     };
 
     eprint!("Enter encryption password: ");
@@ -189,14 +187,14 @@ fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
 }
 
 fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
-    let protector_id = match &args.protector {
-        Some(id_str) => Some(ProtectorId::try_from(id_str.as_str())?),
-        None => None
-    };
-
     let mut encrypted_dir = match dirlock::open_dir(&args.dir)? {
         DirStatus::Encrypted(d) => d,
         x => bail!("{}", x),
+    };
+
+    let protector_id = match &args.protector {
+        Some(id_str) => Some(encrypted_dir.get_protector_id_by_str(id_str)?),
+        None => None
     };
 
     eprint!("Enter the current password: ");
@@ -270,12 +268,11 @@ fn cmd_remove_protector(args: &RemoveProtectorArgs) -> Result<()> {
     }
 
     let protector_id = match &args.protector {
-        Some(id_str) => ProtectorId::try_from(id_str.as_str())?,
+        Some(id_str) => encrypted_dir.get_protector_id_by_str(id_str)?,
         None => {
             eprint!("Enter the password of the protector that you want to remove: ");
             let pass = Zeroizing::new(rpassword::read_password()?);
-            encrypted_dir.get_protector_id_by_pass(pass.as_bytes())
-                .ok_or(anyhow!("No protector found with that password"))?
+            encrypted_dir.get_protector_id_by_pass(pass.as_bytes())?
         }
     };
 

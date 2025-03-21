@@ -135,13 +135,22 @@ impl EncryptedDir {
     }
 
     /// Finds a protector that can be unlocked with the given password
-    pub fn get_protector_id_by_pass(&self, pass: &[u8]) -> Option<ProtectorId> {
+    pub fn get_protector_id_by_pass(&self, pass: &[u8]) -> Result<ProtectorId> {
         for p in &self.protectors {
             if p.protector.unwrap_key(pass).is_some() {
-                return Some(p.protector_id.clone());
+                return Ok(p.protector_id.clone());
             }
         }
-        None
+        bail!("No protector found with that password in the directory");
+    }
+
+    /// Find a protector using its ID in string form
+    pub fn get_protector_id_by_str(&self, id_str: impl AsRef<str>) -> Result<ProtectorId> {
+        let id = ProtectorId::try_from(id_str.as_ref())?;
+        if !self.protectors.iter().any(|p| p.protector_id == id) {
+            bail!("No protector found with that ID in the directory");
+        }
+        Ok(id)
     }
 
     /// Changes the password of a protector used to lock this directory
