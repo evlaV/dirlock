@@ -290,15 +290,17 @@ pub struct TpmStatus {
     pub lockout_counter: u32,
     pub max_auth_fail: u32,
     pub lockout_interval: u32,
+    pub in_lockout: bool,
 }
 
 #[cfg(feature = "tpm2")]
 impl fmt::Display for TpmStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Manufacturer: {}\n\
-                   Lockout counter: {} / {}\n\
-                   Counter decreased every {} seconds",
+                   Locked: {} (failed auth attempts: {} / {})\n\
+                   Lockout counter decreased every {} seconds",
                self.manufacturer,
+               if self.in_lockout { "yes" } else { "no" },
                self.lockout_counter,
                self.max_auth_fail,
                self.lockout_interval)
@@ -312,6 +314,7 @@ pub fn get_status() -> Result<TpmStatus> {
     let mut ctx = Context::new(TctiNameConf::Device(DeviceConfig::default()))
         .map_err(|e| anyhow!("Unable to access the TPM: {e}"))?;
 
+    let perm = ctx.get_tpm_property(Permanent)?.unwrap_or(0);
     let manufacturer = if let Some(val) = ctx.get_tpm_property(Manufacturer)? {
         val.to_be_bytes().iter()
             .filter(|x| **x != 0)
@@ -336,6 +339,7 @@ pub fn get_status() -> Result<TpmStatus> {
                 lockout_counter: values[0],
                 max_auth_fail: values[1],
                 lockout_interval: values[2],
+                in_lockout: (perm & tss::TPMA_PERMANENT_INLOCKOUT) != 0,
             });
         }
     }
