@@ -321,7 +321,7 @@ pub fn get_status() -> Result<TpmStatus> {
         String::from("Unknown")
     };
 
-    let caps = ctx.get_capability(CapabilityType::TpmProperties, tss::TPM2_PT_LOCKOUT_COUNTER, 4)?;
+    let caps = ctx.get_capability(CapabilityType::TpmProperties, tss::TPM2_PT_LOCKOUT_COUNTER, 3)?;
 
     if let (CapabilityData::TpmProperties(data), _) = caps {
         let props = [LockoutCounter, MaxAuthFail, LockoutInterval];
