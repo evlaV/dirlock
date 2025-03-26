@@ -12,7 +12,7 @@ use serde_with::{serde_as, base64::Base64};
 use {
     anyhow::anyhow,
     rand::{RngCore, rngs::OsRng},
-    std::fmt,
+    std::{fmt, str::FromStr},
     tss_esapi::{
         Context,
         TctiNameConf,
@@ -61,6 +61,7 @@ use crate::{
     protector::{
         ProtectorKey,
         Salt,
+        opts::Tpm2Opts,
     },
 };
 
@@ -78,7 +79,7 @@ pub struct Tpm2Protector {
 // Stub used when the tpm2 feature is disabled
 #[cfg(not(feature = "tpm2"))]
 impl Tpm2Protector {
-    pub fn new(_raw_key: ProtectorKey, _pass: &[u8]) -> Result<Self> {
+    pub fn new(_opts: Tpm2Opts, _raw_key: ProtectorKey, _pass: &[u8]) -> Result<Self> {
         bail!("TPM support is disabled");
     }
 
@@ -94,9 +95,10 @@ impl Tpm2Protector {
 #[cfg(feature = "tpm2")]
 impl Tpm2Protector {
     /// Creates a new [`Tpm2Protector`] that wraps a [`ProtectorKey`] with a password.
-    pub fn new(raw_key: ProtectorKey, pass: &[u8]) -> Result<Self> {
-        let mut ctx = Context::new(TctiNameConf::Device(DeviceConfig::default()))
-            .map_err(|e| anyhow!("Unable to access the TPM: {e}"))?;
+    pub fn new(opts: Tpm2Opts, raw_key: ProtectorKey, pass: &[u8]) -> Result<Self> {
+        let mut ctx = Context::new(TctiNameConf::Device(
+            DeviceConfig::from_str(&opts.path)?
+        )).map_err(|_| anyhow!("Unable to access the TPM at {}", opts.path))?;
         let primary_key = create_primary_key(&mut ctx)?;
         let mut salt = Salt::default();
         OsRng.fill_bytes(&mut salt.0);
@@ -128,7 +130,8 @@ impl Tpm2Protector {
     /// Changes the password of this protector
     pub fn change_pass(&mut self, pass: &[u8], newpass: &[u8]) -> bool {
         if let Ok(Some(raw_key)) = self.unwrap_key(pass) {
-            if let Ok(newprot) = Tpm2Protector::new(raw_key, newpass) {
+            let opts = Tpm2Opts::default();
+            if let Ok(newprot) = Tpm2Protector::new(opts, raw_key, newpass) {
                 *self = newprot;
                 return true;
             }
@@ -286,6 +289,7 @@ fn unseal_data(mut ctx: Context, primary_key: KeyHandle, sealed_pub: Public, sea
 
 #[cfg(feature = "tpm2")]
 pub struct TpmStatus {
+    pub path: String,
     pub manufacturer: String,
     pub lockout_counter: u32,
     pub max_auth_fail: u32,
@@ -296,9 +300,11 @@ pub struct TpmStatus {
 #[cfg(feature = "tpm2")]
 impl fmt::Display for TpmStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Manufacturer: {}\n\
+        write!(f, "Device: {}\n\
+                   Manufacturer: {}\n\
                    Locked: {} (failed auth attempts: {} / {})\n\
                    Lockout counter decreased every {} seconds",
+               self.path,
                self.manufacturer,
                if self.in_lockout { "yes" } else { "no" },
                self.lockout_counter,
@@ -308,17 +314,18 @@ impl fmt::Display for TpmStatus {
 }
 
 #[cfg(feature = "tpm2")]
-pub fn get_status() -> Result<TpmStatus> {
+pub fn get_status(opts: Tpm2Opts) -> Result<TpmStatus> {
     use PropertyTag::*;
 
-    let mut ctx = Context::new(TctiNameConf::Device(DeviceConfig::default()))
-        .map_err(|e| anyhow!("Unable to access the TPM: {e}"))?;
+    let mut ctx = Context::new(TctiNameConf::Device(
+        DeviceConfig::from_str(&opts.path)?
+    ))?;
 
     let perm = ctx.get_tpm_property(Permanent)?.unwrap_or(0);
     let manufacturer = if let Some(val) = ctx.get_tpm_property(Manufacturer)? {
-        val.to_be_bytes().iter()
-            .filter(|x| **x != 0)
-            .map(|x| char::from(*x))
+        val.to_be_bytes().iter()      // Read bytes in big-endian order
+            .filter(|x| **x != 0)     // Remove null bytes
+            .map(|x| char::from(*x))  // Convert them to chars
             .collect()
     } else {
         String::from("Unknown")
@@ -335,6 +342,7 @@ pub fn get_status() -> Result<TpmStatus> {
 
         if props.len() == values.len() {
             return Ok(TpmStatus {
+                path: opts.path,
                 manufacturer,
                 lockout_counter: values[0],
                 max_auth_fail: values[1],
@@ -348,6 +356,6 @@ pub fn get_status() -> Result<TpmStatus> {
 }
 
 #[cfg(not(feature = "tpm2"))]
-pub fn get_status() -> Result<&'static str> {
+pub fn get_status(_opts: Tpm2Opts) -> Result<&'static str> {
     Ok("TPM support not enabled")
 }

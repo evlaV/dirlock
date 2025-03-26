@@ -12,7 +12,7 @@ use dirlock::{
     DirStatus,
     fscrypt,
     protector::{
-        ProtectorType,
+        opts::{ProtectorOpts, ProtectorOptsBuilder},
     },
     util,
 };
@@ -83,6 +83,9 @@ struct AddProtectorArgs {
     /// type of the protector to add (default: 'password')
     #[argh(option)]
     type_: Option<String>,
+    /// TPM2 device (default: auto)
+    #[argh(option)]
+    tpm2_device: Option<PathBuf>,
     /// directory
     #[argh(positional)]
     dir: PathBuf,
@@ -116,6 +119,9 @@ struct EncryptArgs {
 #[argh(subcommand, name = "system-info")]
 /// Show information about the system
 struct SystemInfoArgs {
+    /// TPM2 device (default: auto)
+    #[argh(option)]
+    tpm2_device: Option<PathBuf>,
 }
 
 #[derive(FromArgs)]
@@ -230,11 +236,14 @@ fn cmd_add_protector(args: &AddProtectorArgs) -> Result<()> {
         x => bail!("{}", x),
     };
 
-    let protector_type = if let Some(s) = &args.type_ {
-        ProtectorType::try_from(s.as_str())?
-    } else {
-        ProtectorType::Password
-    };
+    let mut optsbuilder = ProtectorOptsBuilder::new();
+    if let Some(t) = &args.type_ {
+        optsbuilder = optsbuilder.with_type(t);
+    }
+    if let Some(d) = &args.tpm2_device {
+        optsbuilder = optsbuilder.with_tpm2_device(d);
+    }
+    let protector_opts = optsbuilder.build()?;
 
     eprint!("Enter the current password: ");
     let pass = Zeroizing::new(rpassword::read_password()?);
@@ -253,7 +262,7 @@ fn cmd_add_protector(args: &AddProtectorArgs) -> Result<()> {
         bail!("There is already a protector with that password");
     }
 
-    if let Some(protid) = encrypted_dir.add_protector(protector_type, pass.as_bytes(), npass1.as_bytes())? {
+    if let Some(protid) = encrypted_dir.add_protector(protector_opts, pass.as_bytes(), npass1.as_bytes())? {
         println!("Added protector {protid} to directory {}", args.dir.display());
     } else {
         // FIXME: this should not happen because we checked earlier
@@ -340,8 +349,21 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
     Ok(())
 }
 
-fn cmd_system_info(_args: &SystemInfoArgs) -> Result<()> {
-    let tpm_status = dirlock::protector::tpm2::get_status()?;
+fn cmd_system_info(args: &SystemInfoArgs) -> Result<()> {
+    let mut optsbuilder = ProtectorOptsBuilder::new()
+        .with_type("tpm2");
+
+    if let Some(d) = &args.tpm2_device {
+        optsbuilder = optsbuilder.with_tpm2_device(d);
+    }
+
+    let ProtectorOpts::Tpm2(opts) = optsbuilder.build()? else {
+        unreachable!(); // We only build tpm2 opts here
+    };
+
+    let tpm_status = dirlock::protector::tpm2::get_status(opts)
+        .map(|s| s.to_string())
+        .unwrap_or_else(|_| String::from("TPM not found"));
 
     println!("TPM information\n\
               ---------------\n\
@@ -438,7 +460,7 @@ fn cmd_status(args: &StatusArgs) -> Result<()> {
     }
 
     for p in encrypted_dir.protectors {
-        println!("Protector: {}, type {}", &p.protector_id, p.protector.get_type());
+        println!("Protector: {}, type {}", &p.protector_id, p.protector.name());
     }
 
     Ok(())

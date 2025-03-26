@@ -7,12 +7,12 @@
 use anyhow::{anyhow, Result};
 use ctr::cipher::{KeyIvInit, StreamCipher};
 use hmac::Mac;
+use opts::ProtectorOpts;
 use pbkdf2::pbkdf2_hmac;
 use rand::{RngCore, rngs::OsRng};
 use serde::{Serialize, Deserialize};
 use serde_with::{serde_as, hex::Hex, base64::Base64};
 use sha2::{Digest, Sha256, Sha512};
-use std::fmt;
 
 use crate::fscrypt::PolicyKey;
 
@@ -22,6 +22,7 @@ pub use policy::WrappedPolicyKey as WrappedPolicyKey;
 pub mod password;
 pub mod policy;
 pub mod tpm2;
+pub mod opts;
 
 const PROTECTOR_KEY_LEN: usize = 32;
 const PROTECTOR_ID_LEN: usize = 8;
@@ -126,48 +127,12 @@ pub struct ProtectedPolicyKey {
 
 impl ProtectedPolicyKey {
     /// Wrap a [`PolicyKey`] with a new [`PasswordProtector`]
-    pub fn new(ptype: ProtectorType, key: PolicyKey, password: &[u8]) -> Result<Self> {
+    pub fn new(opts: ProtectorOpts, key: PolicyKey, password: &[u8]) -> Result<Self> {
         let protector_key = ProtectorKey::new_random();
         let protector_id = protector_key.get_id();
         let policy_key = WrappedPolicyKey::new(key, &protector_key);
-        let protector = Protector::new(ptype, protector_key, password)?;
+        let protector = Protector::new(opts, protector_key, password)?;
         Ok(ProtectedPolicyKey { protector_id, protector, policy_key })
-    }
-}
-
-
-/// An enum of the existing protector types
-#[derive(Copy, Clone, PartialEq)]
-pub enum ProtectorType {
-    Password,
-    Tpm2,
-}
-
-const PROTECTOR_TYPE_NAMES: &[(&str, ProtectorType)] = &[
-    ("password", ProtectorType::Password),
-    ("tpm2", ProtectorType::Tpm2),
-];
-
-impl fmt::Display for ProtectorType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = PROTECTOR_TYPE_NAMES.iter()
-            .find(|x| &x.1 == self)
-            .map(|x| x.0)
-            .unwrap();
-        write!(f, "{name}")
-    }
-}
-
-impl TryFrom<&str> for ProtectorType {
-    type Error = anyhow::Error;
-    fn try_from(s: &str) -> Result<Self> {
-        PROTECTOR_TYPE_NAMES.iter()
-            .find(|x| x.0 == s)
-            .map(|x| x.1)
-            .ok_or(anyhow!("Unknown protector type '{s}'. Available types: {}",
-                           PROTECTOR_TYPE_NAMES.iter()
-                           .map(|x| x.0)
-                           .collect::<Vec<_>>().join(", ")))
     }
 }
 
@@ -183,10 +148,10 @@ pub enum Protector {
 }
 
 impl Protector {
-    pub fn new(ptype: ProtectorType, raw_key: ProtectorKey, pass: &[u8]) -> Result<Self> {
-        let prot = match ptype {
-            ProtectorType::Password => Protector::Password(PasswordProtector::new(raw_key, pass)),
-            ProtectorType::Tpm2 => Protector::Tpm2(Tpm2Protector::new(raw_key, pass)?),
+    pub fn new(opts: ProtectorOpts, raw_key: ProtectorKey, pass: &[u8]) -> Result<Self> {
+        let prot = match opts {
+            ProtectorOpts::Password => Protector::Password(PasswordProtector::new(raw_key, pass)),
+            ProtectorOpts::Tpm2(tpm2_opts) => Protector::Tpm2(Tpm2Protector::new(tpm2_opts, raw_key, pass)?),
         };
         Ok(prot)
     }
@@ -213,10 +178,10 @@ impl Protector {
     }
 
     /// Gets the type of this protector
-    pub fn get_type(&self) -> ProtectorType {
+    pub fn name(&self) -> &'static str {
         match self {
-            Protector::Password(_) => ProtectorType::Password,
-            Protector::Tpm2(_) => ProtectorType::Tpm2,
+            Protector::Password(_) => "password",
+            Protector::Tpm2(_) => "tpm2",
         }
     }
 }
