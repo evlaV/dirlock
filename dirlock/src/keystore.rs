@@ -38,7 +38,7 @@ fn keystore_dirs() -> &'static KeystoreDirs {
 }
 
 /// Return an iterator to the IDs of all policy keys available in the key store
-fn policy_key_ids() -> Result<impl Iterator<Item = PolicyKeyId>> {
+pub fn policy_key_ids() -> Result<impl Iterator<Item = PolicyKeyId>> {
     fn id_from_entry(d: fs::DirEntry) -> Option<PolicyKeyId> {
         let path = d.path();
         if let Some(path_str) = path.file_name().and_then(OsStr::to_str) {
@@ -52,12 +52,27 @@ fn policy_key_ids() -> Result<impl Iterator<Item = PolicyKeyId>> {
     Ok(fs::read_dir(policy_dir)?.flatten().filter_map(id_from_entry))
 }
 
+/// Return an iterator to the IDs of all protectors available in the key store
+pub fn protector_ids() -> Result<impl Iterator<Item = ProtectorId>> {
+    fn id_from_entry(d: fs::DirEntry) -> Option<ProtectorId> {
+        let path = d.path();
+        if let Some(path_str) = path.file_name().and_then(OsStr::to_str) {
+            ProtectorId::try_from(path_str).ok()
+        } else {
+            None
+        }
+    }
+
+    let protector_dir = &keystore_dirs().protectors;
+    Ok(fs::read_dir(protector_dir)?.flatten().filter_map(id_from_entry))
+}
+
 /// This contains several instances of the same fscrypt policy key
 /// wrapped with different protectors
 type PolicyMap = HashMap<ProtectorId, WrappedPolicyKey>;
 
 /// Load a protector from disk
-fn load_protector(id: &ProtectorId) -> Result<Option<Protector>> {
+pub fn load_protector(id: &ProtectorId) -> Result<Option<Protector>> {
     let dir = &keystore_dirs().protectors;
     let protector_file = dir.join(id.to_string());
     if !dir.exists() || !protector_file.exists() {
@@ -88,7 +103,7 @@ fn save_protector(id: &ProtectorId, prot: &Protector) -> Result<()> {
 }
 
 /// Load a policy map from disk
-fn load_policy_map(id: &PolicyKeyId) -> Result<PolicyMap> {
+pub fn load_policy_map(id: &PolicyKeyId) -> Result<PolicyMap> {
     let dir = &keystore_dirs().policies;
     let policy_file = dir.join(id.to_string());
     if !dir.exists() || !policy_file.exists() {

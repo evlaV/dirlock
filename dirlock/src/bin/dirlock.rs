@@ -365,7 +365,26 @@ fn cmd_system_info(args: &SystemInfoArgs) -> Result<()> {
         .map(|s| s.to_string())
         .unwrap_or_else(|_| String::from("TPM not found"));
 
-    println!("TPM information\n\
+    println!("Protector          Type");
+    println!("-----------------------");
+    for id in dirlock::keystore::protector_ids()? {
+        if let Some(prot) = dirlock::keystore::load_protector(&id)? {
+            println!("{id}   {}", prot.name());
+        }
+    }
+
+    println!("\nPolicy                              Protectors");
+    println!("----------------------------------------------");
+    for id in dirlock::keystore::policy_key_ids()? {
+        let prots = dirlock::keystore::load_policy_map(&id)?
+            .keys()
+            .map(|prot_id| prot_id.to_string())
+            .collect::<Vec<String>>()
+            .join(", ");
+        println!("{id}    {prots}");
+    }
+
+    println!("\nTPM information\n\
               ---------------\n\
               {tpm_status}");
 
