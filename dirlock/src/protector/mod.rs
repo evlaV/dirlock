@@ -32,7 +32,7 @@ const SALT_LEN: usize = 32;
 
 /// A raw encryption key used to unwrap the master [`PolicyKey`]
 /// used by fscrypt.
-#[derive(Default, zeroize::ZeroizeOnDrop)]
+#[derive(Default, zeroize::ZeroizeOnDrop, Clone)]
 pub struct ProtectorKey(Box<[u8; PROTECTOR_KEY_LEN]>);
 type Aes256Key = ProtectorKey;
 
@@ -124,18 +124,6 @@ pub struct ProtectedPolicyKey {
     pub protector: Protector,
     pub policy_key: WrappedPolicyKey,
 }
-
-impl ProtectedPolicyKey {
-    /// Wrap a [`PolicyKey`] with a new [`PasswordProtector`]
-    pub fn new(opts: ProtectorOpts, key: PolicyKey, password: &[u8]) -> Result<Self> {
-        let protector_key = ProtectorKey::new_random();
-        let protector_id = protector_key.get_id();
-        let policy_key = WrappedPolicyKey::new(key, &protector_key);
-        let protector = Protector::new(opts, protector_key, password)?;
-        Ok(ProtectedPolicyKey { protector_id, protector, policy_key })
-    }
-}
-
 
 /// A wrapped [`ProtectorKey`] using one of several available methods
 #[derive(Serialize, Deserialize)]

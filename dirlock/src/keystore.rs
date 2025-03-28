@@ -133,13 +133,13 @@ fn save_policy_map(id: &PolicyKeyId, policy_map: &PolicyMap) -> Result<()> {
     Ok(())
 }
 
-/// Add a protected policy key to the key store
-pub fn add_protector_to_policy(policy_id: &PolicyKeyId, protected_key: ProtectedPolicyKey) -> Result<()> {
+/// Add a wrapped policy key to the key store
+pub fn add_protector_to_policy(policy_id: &PolicyKeyId, protector_id: ProtectorId, key: WrappedPolicyKey) -> Result<()> {
     let mut policy_map = load_policy_map(policy_id)?;
-    if policy_map.contains_key(&protected_key.protector_id) {
+    if policy_map.contains_key(&protector_id) {
         bail!("Trying to add a duplicate protector for a policy");
     };
-    policy_map.insert(protected_key.protector_id, protected_key.policy_key);
+    policy_map.insert(protector_id, key);
     save_policy_map(policy_id, &policy_map)
 }
 

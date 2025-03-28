@@ -14,7 +14,10 @@ use std::process::Command;
 use tempdir::TempDir;
 use walkdir::WalkDir;
 
-use crate::fscrypt;
+use crate::{
+    fscrypt,
+    protector::ProtectorKey,
+};
 
 /// Check if an unencrypted directory can be converted into an encrypted one
 pub fn check_can_convert_dir(dir: &Path) -> Result<()> {
@@ -51,7 +54,7 @@ pub fn check_can_convert_dir(dir: &Path) -> Result<()> {
 }
 
 /// Convert an unencrypted directory into an encrypted one
-pub fn convert_dir(dir: &Path, pass: &[u8]) -> Result<fscrypt::PolicyKeyId> {
+pub fn convert_dir(dir: &Path, protector_key: ProtectorKey) -> Result<fscrypt::PolicyKeyId> {
     let dir = dir.canonicalize()?;
     let parent = dir.parent().unwrap_or(&dir);
 
@@ -66,7 +69,7 @@ pub fn convert_dir(dir: &Path, pass: &[u8]) -> Result<fscrypt::PolicyKeyId> {
     // Create an encrypted directory inside the work dir
     let workdir_e = workdir.join("encrypted");
     fs::create_dir(&workdir_e)?;
-    let keyid = crate::encrypt_dir(&workdir_e, pass)?;
+    let keyid = crate::encrypt_dir(&workdir_e, protector_key)?;
 
     // Copy the source directory inside the encrypted directory.
     // This will encrypt the data in the process.

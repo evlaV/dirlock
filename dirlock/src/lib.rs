@@ -12,7 +12,14 @@ pub mod util;
 
 use anyhow::{anyhow, bail, Result};
 use fscrypt::{Policy, PolicyKey, PolicyKeyId, RemoveKeyUsers, RemovalStatusFlags};
-use protector::{ProtectorId, ProtectedPolicyKey, opts::ProtectorOpts};
+use protector::{
+    ProtectedPolicyKey,
+    Protector,
+    ProtectorId,
+    ProtectorKey,
+    WrappedPolicyKey,
+    opts::ProtectorOpts
+};
 use std::path::{Path, PathBuf};
 
 pub enum DirStatus {
@@ -171,26 +178,6 @@ impl EncryptedDir {
         Ok(false)
     }
 
-    /// Adds a new protector to a directory
-    pub fn add_protector(&self, ptype: ProtectorOpts, pass: &[u8], newpass: &[u8]) -> Result<Option<ProtectorId>> {
-        // TODO: Allow selecting one specific protector. This tries
-        // all protectors until one can be unlocked with pass
-        for ProtectedPolicyKey { protector_id: _, protector, policy_key } in &self.protectors {
-            if let Some(master_key) = protector.unwrap_policy_key(policy_key, pass) {
-                // Generate a protector and use it to wrap the master key
-                let p = ProtectedPolicyKey::new(ptype, master_key, newpass)?;
-                let protid = p.protector_id.clone();
-
-                // Store the new protector and policy
-                keystore::add_protector(&p.protector_id, &p.protector, false)?;
-                keystore::add_protector_to_policy(&self.policy.keyid, p)?;
-                return Ok(Some(protid))
-            }
-        }
-
-        Ok(None)
-    }
-
     /// Remove a protector from a directory.
     /// Note: this will remove the protector even if it's the only one left.
     pub fn remove_protector(&self, id: &ProtectorId) -> Result<bool> {
@@ -211,7 +198,7 @@ impl EncryptedDir {
 
 
 /// Encrypts a directory
-pub fn encrypt_dir(path: &Path, password: &[u8]) -> Result<PolicyKeyId> {
+pub fn encrypt_dir(path: &Path, protector_key: ProtectorKey) -> Result<PolicyKeyId> {
     match open_dir(path)? {
         DirStatus::Unencrypted => (),
         x => bail!("{}", x),
@@ -231,30 +218,39 @@ pub fn encrypt_dir(path: &Path, password: &[u8]) -> Result<PolicyKeyId> {
         bail!("Failed to encrypt directory: {e}");
     }
 
-    // Generate a protector and use it to wrap the master key
-    let k = ProtectedPolicyKey::new(ProtectorOpts::Password, master_key, password)?;
+    // Wrap the master key with the protector key
+    let protector_id = protector_key.get_id();
+    let wrapped_policy_key = WrappedPolicyKey::new(master_key, &protector_key);
 
-    // Store the new protector and policy
-    keystore::add_protector(&k.protector_id, &k.protector, false)?;
-    keystore::add_protector_to_policy(&keyid, k)?;
+    // Store the new wrapped policy key
+    keystore::add_protector_to_policy(&keyid, protector_id, wrapped_policy_key)?;
     Ok(keyid)
 }
 
-// TODO: temporary function, used by the import-master-key command
-pub fn import_policy_key(master_key: fscrypt::PolicyKey, password: &[u8]) -> Result<()> {
-    let keyid = master_key.get_id();
+/// Get an existing protector
+pub fn get_protector_by_str(id_str: impl AsRef<str>) -> Result<Protector> {
+    let id = ProtectorId::try_from(id_str.as_ref())?;
+    let Some(prot) = keystore::load_protector(&id)? else {
+        bail!("Protector {id} not found");
+    };
+    Ok(prot)
+}
 
-    if ! keystore::get_protectors_for_policy(&keyid)?.is_empty() {
-        bail!("This key has already been imported");
-    }
+/// Create (and store on disk) a new protector using a password
+pub fn create_protector(opts: ProtectorOpts, pass: &[u8]) -> Result<ProtectorKey> {
+    let protector_key = ProtectorKey::new_random();
+    let protector_id = protector_key.get_id();
+    let protector = Protector::new(opts, protector_key.clone(), pass)?;
+    keystore::add_protector(&protector_id, &protector, false)?;
+    Ok(protector_key)
+}
 
-    // Generate a protector and use it to wrap the master key
-    let k = ProtectedPolicyKey::new(ProtectorOpts::Password, master_key, password)?;
-
-    // Store the new protector and policy
-    keystore::add_protector(&k.protector_id, &k.protector, false)?;
-    keystore::add_protector_to_policy(&keyid, k)?;
-    Ok(())
+/// Wrap `policy_key` using `protector_key` and store the result on disk
+pub fn wrap_and_save_policy_key(protector_key: ProtectorKey, policy_key: PolicyKey) -> Result<()> {
+    let protector_id = protector_key.get_id();
+    let policy_id = policy_key.get_id();
+    let wrapped_policy_key = WrappedPolicyKey::new(policy_key, &protector_key);
+    keystore::add_protector_to_policy(&policy_id, protector_id, wrapped_policy_key)
 }
 
 /// Initialize the dirlock library

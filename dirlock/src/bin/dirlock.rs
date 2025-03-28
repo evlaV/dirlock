@@ -110,6 +110,9 @@ struct RemoveProtectorArgs {
 #[argh(subcommand, name = "encrypt")]
 /// Encrypt a directory
 struct EncryptArgs {
+    /// encrypt the directory using an existing protector
+    #[argh(option)]
+    protector: Option<String>,
     /// force encrypting a directory with data
     #[argh(switch, long = "force")]
     force: bool,
@@ -241,24 +244,16 @@ fn cmd_add_protector(args: &AddProtectorArgs) -> Result<()> {
     let protector_opts = optsbuilder.build()?;
 
     let pass = read_password("Enter the current password", ReadPassword::Once)?;
-    if ! encrypted_dir.check_pass(pass.as_bytes(), None) {
+    let Some(policy_key) = encrypted_dir.get_master_key(pass.as_bytes(), None) else {
         bail!("Password not valid for directory {}", args.dir.display())
-    }
+    };
 
     let npass = read_password("Enter password for the new protector", ReadPassword::Twice)?;
     if encrypted_dir.check_pass(npass.as_bytes(), None) {
         bail!("There is already a protector with that password");
     }
-
-    if let Some(protid) = encrypted_dir.add_protector(protector_opts, pass.as_bytes(), npass.as_bytes())? {
-        println!("Added protector {protid} to directory {}", args.dir.display());
-    } else {
-        // FIXME: this should not happen because we checked earlier
-        // that the password is correct.
-        bail!("Unexpected error adding protector to directory {}", args.dir.display())
-    }
-
-    Ok(())
+    let protector_key = dirlock::create_protector(protector_opts, npass.as_bytes())?;
+    dirlock::wrap_and_save_policy_key(protector_key, policy_key)
 }
 
 fn cmd_remove_protector(args: &RemoveProtectorArgs) -> Result<()> {
@@ -314,20 +309,30 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
         bail!("The directory is not empty. Use --force to override");
     }
 
-    let pass = read_password("Enter encryption password", ReadPassword::Twice)?;
+    let protector_key = if let Some(id_str) = &args.protector {
+        let protector = dirlock::get_protector_by_str(id_str)?;
+        let pass = read_password("Enter the password of the protector", ReadPassword::Once)?;
+        let Some(protector_key) = protector.unwrap_key(pass.as_bytes()) else {
+            bail!("Invalid password");
+        };
+        protector_key
+    } else {
+        let pass = read_password("Enter encryption password", ReadPassword::Twice)?;
+        dirlock::create_protector(ProtectorOpts::Password, pass.as_bytes())?
+    };
 
     let keyid = if args.force && !empty_dir {
         println!("\nEncrypting the contents of {}, this can take a while", args.dir.display());
-        let k = dirlock::convert::convert_dir(&args.dir, pass.as_bytes())?;
+        let k = dirlock::convert::convert_dir(&args.dir, protector_key)?;
         println!("\nThe directory is now encrypted. If this was a home directory\n\
                   and you plan to log in using PAM you need to use the encryption\n\
                   password from now on. The old password in /etc/shadow is no longer\n\
                   used and you can disable it with usermod -p '*' USERNAME\n");
         k
     } else {
-        dirlock::encrypt_dir(&args.dir, pass.as_bytes())?
+        dirlock::encrypt_dir(&args.dir, protector_key)?
     };
-    println!("Directory encrypted with key id {}", keyid);
+    println!("Directory encrypted with new policy id {}", keyid);
 
     Ok(())
 }
@@ -415,11 +420,16 @@ fn cmd_import_master_key() -> Result<()> {
         Ok(x) if x != 64 => bail!("Wrong key size"),
         Ok(_) => (),
     }
+    let keyid = master_key.get_id();
+
+    if ! dirlock::keystore::get_protectors_for_policy(&keyid)?.is_empty() {
+        bail!("This key has already been imported");
+    }
 
     let pass = read_password("Enter password to protect this key", ReadPassword::Twice)?;
-    let keyid = master_key.get_id();
-    dirlock::import_policy_key(master_key, pass.as_bytes())?;
-    println!("{keyid}");
+    let protector_key = dirlock::create_protector(ProtectorOpts::Password, pass.as_bytes())?;
+    dirlock::wrap_and_save_policy_key(protector_key, master_key)?;
+    println!("Imported key for policy {keyid}");
     Ok(())
 }
 
