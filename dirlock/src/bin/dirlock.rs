@@ -135,6 +135,7 @@ struct ProtectorArgs {
 #[argh(subcommand)]
 enum ProtectorCommand {
     Create(ProtectorCreateArgs),
+    VerifyPass(ProtectorVerifyPassArgs),
 }
 
 #[derive(FromArgs)]
@@ -147,6 +148,15 @@ struct ProtectorCreateArgs {
     /// TPM2 device (default: auto)
     #[argh(option)]
     tpm2_device: Option<PathBuf>,
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "verify-pass")]
+/// Verify a protector's password
+struct ProtectorVerifyPassArgs {
+    /// ID of the protector to verify
+    #[argh(positional)]
+    protector: Option<String>,
 }
 
 #[derive(FromArgs)]
@@ -382,6 +392,25 @@ fn cmd_create_protector(args: &ProtectorCreateArgs) -> Result<()> {
     Ok(())
 }
 
+fn cmd_verify_protector(args: &ProtectorVerifyPassArgs) -> Result<()> {
+    let Some(id_str) = &args.protector else {
+        eprintln!("You must specify the ID of the protector to verify.");
+        eprintln!("Available protectors:");
+        for id in dirlock::keystore::protector_ids()? {
+            if let Some(prot) = dirlock::keystore::load_protector(&id)? {
+                eprintln!("{id}, type {}", prot.name());
+            }
+        }
+        return Ok(());
+    };
+    let protector = dirlock::get_protector_by_str(id_str)?;
+    let pass = read_password("Enter the password of the protector", ReadPassword::Once)?;
+    if protector.unwrap_key(pass.as_bytes()).is_none() {
+        bail!("Invalid password");
+    };
+    Ok(())
+}
+
 fn cmd_system_info(args: &SystemInfoArgs) -> Result<()> {
     let mut optsbuilder = ProtectorOptsBuilder::new()
         .with_type("tpm2");
@@ -533,6 +562,7 @@ fn main() -> Result<()> {
         Encrypt(args) => cmd_encrypt(args),
         Protector(args) => match &args.command {
             ProtectorCommand::Create(args) => cmd_create_protector(args),
+            ProtectorCommand::VerifyPass(args) => cmd_verify_protector(args),
         },
         SystemInfo(args) => cmd_system_info(args),
         ExportMasterKey(args) => cmd_export_master_key(args),
