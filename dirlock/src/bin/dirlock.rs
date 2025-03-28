@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
-use anyhow::{bail, ensure, Result};
+use anyhow::{bail, Result};
 use argh::FromArgs;
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -14,9 +14,12 @@ use dirlock::{
     protector::{
         opts::{ProtectorOpts, ProtectorOptsBuilder},
     },
-    util,
+    util::{
+        ReadPassword,
+        dir_is_empty,
+        read_password,
+    },
 };
-use zeroize::Zeroizing;
 
 #[derive(FromArgs)]
 /// Disk encryption tool.
@@ -189,8 +192,7 @@ fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
         None => None
     };
 
-    eprint!("Enter encryption password: ");
-    let pass = Zeroizing::new(rpassword::read_password()?);
+    let pass = read_password("Enter encryption password", ReadPassword::Once)?;
 
     if ! encrypted_dir.unlock(pass.as_bytes(), protector_id.as_ref())? {
         bail!("Unable to unlock directory {}: wrong password", args.dir.display())
@@ -210,20 +212,13 @@ fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
         None => None
     };
 
-    eprint!("Enter the current password: ");
-    let pass = Zeroizing::new(rpassword::read_password()?);
-
+    let pass = read_password("Enter the current password", ReadPassword::Once)?;
     if ! encrypted_dir.check_pass(pass.as_bytes(), protector_id.as_ref()) {
         bail!("Password not valid for directory {}", args.dir.display())
     }
 
-    eprint!("Enter the new password: ");
-    let npass1 = Zeroizing::new(rpassword::read_password()?);
-    eprint!("Repeat the new password: ");
-    let npass2 = Zeroizing::new(rpassword::read_password()?);
-    ensure!(npass1 == npass2, "Passwords don't match");
-
-    if ! encrypted_dir.change_password(pass.as_bytes(), npass1.as_bytes(), protector_id.as_ref())? {
+    let npass = read_password("Enter the new password", ReadPassword::Twice)?;
+    if ! encrypted_dir.change_password(pass.as_bytes(), npass.as_bytes(), protector_id.as_ref())? {
         bail!("Unable to change the password for directory {}", args.dir.display())
     }
 
@@ -245,24 +240,17 @@ fn cmd_add_protector(args: &AddProtectorArgs) -> Result<()> {
     }
     let protector_opts = optsbuilder.build()?;
 
-    eprint!("Enter the current password: ");
-    let pass = Zeroizing::new(rpassword::read_password()?);
-
+    let pass = read_password("Enter the current password", ReadPassword::Once)?;
     if ! encrypted_dir.check_pass(pass.as_bytes(), None) {
         bail!("Password not valid for directory {}", args.dir.display())
     }
 
-    eprint!("Enter password for the new protector: ");
-    let npass1 = Zeroizing::new(rpassword::read_password()?);
-    eprint!("Repeat the password: ");
-    let npass2 = Zeroizing::new(rpassword::read_password()?);
-    ensure!(npass1 == npass2, "Passwords don't match");
-
-    if encrypted_dir.check_pass(npass1.as_bytes(), None) {
+    let npass = read_password("Enter password for the new protector", ReadPassword::Twice)?;
+    if encrypted_dir.check_pass(npass.as_bytes(), None) {
         bail!("There is already a protector with that password");
     }
 
-    if let Some(protid) = encrypted_dir.add_protector(protector_opts, pass.as_bytes(), npass1.as_bytes())? {
+    if let Some(protid) = encrypted_dir.add_protector(protector_opts, pass.as_bytes(), npass.as_bytes())? {
         println!("Added protector {protid} to directory {}", args.dir.display());
     } else {
         // FIXME: this should not happen because we checked earlier
@@ -286,8 +274,7 @@ fn cmd_remove_protector(args: &RemoveProtectorArgs) -> Result<()> {
     let protector_id = match &args.protector {
         Some(id_str) => encrypted_dir.get_protector_id_by_str(id_str)?,
         None => {
-            eprint!("Enter the password of the protector that you want to remove: ");
-            let pass = Zeroizing::new(rpassword::read_password()?);
+            let pass = read_password("Enter the password of the protector that you want to remove", ReadPassword::Once)?;
             encrypted_dir.get_protector_id_by_pass(pass.as_bytes())?
         }
     };
@@ -307,7 +294,7 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
         x => bail!("{}", x),
     };
 
-    let empty_dir = util::dir_is_empty(&args.dir)?;
+    let empty_dir = dir_is_empty(&args.dir)?;
 
     if args.force && !empty_dir {
         println!("You are about to encrypt a directory that contains data.\n\
@@ -327,22 +314,18 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
         bail!("The directory is not empty. Use --force to override");
     }
 
-    eprint!("Enter encryption password: ");
-    let pass1 = Zeroizing::new(rpassword::read_password()?);
-    eprint!("Repeat encryption password: ");
-    let pass2 = Zeroizing::new(rpassword::read_password()?);
-    ensure!(pass1 == pass2, "Passwords don't match");
+    let pass = read_password("Enter encryption password", ReadPassword::Twice)?;
 
     let keyid = if args.force && !empty_dir {
         println!("\nEncrypting the contents of {}, this can take a while", args.dir.display());
-        let k = dirlock::convert::convert_dir(&args.dir, pass1.as_bytes())?;
+        let k = dirlock::convert::convert_dir(&args.dir, pass.as_bytes())?;
         println!("\nThe directory is now encrypted. If this was a home directory\n\
                   and you plan to log in using PAM you need to use the encryption\n\
                   password from now on. The old password in /etc/shadow is no longer\n\
                   used and you can disable it with usermod -p '*' USERNAME\n");
         k
     } else {
-        dirlock::encrypt_dir(&args.dir, pass1.as_bytes())?
+        dirlock::encrypt_dir(&args.dir, pass.as_bytes())?
     };
     println!("Directory encrypted with key id {}", keyid);
 
@@ -403,8 +386,7 @@ fn cmd_export_master_key(args: &ExportMasterKeyArgs) -> Result<()> {
     eprintln!("- This feature is only available while this tool is under development");
     eprintln!("- The printed key is *raw and unprotected*, you are reponsible for keeping it safe");
     eprintln!();
-    eprint!("Enter the current encryption password: ");
-    let pass = Zeroizing::new(rpassword::read_password()?);
+    let pass = read_password("Enter the current encryption password", ReadPassword::Once)?;
 
     let Some(k) = encrypted_dir.get_master_key(pass.as_bytes(), None) else {
         bail!("Unable to unlock master key for directory {}", args.dir.display());
@@ -434,14 +416,9 @@ fn cmd_import_master_key() -> Result<()> {
         Ok(_) => (),
     }
 
-    eprint!("Enter password to protect this key: ");
-    let pass1 = Zeroizing::new(rpassword::read_password()?);
-    eprint!("Repeat the password: ");
-    let pass2 = Zeroizing::new(rpassword::read_password()?);
-    ensure!(pass1 == pass2, "Passwords don't match");
-
+    let pass = read_password("Enter password to protect this key", ReadPassword::Twice)?;
     let keyid = master_key.get_id();
-    dirlock::import_policy_key(master_key, pass1.as_bytes())?;
+    dirlock::import_policy_key(master_key, pass.as_bytes())?;
     println!("{keyid}");
     Ok(())
 }
