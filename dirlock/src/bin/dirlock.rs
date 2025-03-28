@@ -38,6 +38,7 @@ enum Command {
     ChangePass(ChangePassArgs),
     AddProtector(AddProtectorArgs),
     RemoveProtector(RemoveProtectorArgs),
+    Protector(ProtectorArgs),
     SystemInfo(SystemInfoArgs),
     ExportMasterKey(ExportMasterKeyArgs),
     ImportMasterKey(ImportMasterKeyArgs),
@@ -119,6 +120,33 @@ struct EncryptArgs {
     /// directory
     #[argh(positional)]
     dir: PathBuf,
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "protector")]
+/// Commands to manage protectors
+struct ProtectorArgs {
+    /// foo bar
+    #[argh(subcommand)]
+    command: ProtectorCommand,
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand)]
+enum ProtectorCommand {
+    Create(ProtectorCreateArgs),
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "create")]
+/// Create a new protector
+struct ProtectorCreateArgs {
+    /// type of the protector to add
+    #[argh(option)]
+    type_: String,
+    /// TPM2 device (default: auto)
+    #[argh(option)]
+    tpm2_device: Option<PathBuf>,
 }
 
 #[derive(FromArgs)]
@@ -337,6 +365,23 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
     Ok(())
 }
 
+fn cmd_create_protector(args: &ProtectorCreateArgs) -> Result<()> {
+    let mut optsbuilder = ProtectorOptsBuilder::new()
+        .with_type(&args.type_);
+
+    if let Some(d) = &args.tpm2_device {
+        optsbuilder = optsbuilder.with_tpm2_device(d);
+    }
+
+    let opts = optsbuilder.build()?;
+    let pass = read_password("Enter password for the new protector", ReadPassword::Twice)?;
+    let protector_key = dirlock::create_protector(opts, pass.as_bytes())?;
+
+    println!("Created protector {}", protector_key.get_id());
+
+    Ok(())
+}
+
 fn cmd_system_info(args: &SystemInfoArgs) -> Result<()> {
     let mut optsbuilder = ProtectorOptsBuilder::new()
         .with_type("tpm2");
@@ -486,6 +531,9 @@ fn main() -> Result<()> {
         AddProtector(args) => cmd_add_protector(args),
         RemoveProtector(args) => cmd_remove_protector(args),
         Encrypt(args) => cmd_encrypt(args),
+        Protector(args) => match &args.command {
+            ProtectorCommand::Create(args) => cmd_create_protector(args),
+        },
         SystemInfo(args) => cmd_system_info(args),
         ExportMasterKey(args) => cmd_export_master_key(args),
         ImportMasterKey(_) => cmd_import_master_key(),
