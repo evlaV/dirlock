@@ -12,7 +12,8 @@ use dirlock::{
     DirStatus,
     fscrypt,
     protector::{
-        opts::{ProtectorOpts, ProtectorOptsBuilder},
+        Protector,
+        opts::{ProtectorOpts, ProtectorOptsBuilder, Tpm2Opts},
     },
     util::{
         ReadPassword,
@@ -194,6 +195,19 @@ struct StatusArgs {
     dir: PathBuf,
 }
 
+fn display_tpm_lockout_counter(protector: &Protector) -> Result<()> {
+    if let Protector::Tpm2(_) = protector {
+        let status = dirlock::protector::tpm2::get_status(Tpm2Opts::default())?;
+        println!("This is a TPM2 protector. Failed authentication counter: {} / {}",
+                 status.lockout_counter, status.max_auth_fail);
+        if status.in_lockout {
+            bail!("The TPM is locked, you must wait up to {} seconds before trying again",
+                  status.lockout_interval);
+        }
+    }
+    Ok(())
+}
+
 fn cmd_lock(args: &LockArgs) -> Result<()> {
     let encrypted_dir = match dirlock::open_dir(&args.dir)? {
         DirStatus::Encrypted(d) if d.key_status == fscrypt::KeyStatus::Absent =>
@@ -349,6 +363,7 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
 
     let protector_key = if let Some(id_str) = &args.protector {
         let protector = dirlock::get_protector_by_str(id_str)?;
+        display_tpm_lockout_counter(&protector)?;
         let pass = read_password("Enter the password of the protector", ReadPassword::Once)?;
         let Some(protector_key) = protector.unwrap_key(pass.as_bytes()) else {
             bail!("Invalid password");
@@ -404,6 +419,7 @@ fn cmd_verify_protector(args: &ProtectorVerifyPassArgs) -> Result<()> {
         return Ok(());
     };
     let protector = dirlock::get_protector_by_str(id_str)?;
+    display_tpm_lockout_counter(&protector)?;
     let pass = read_password("Enter the password of the protector", ReadPassword::Once)?;
     if protector.unwrap_key(pass.as_bytes()).is_none() {
         bail!("Invalid password");
