@@ -7,7 +7,7 @@
 use rand::{RngCore, rngs::OsRng};
 use serde::{Serialize, Deserialize};
 use serde_with::{serde_as, base64::Base64};
-use crate::kdf::Kdf;
+use crate::kdf::{Kdf, Pbkdf2};
 
 use crate::{
     protector::{
@@ -19,12 +19,13 @@ use crate::{
         PROTECTOR_KEY_LEN,
         aes_dec,
         aes_enc,
+        opts::PasswordOpts,
     },
 };
 
 /// A [`Protector`] that wraps a [`ProtectorKey`] with a password
 #[serde_as]
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 pub struct PasswordProtector {
     #[serde_as(as = "Base64")]
     wrapped_key: [u8; PROTECTOR_KEY_LEN],
@@ -36,23 +37,32 @@ pub struct PasswordProtector {
 
 impl PasswordProtector {
     /// Creates a new [`PasswordProtector`] that wraps a [`ProtectorKey`] with a password.
-    pub fn new(mut raw_key: ProtectorKey, pass: &[u8]) -> Self {
-        let mut iv = AesIv::default();
-        OsRng.fill_bytes(&mut iv.0);
-        let mut salt = Salt::default();
-        OsRng.fill_bytes(&mut salt.0);
-        let kdf = Kdf::default();
-        let key = Aes256Key::new_from_password(pass, &salt, &kdf);
-        let hmac = aes_enc(&key, &iv, raw_key.secret_mut());
-        PasswordProtector{ wrapped_key: *raw_key.secret(), iv, salt, hmac, kdf }
+    pub fn new(opts: PasswordOpts, prot_key: ProtectorKey, pass: &[u8]) -> Self {
+        let kdf = if let Some(kdf_iter) = opts.kdf_iter {
+            Kdf::Pbkdf2(Pbkdf2::new(kdf_iter.into()))
+        } else {
+            Kdf::default()
+        };
+        let mut prot = PasswordProtector { kdf, ..Default::default() };
+        prot.wrap_key(prot_key, pass);
+        prot
+    }
+
+    /// Wraps `prot_key` with `pass`. This generates new random values for IV and Salt.
+    fn wrap_key(&mut self, mut prot_key: ProtectorKey, pass: &[u8]) {
+        OsRng.fill_bytes(&mut self.iv.0);
+        OsRng.fill_bytes(&mut self.salt.0);
+        let enc_key = Aes256Key::new_from_password(pass, &self.salt, &self.kdf);
+        self.hmac = aes_enc(&enc_key, &self.iv, prot_key.secret_mut());
+        self.wrapped_key = *prot_key.secret();
     }
 
     /// Unwraps a [`ProtectorKey`] with a password.
     pub fn unwrap_key(&self, pass: &[u8]) -> Option<ProtectorKey> {
-        let mut raw_key = ProtectorKey::from(&self.wrapped_key);
+        let mut prot_key = ProtectorKey::from(&self.wrapped_key);
         let key = Aes256Key::new_from_password(pass, &self.salt, &self.kdf);
-        if aes_dec(&key, &self.iv, &self.hmac, raw_key.secret_mut()) {
-            Some(raw_key)
+        if aes_dec(&key, &self.iv, &self.hmac, prot_key.secret_mut()) {
+            Some(prot_key)
         } else {
             None
         }
@@ -60,8 +70,8 @@ impl PasswordProtector {
 
     /// Changes the password of this protector
     pub fn change_pass(&mut self, pass: &[u8], newpass: &[u8]) -> bool {
-        if let Some(raw_key) = self.unwrap_key(pass) {
-            *self = PasswordProtector::new(raw_key, newpass);
+        if let Some(prot_key) = self.unwrap_key(pass) {
+            self.wrap_key(prot_key, newpass);
             true
         } else {
             false

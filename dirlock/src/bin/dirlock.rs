@@ -7,13 +7,14 @@
 use anyhow::{bail, Result};
 use argh::FromArgs;
 use std::io::{self, Write};
+use std::num::NonZeroU32;
 use std::path::PathBuf;
 use dirlock::{
     DirStatus,
     fscrypt,
     protector::{
         Protector,
-        opts::{ProtectorOpts, ProtectorOptsBuilder, Tpm2Opts},
+        opts::{PasswordOpts, ProtectorOpts, ProtectorOptsBuilder, Tpm2Opts},
     },
     util::{
         ReadPassword,
@@ -149,6 +150,9 @@ struct ProtectorCreateArgs {
     /// TPM2 device (default: auto)
     #[argh(option)]
     tpm2_device: Option<PathBuf>,
+    /// iterations for the key derivation function (default: auto)
+    #[argh(option)]
+    kdf_iter: Option<NonZeroU32>,
 }
 
 #[derive(FromArgs)]
@@ -370,8 +374,9 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
         };
         protector_key
     } else {
+        let opts = ProtectorOpts::Password(PasswordOpts::default());
         let pass = read_password("Enter encryption password", ReadPassword::Twice)?;
-        dirlock::create_protector(ProtectorOpts::Password, pass.as_bytes())?
+        dirlock::create_protector(opts, pass.as_bytes())?
     };
 
     let keyid = if args.force && !empty_dir {
@@ -396,6 +401,10 @@ fn cmd_create_protector(args: &ProtectorCreateArgs) -> Result<()> {
 
     if let Some(d) = &args.tpm2_device {
         optsbuilder = optsbuilder.with_tpm2_device(d);
+    }
+
+    if let Some(i) = args.kdf_iter {
+        optsbuilder = optsbuilder.with_kdf_iter(i);
     }
 
     let opts = optsbuilder.build()?;
@@ -516,8 +525,9 @@ fn cmd_import_master_key() -> Result<()> {
         bail!("This key has already been imported");
     }
 
+    let opts = ProtectorOpts::Password(PasswordOpts::default());
     let pass = read_password("Enter password to protect this key", ReadPassword::Twice)?;
-    let protector_key = dirlock::create_protector(ProtectorOpts::Password, pass.as_bytes())?;
+    let protector_key = dirlock::create_protector(opts, pass.as_bytes())?;
     dirlock::wrap_and_save_policy_key(protector_key, master_key)?;
     println!("Imported key for policy {keyid}");
     Ok(())

@@ -137,7 +137,7 @@ pub enum Protector {
 impl Protector {
     pub fn new(opts: ProtectorOpts, raw_key: ProtectorKey, pass: &[u8]) -> Result<Self> {
         let prot = match opts {
-            ProtectorOpts::Password => Protector::Password(PasswordProtector::new(raw_key, pass)),
+            ProtectorOpts::Password(pw_opts) => Protector::Password(PasswordProtector::new(pw_opts,raw_key, pass)),
             ProtectorOpts::Tpm2(tpm2_opts) => Protector::Tpm2(Tpm2Protector::new(tpm2_opts, raw_key, pass)?),
         };
         Ok(prot)

@@ -7,7 +7,7 @@
 use anyhow::{bail, Result};
 use serde::{Serialize, Deserialize};
 use serde_with::{serde_as, base64::Base64};
-use crate::kdf::Kdf;
+use crate::kdf::{Kdf, Pbkdf2};
 
 #[cfg(feature = "tpm2")]
 use {
@@ -68,7 +68,7 @@ use crate::{
 
 /// A [`Protector`] that wraps a [`ProtectorKey`] using a TPM
 #[serde_as]
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 pub struct Tpm2Protector {
     #[serde_as(as = "Base64")]
     public: Vec<u8>,
@@ -97,23 +97,36 @@ impl Tpm2Protector {
 #[cfg(feature = "tpm2")]
 impl Tpm2Protector {
     /// Creates a new [`Tpm2Protector`] that wraps a [`ProtectorKey`] with a password.
-    pub fn new(opts: Tpm2Opts, raw_key: ProtectorKey, pass: &[u8]) -> Result<Self> {
+    pub fn new(opts: Tpm2Opts, prot_key: ProtectorKey, pass: &[u8]) -> Result<Self> {
+        let kdf = if let Some(kdf_iter) = opts.kdf_iter {
+            Kdf::Pbkdf2(Pbkdf2::new(kdf_iter.into()))
+        } else {
+            Kdf::default()
+        };
+        let mut prot = Tpm2Protector { kdf, ..Default::default() };
+        prot.wrap_key(&opts.path, prot_key, pass)?;
+        Ok(prot)
+    }
+
+    /// Wraps `prot_key` with `pass`. This generates a new random Salt.
+    fn wrap_key(&mut self, path: &str, prot_key: ProtectorKey, pass: &[u8]) -> Result<()> {
         let mut ctx = Context::new(TctiNameConf::Device(
-            DeviceConfig::from_str(&opts.path)?
-        )).map_err(|_| anyhow!("Unable to access the TPM at {}", opts.path))?;
+            DeviceConfig::from_str(path)?
+        )).map_err(|_| anyhow!("Unable to access the TPM at {}", path))?;
         let primary_key = create_primary_key(&mut ctx)?;
         let mut salt = Salt::default();
         OsRng.fill_bytes(&mut salt.0);
-        let kdf = Kdf::default();
-        let auth = derive_auth_value(pass, &salt, &kdf);
-        let (public, private) = seal_data(ctx, primary_key, raw_key.secret(), auth)?;
-        let result = Tpm2Protector {
-            public: PublicBuffer::try_from(public)?.marshall()?,
-            private: tpm_private_marshall(private)?,
-            salt,
-            kdf,
+        let auth = derive_auth_value(pass, &salt, &self.kdf);
+        let (public, private) = {
+            let (pb, pv) = seal_data(ctx, primary_key, prot_key.secret(), auth)?;
+            let public = PublicBuffer::try_from(pb)?.marshall()?;
+            let private = tpm_private_marshall(pv)?;
+            (public, private)
         };
-        Ok(result)
+        self.salt = salt;
+        self.public = public;
+        self.private = private;
+        Ok(())
     }
 
     /// Unwraps a [`ProtectorKey`] with a password.
@@ -133,12 +146,10 @@ impl Tpm2Protector {
 
     /// Changes the password of this protector
     pub fn change_pass(&mut self, pass: &[u8], newpass: &[u8]) -> bool {
-        if let Ok(Some(raw_key)) = self.unwrap_key(pass) {
+        if let Ok(Some(prot_key)) = self.unwrap_key(pass) {
             let opts = Tpm2Opts::default();
-            if let Ok(newprot) = Tpm2Protector::new(opts, raw_key, newpass) {
-                *self = newprot;
-                return true;
-            }
+            // TODO propagate the error instead of returning 'false'
+            return self.wrap_key(&opts.path, prot_key, newpass).is_ok();
         }
         false
     }

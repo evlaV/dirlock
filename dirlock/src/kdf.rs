@@ -14,12 +14,14 @@ pub(crate) enum Kdf {
     Pbkdf2(Pbkdf2),
 }
 
-impl Kdf {
+impl Default for Kdf {
     /// Get the default KDF
-    pub fn default() -> Self {
+    fn default() -> Self {
         Self::Pbkdf2(Pbkdf2::default())
     }
+}
 
+impl Kdf {
     /// Derive a password using a salt
     pub fn derive(&self, pass: &[u8], salt: &[u8], result: &mut [u8]) {
         match self {
@@ -37,10 +39,16 @@ pub(crate) struct Pbkdf2 {
     iterations: u32,
 }
 
-impl Pbkdf2 {
+impl Default for Pbkdf2 {
     /// Create a PBKDF2 with the default parameters
-    pub fn default() -> Self {
+    fn default() -> Self {
         Self { iterations: 65535 }
+    }
+}
+
+impl Pbkdf2 {
+    pub fn new(iterations: u32) -> Self {
+        Self { iterations }
     }
 
     /// Derive a password using a salt

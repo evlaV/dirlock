@@ -1,5 +1,6 @@
 
 use anyhow::{anyhow, bail, ensure, Result};
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
 const DEFAULT_TPM2_PATH: &str = "/dev/tpm0";
@@ -7,18 +8,25 @@ const DEFAULT_TPM2_PATH: &str = "/dev/tpm0";
 /// Available options for protectors
 pub enum ProtectorOpts {
     Tpm2(Tpm2Opts),
-    Password,
+    Password(PasswordOpts),
+}
+
+
+#[derive(Default)]
+pub struct PasswordOpts {
+    pub kdf_iter: Option<NonZeroU32>,
 }
 
 
 /// Options for TPM2 protectors
 pub struct Tpm2Opts {
     pub path: String, // tcti_ldr::DeviceConfig wants str and not Path
+    pub kdf_iter: Option<NonZeroU32>,
 }
 
 impl Default for Tpm2Opts {
     fn default() -> Tpm2Opts {
-        Tpm2Opts { path: DEFAULT_TPM2_PATH.to_string() }
+        Tpm2Opts { path: DEFAULT_TPM2_PATH.to_string(), kdf_iter: None }
     }
 }
 
@@ -27,7 +35,8 @@ impl Default for Tpm2Opts {
 #[derive(Default)]
 pub struct ProtectorOptsBuilder {
     ptype: Option<String>,
-    tpm2_device: Option<PathBuf>
+    tpm2_device: Option<PathBuf>,
+    kdf_iter: Option<NonZeroU32>,
 }
 
 impl ProtectorOptsBuilder {
@@ -48,6 +57,12 @@ impl ProtectorOptsBuilder {
         self
     }
 
+    /// Sets the number of iterations used in the KDF
+    pub fn with_kdf_iter(mut self, iter: NonZeroU32) -> Self {
+        self.kdf_iter = Some(iter);
+        self
+    }
+
     /// Builds the [`ProtectorOpts`].
     ///
     /// # Errors
@@ -63,11 +78,11 @@ impl ProtectorOptsBuilder {
                 } else {
                     DEFAULT_TPM2_PATH.to_string()
                 };
-                Ok(ProtectorOpts::Tpm2(Tpm2Opts { path }))
+                Ok(ProtectorOpts::Tpm2(Tpm2Opts { path, kdf_iter: self.kdf_iter }))
             },
             "password" => {
                 ensure!(self.tpm2_device.is_none(), "TPM2 device set for password protector");
-                Ok(ProtectorOpts::Password)
+                Ok(ProtectorOpts::Password(PasswordOpts { kdf_iter: self.kdf_iter }))
             },
             x => bail!("Unknown protector type {x}"),
         }
