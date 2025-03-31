@@ -6,6 +6,7 @@
 
 pub mod convert;
 pub mod fscrypt;
+pub mod kdf;
 pub mod keystore;
 pub mod protector;
 pub mod util;

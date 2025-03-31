@@ -8,13 +8,13 @@ use anyhow::{anyhow, Result};
 use ctr::cipher::{KeyIvInit, StreamCipher};
 use hmac::Mac;
 use opts::ProtectorOpts;
-use pbkdf2::pbkdf2_hmac;
 use rand::{RngCore, rngs::OsRng};
 use serde::{Serialize, Deserialize};
 use serde_with::{serde_as, hex::Hex, base64::Base64};
 use sha2::{Digest, Sha256, Sha512};
 
 use crate::fscrypt::PolicyKey;
+use crate::kdf::Kdf;
 
 pub use password::PasswordProtector as PasswordProtector;
 pub use tpm2::Tpm2Protector as Tpm2Protector;
@@ -61,10 +61,9 @@ impl ProtectorKey {
     }
 
     /// Generates a new key from `pass` and `salt` using a KDF
-    pub(self) fn new_from_password(pass: &[u8], salt: &Salt) -> Self {
-        let iterations = 65535;
+    pub(self) fn new_from_password(pass: &[u8], salt: &Salt, kdf: &Kdf) -> Self {
         let mut key = ProtectorKey::default();
-        pbkdf2_hmac::<sha2::Sha512>(pass, &salt.0, iterations, key.secret_mut());
+        kdf.derive(pass, &salt.0, key.secret_mut());
         key
     }
 

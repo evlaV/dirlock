@@ -7,6 +7,7 @@
 use rand::{RngCore, rngs::OsRng};
 use serde::{Serialize, Deserialize};
 use serde_with::{serde_as, base64::Base64};
+use crate::kdf::Kdf;
 
 use crate::{
     protector::{
@@ -30,6 +31,7 @@ pub struct PasswordProtector {
     iv: AesIv,
     salt: Salt,
     hmac: Hmac,
+    kdf: Kdf,
 }
 
 impl PasswordProtector {
@@ -39,15 +41,16 @@ impl PasswordProtector {
         OsRng.fill_bytes(&mut iv.0);
         let mut salt = Salt::default();
         OsRng.fill_bytes(&mut salt.0);
-        let key = Aes256Key::new_from_password(pass, &salt);
+        let kdf = Kdf::default();
+        let key = Aes256Key::new_from_password(pass, &salt, &kdf);
         let hmac = aes_enc(&key, &iv, raw_key.secret_mut());
-        PasswordProtector{ wrapped_key: *raw_key.secret(), iv, salt, hmac }
+        PasswordProtector{ wrapped_key: *raw_key.secret(), iv, salt, hmac, kdf }
     }
 
     /// Unwraps a [`ProtectorKey`] with a password.
     pub fn unwrap_key(&self, pass: &[u8]) -> Option<ProtectorKey> {
         let mut raw_key = ProtectorKey::from(&self.wrapped_key);
-        let key = Aes256Key::new_from_password(pass, &self.salt);
+        let key = Aes256Key::new_from_password(pass, &self.salt, &self.kdf);
         if aes_dec(&key, &self.iv, &self.hmac, raw_key.secret_mut()) {
             Some(raw_key)
         } else {

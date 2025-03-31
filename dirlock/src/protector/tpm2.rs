@@ -7,6 +7,7 @@
 use anyhow::{bail, Result};
 use serde::{Serialize, Deserialize};
 use serde_with::{serde_as, base64::Base64};
+use crate::kdf::Kdf;
 
 #[cfg(feature = "tpm2")]
 use {
@@ -74,6 +75,7 @@ pub struct Tpm2Protector {
     #[serde_as(as = "Base64")]
     private: Vec<u8>,
     salt: Salt,
+    kdf: Kdf,
 }
 
 // Stub used when the tpm2 feature is disabled
@@ -102,12 +104,14 @@ impl Tpm2Protector {
         let primary_key = create_primary_key(&mut ctx)?;
         let mut salt = Salt::default();
         OsRng.fill_bytes(&mut salt.0);
-        let auth = derive_auth_value(pass, &salt);
+        let kdf = Kdf::default();
+        let auth = derive_auth_value(pass, &salt, &kdf);
         let (public, private) = seal_data(ctx, primary_key, raw_key.secret(), auth)?;
         let result = Tpm2Protector {
             public: PublicBuffer::try_from(public)?.marshall()?,
             private: tpm_private_marshall(private)?,
-            salt
+            salt,
+            kdf,
         };
         Ok(result)
     }
@@ -119,7 +123,7 @@ impl Tpm2Protector {
         let primary_key = create_primary_key(&mut ctx)?;
         let public = Public::try_from(PublicBuffer::unmarshall(&self.public)?)?;
         let private = tpm_private_unmarshall(&self.private)?;
-        let auth = derive_auth_value(pass, &self.salt);
+        let auth = derive_auth_value(pass, &self.salt, &self.kdf);
         let Ok(data) = unseal_data(ctx, primary_key, public, private, auth) else {
             return Ok(None);
         };
@@ -193,10 +197,9 @@ fn tpm_private_unmarshall(data: &[u8]) -> Result<Private> {
 
 /// Derive a TPM authentication value from a password and a salt
 #[cfg(feature = "tpm2")]
-fn derive_auth_value(pass: &[u8], salt: &Salt) -> Auth {
-    let iterations = 65535;
+fn derive_auth_value(pass: &[u8], salt: &Salt, kdf: &Kdf) -> Auth {
     let mut data = zeroize::Zeroizing::new([0u8; 64]);
-    pbkdf2::pbkdf2_hmac::<sha2::Sha512>(pass, &salt.0, iterations, data.as_mut());
+    kdf.derive(pass, &salt.0, data.as_mut());
     Auth::try_from(data.as_ref()).unwrap()
 }
 
