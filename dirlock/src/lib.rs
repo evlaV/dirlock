@@ -229,12 +229,12 @@ pub fn encrypt_dir(path: &Path, protector_key: ProtectorKey) -> Result<PolicyKey
 }
 
 /// Get an existing protector
-pub fn get_protector_by_str(id_str: impl AsRef<str>) -> Result<Protector> {
+pub fn get_protector_by_str(id_str: impl AsRef<str>) -> Result<(ProtectorId, Protector)> {
     let id = ProtectorId::try_from(id_str.as_ref())?;
     let Some(prot) = keystore::load_protector(&id)? else {
         bail!("Protector {id} not found");
     };
-    Ok(prot)
+    Ok((id, prot))
 }
 
 /// Create (and store on disk) a new protector using a password
@@ -252,6 +252,16 @@ pub fn wrap_and_save_policy_key(protector_key: ProtectorKey, policy_key: PolicyK
     let policy_id = policy_key.get_id();
     let wrapped_policy_key = WrappedPolicyKey::new(policy_key, &protector_key);
     keystore::add_protector_to_policy(&policy_id, protector_id, wrapped_policy_key)
+}
+
+/// Change a protector's password and save it to disk
+pub fn change_protector_password(id: &ProtectorId, mut protector: Protector, pass: &[u8], newpass: &[u8]) -> Result<bool> {
+    if protector.change_pass(pass, newpass) {
+        keystore::add_protector(id, &protector, true)?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
 }
 
 /// Initialize the dirlock library

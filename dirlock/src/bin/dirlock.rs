@@ -138,6 +138,7 @@ struct ProtectorArgs {
 enum ProtectorCommand {
     Create(ProtectorCreateArgs),
     VerifyPass(ProtectorVerifyPassArgs),
+    ChangePass(ProtectorChangePassArgs),
 }
 
 #[derive(FromArgs)]
@@ -156,10 +157,19 @@ struct ProtectorCreateArgs {
 }
 
 #[derive(FromArgs)]
-#[argh(subcommand, name = "verify-pass")]
+#[argh(subcommand, name = "verify-password")]
 /// Verify a protector's password
 struct ProtectorVerifyPassArgs {
     /// ID of the protector to verify
+    #[argh(positional)]
+    protector: Option<String>,
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "change-password")]
+/// Change a protector's password
+struct ProtectorChangePassArgs {
+    /// ID of the protector
     #[argh(positional)]
     protector: Option<String>,
 }
@@ -376,7 +386,7 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
     }
 
     let protector_key = if let Some(id_str) = &args.protector {
-        let protector = dirlock::get_protector_by_str(id_str)?;
+        let (_, protector) = dirlock::get_protector_by_str(id_str)?;
         display_tpm_lockout_counter(&protector)?;
         let pass = read_password("Enter the password of the protector", ReadPassword::Once)?;
         let Some(protector_key) = protector.unwrap_key(pass.as_bytes()) else {
@@ -426,9 +436,9 @@ fn cmd_create_protector(args: &ProtectorCreateArgs) -> Result<()> {
     Ok(())
 }
 
-fn cmd_verify_protector(args: &ProtectorVerifyPassArgs) -> Result<()> {
-    let Some(id_str) = &args.protector else {
-        eprintln!("You must specify the ID of the protector to verify.");
+fn do_change_verify_protector_password(protector_id: &Option<String>, verify_only: bool) -> Result<()> {
+    let Some(id_str) = protector_id else {
+        eprintln!("You must specify the ID of the protector.");
         eprintln!("Available protectors:");
         for id in dirlock::keystore::protector_ids()? {
             if let Some(prot) = dirlock::keystore::load_protector(&id)? {
@@ -437,13 +447,30 @@ fn cmd_verify_protector(args: &ProtectorVerifyPassArgs) -> Result<()> {
         }
         return Ok(());
     };
-    let protector = dirlock::get_protector_by_str(id_str)?;
+    let (id, protector) = dirlock::get_protector_by_str(id_str)?;
     display_tpm_lockout_counter(&protector)?;
     let pass = read_password("Enter the password of the protector", ReadPassword::Once)?;
     if protector.unwrap_key(pass.as_bytes()).is_none() {
         bail!("Invalid password");
     };
+    if ! verify_only {
+        let npass = read_password("Enter the new password", ReadPassword::Twice)?;
+        if pass == npass {
+            bail!("The old and new passwords are identical");
+        }
+        if ! dirlock::change_protector_password(&id, protector, pass.as_bytes(), npass.as_bytes())? {
+            bail!("Error changing password");
+        }
+    }
     Ok(())
+}
+
+fn cmd_verify_protector(args: &ProtectorVerifyPassArgs) -> Result<()> {
+    do_change_verify_protector_password(&args.protector, true)
+}
+
+fn cmd_change_protector_pass(args: &ProtectorChangePassArgs) -> Result<()> {
+    do_change_verify_protector_password(&args.protector, false)
 }
 
 fn cmd_system_info(args: &SystemInfoArgs) -> Result<()> {
@@ -599,6 +626,7 @@ fn main() -> Result<()> {
         Protector(args) => match &args.command {
             ProtectorCommand::Create(args) => cmd_create_protector(args),
             ProtectorCommand::VerifyPass(args) => cmd_verify_protector(args),
+            ProtectorCommand::ChangePass(args) => cmd_change_protector_pass(args),
         },
         SystemInfo(args) => cmd_system_info(args),
         ExportMasterKey(args) => cmd_export_master_key(args),

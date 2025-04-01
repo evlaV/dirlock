@@ -156,7 +156,7 @@ impl Protector {
         self.unwrap_key(pass).and_then(|k| policy.unwrap_key(k))
     }
 
-    /// Unwraps the key using a password
+    /// Changes the protector's password
     pub fn change_pass(&mut self, pass: &[u8], newpass: &[u8]) -> bool {
         match self {
             Protector::Password(p) => p.change_pass(pass, newpass),
