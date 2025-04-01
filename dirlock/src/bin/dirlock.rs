@@ -284,6 +284,9 @@ fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
     }
 
     let npass = read_password("Enter the new password", ReadPassword::Twice)?;
+    if pass == npass {
+        bail!("The old and new passwords are identical");
+    }
     if ! encrypted_dir.change_password(pass.as_bytes(), npass.as_bytes(), protector_id.as_ref())? {
         bail!("Unable to change the password for directory {}", args.dir.display())
     }
