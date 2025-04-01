@@ -14,7 +14,7 @@ use dirlock::{
     fscrypt,
     protector::{
         Protector,
-        opts::{PasswordOpts, ProtectorOpts, ProtectorOptsBuilder, Tpm2Opts},
+        opts::{PasswordOpts, ProtectorOpts, ProtectorOptsBuilder},
     },
     util::{
         ReadPassword,
@@ -199,7 +199,9 @@ struct StatusArgs {
     dir: PathBuf,
 }
 
+#[cfg(feature = "tpm2")]
 fn display_tpm_lockout_counter(protector: &Protector) -> Result<()> {
+    use dirlock::protector::opts::Tpm2Opts;
     if let Protector::Tpm2(_) = protector {
         let status = dirlock::protector::tpm2::get_status(Tpm2Opts::default())?;
         println!("This is a TPM2 protector. Failed authentication counter: {} / {}",
@@ -209,6 +211,11 @@ fn display_tpm_lockout_counter(protector: &Protector) -> Result<()> {
                   status.lockout_interval);
         }
     }
+    Ok(())
+}
+
+#[cfg(not(feature = "tpm2"))]
+fn display_tpm_lockout_counter(_protector: &Protector) -> Result<()> {
     Ok(())
 }
 

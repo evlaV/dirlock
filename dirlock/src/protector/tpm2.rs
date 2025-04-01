@@ -7,11 +7,12 @@
 use anyhow::{bail, Result};
 use serde::{Serialize, Deserialize};
 use serde_with::{serde_as, base64::Base64};
-use crate::kdf::{Kdf, Pbkdf2};
+use crate::kdf::Kdf;
 
 #[cfg(feature = "tpm2")]
 use {
     anyhow::anyhow,
+    crate::kdf::Pbkdf2,
     rand::{RngCore, rngs::OsRng},
     std::{fmt, str::FromStr},
     tss_esapi::{
