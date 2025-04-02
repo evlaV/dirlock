@@ -12,6 +12,7 @@ use rand::{RngCore, rngs::OsRng};
 use serde::{Serialize, Deserialize};
 use serde_with::{serde_as, hex::Hex, base64::Base64};
 use sha2::{Digest, Sha256, Sha512};
+use std::fmt;
 
 use crate::fscrypt::PolicyKey;
 use crate::kdf::Kdf;
@@ -119,15 +120,56 @@ struct Salt(
 
 /// A wrapped [`PolicyKey`] together with a [`Protector`] that can unwrap it
 pub struct ProtectedPolicyKey {
-    pub protector_id: ProtectorId,
     pub protector: Protector,
     pub policy_key: WrappedPolicyKey,
 }
 
+
+/// An enum of the existing protector types
+#[derive(Copy, Clone, PartialEq)]
+pub enum ProtectorType {
+    Password,
+    Tpm2,
+}
+
+const PROTECTOR_TYPE_NAMES: &[(&str, ProtectorType)] = &[
+    ("password", ProtectorType::Password),
+    ("tpm2", ProtectorType::Tpm2),
+];
+
+impl fmt::Display for ProtectorType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = PROTECTOR_TYPE_NAMES.iter()
+            .find(|x| &x.1 == self)
+            .map(|x| x.0)
+            .unwrap();
+        write!(f, "{name}")
+    }
+}
+
+impl std::str::FromStr for ProtectorType {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self> {
+        PROTECTOR_TYPE_NAMES.iter()
+            .find(|x| x.0 == s)
+            .map(|x| x.1)
+            .ok_or(anyhow!("Unknown protector type '{s}'. Available types: {}",
+                           PROTECTOR_TYPE_NAMES.iter()
+                           .map(|x| x.0)
+                           .collect::<Vec<_>>().join(", ")))
+    }
+}
+
+
 /// A wrapped [`ProtectorKey`] using one of several available methods
+pub struct Protector {
+    pub id: ProtectorId,
+    pub(crate) data: ProtectorData,
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
-pub enum Protector {
+pub(crate) enum ProtectorData {
     /// The key is wrapped with a password.
     Password(PasswordProtector),
     /// The key is wrapped by the TPM.
@@ -136,18 +178,19 @@ pub enum Protector {
 
 impl Protector {
     pub fn new(opts: ProtectorOpts, raw_key: ProtectorKey, pass: &[u8]) -> Result<Self> {
-        let prot = match opts {
-            ProtectorOpts::Password(pw_opts) => Protector::Password(PasswordProtector::new(pw_opts,raw_key, pass)),
-            ProtectorOpts::Tpm2(tpm2_opts) => Protector::Tpm2(Tpm2Protector::new(tpm2_opts, raw_key, pass)?),
+        let id = raw_key.get_id();
+        let data = match opts {
+            ProtectorOpts::Password(pw_opts) => ProtectorData::Password(PasswordProtector::new(pw_opts,raw_key, pass)),
+            ProtectorOpts::Tpm2(tpm2_opts) => ProtectorData::Tpm2(Tpm2Protector::new(tpm2_opts, raw_key, pass)?),
         };
-        Ok(prot)
+        Ok(Protector { id, data })
     }
 
     /// Unwraps this protector's [`ProtectorKey`] using a password
     pub fn unwrap_key(&self, pass: &[u8]) -> Option<ProtectorKey> {
-        match self {
-            Protector::Password(p) => p.unwrap_key(pass),
-            Protector::Tpm2(p) => p.unwrap_key(pass).unwrap_or(None), // TODO return the error here
+        match &self.data {
+            ProtectorData::Password(p) => p.unwrap_key(pass),
+            ProtectorData::Tpm2(p) => p.unwrap_key(pass).unwrap_or(None), // TODO return the error here
         }
     }
 
@@ -158,20 +201,21 @@ impl Protector {
 
     /// Changes the protector's password
     pub fn change_pass(&mut self, pass: &[u8], newpass: &[u8]) -> bool {
-        match self {
-            Protector::Password(p) => p.change_pass(pass, newpass),
-            Protector::Tpm2(p) => p.change_pass(pass, newpass),
+        match self.data {
+            ProtectorData::Password(ref mut p) => p.change_pass(pass, newpass),
+            ProtectorData::Tpm2(ref mut p) => p.change_pass(pass, newpass),
         }
     }
 
     /// Gets the type of this protector
-    pub fn name(&self) -> &'static str {
-        match self {
-            Protector::Password(_) => "password",
-            Protector::Tpm2(_) => "tpm2",
+    pub fn get_type(&self) -> ProtectorType {
+        match self.data {
+            ProtectorData::Password(_) => ProtectorType::Password,
+            ProtectorData::Tpm2(_) => ProtectorType::Tpm2,
         }
     }
 }
+
 
 /// Stretches a 256-bit key into two new keys of the same size using HKDF
 fn stretch_key<'a>(key: &Aes256Key, buffer: &'a mut [u8; 64]) -> (&'a [u8; 32], &'a [u8; 32]) {

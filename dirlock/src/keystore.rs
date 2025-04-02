@@ -72,32 +72,32 @@ pub fn protector_ids() -> Result<impl Iterator<Item = ProtectorId>> {
 type PolicyMap = HashMap<ProtectorId, WrappedPolicyKey>;
 
 /// Load a protector from disk
-pub fn load_protector(id: &ProtectorId) -> Result<Option<Protector>> {
+pub fn load_protector(id: ProtectorId) -> Result<Option<Protector>> {
     let dir = &keystore_dirs().protectors;
     let protector_file = dir.join(id.to_string());
     if !dir.exists() || !protector_file.exists() {
         return Ok(None);
     }
 
-    let protector = match fs::OpenOptions::new().read(true).open(protector_file) {
+    let data = match fs::OpenOptions::new().read(true).open(protector_file) {
         Ok(f) => serde_json::from_reader(f)
             .map_err(|e| anyhow!("Error reading data for protector {id}: {e}"))?,
         Err(e) => bail!("Error opening protector {id}: {e}"),
     };
 
-    Ok(Some(protector))
+    Ok(Some(Protector { id, data }))
 }
 
 /// Save a protector to disk
-fn save_protector(id: &ProtectorId, prot: &Protector) -> Result<()> {
+fn save_protector(prot: &Protector) -> Result<()> {
     let path = &keystore_dirs().protectors;
     fs::create_dir_all(path)
         .map_err(|e| anyhow!("Failed to create {}: {e}", path.display()))?;
-    let filename = path.join(id.to_string());
+    let filename = path.join(prot.id.to_string());
     // TODO: create a temporary file first, then rename
     let mut file = fs::File::create(filename)
-        .map_err(|e| anyhow!("Failed to store protector {id}: {e}"))?;
-    serde_json::to_writer_pretty(&file, prot)?;
+        .map_err(|e| anyhow!("Failed to store protector {}: {e}", prot.id))?;
+    serde_json::to_writer_pretty(&file, &prot.data)?;
     file.write_all(b"\n")?;
     Ok(())
 }
@@ -153,14 +153,14 @@ pub fn remove_protector_from_policy(policy_id: &PolicyKeyId, protector_id: &Prot
 }
 
 /// Add a protector to the key store
-pub fn add_protector(id: &ProtectorId, prot: &Protector, overwrite: bool) -> Result<()> {
+pub fn add_protector(prot: &Protector, overwrite: bool) -> Result<()> {
     if !overwrite {
-        let path = keystore_dirs().protectors.join(id.to_string());
+        let path = keystore_dirs().protectors.join(prot.id.to_string());
         if path.exists() {
             bail!("Trying to overwrite an existing protector");
         }
     }
-    save_protector(id, prot)
+    save_protector(prot)
 }
 
 /// Removes a protector if it's not being used in any policy
@@ -183,8 +183,8 @@ pub fn get_protectors_for_policy(id: &PolicyKeyId) -> Result<Vec<ProtectedPolicy
         // TODO if this fails it means that there's a policy
         // wrapped with a protector but the protector is
         // missing. We should report this.
-        if let Some(protector) = load_protector(&protector_id)? {
-            result.push(ProtectedPolicyKey{ protector_id, protector, policy_key });
+        if let Some(protector) = load_protector(protector_id)? {
+            result.push(ProtectedPolicyKey{ protector, policy_key });
         }
     }
     Ok(result)

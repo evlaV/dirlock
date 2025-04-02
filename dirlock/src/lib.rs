@@ -95,7 +95,7 @@ impl EncryptedDir {
     pub fn get_master_key(&self, pass: &[u8], protector_id: Option<&ProtectorId>) -> Option<PolicyKey> {
         for p in &self.protectors {
             if let Some(id) = protector_id {
-                if *id != p.protector_id {
+                if *id != p.protector.id {
                     continue;
                 }
             }
@@ -146,7 +146,7 @@ impl EncryptedDir {
     pub fn get_protector_id_by_pass(&self, pass: &[u8]) -> Result<ProtectorId> {
         for p in &self.protectors {
             if p.protector.unwrap_key(pass).is_some() {
-                return Ok(p.protector_id.clone());
+                return Ok(p.protector.id.clone());
             }
         }
         bail!("No protector found with that password in the directory");
@@ -155,7 +155,7 @@ impl EncryptedDir {
     /// Find a protector using its ID in string form
     pub fn get_protector_id_by_str(&self, id_str: impl AsRef<str>) -> Result<ProtectorId> {
         let id = ProtectorId::try_from(id_str.as_ref())?;
-        if !self.protectors.iter().any(|p| p.protector_id == id) {
+        if !self.protectors.iter().any(|p| p.protector.id == id) {
             bail!("No protector found with that ID in the directory");
         }
         Ok(id)
@@ -167,12 +167,12 @@ impl EncryptedDir {
     pub fn change_password(&mut self, pass: &[u8], newpass: &[u8], protector_id: Option<&ProtectorId>) -> Result<bool> {
         for p in &mut self.protectors {
             if let Some(id) = protector_id {
-                if *id != p.protector_id {
+                if *id != p.protector.id {
                     continue;
                 }
             }
             if p.protector.change_pass(pass, newpass) {
-                keystore::add_protector(&p.protector_id, &p.protector, true)?;
+                keystore::add_protector(&p.protector, true)?;
                 return Ok(true);
             }
         }
@@ -182,11 +182,11 @@ impl EncryptedDir {
     /// Remove a protector from a directory.
     /// Note: this will remove the protector even if it's the only one left.
     pub fn remove_protector(&self, id: &ProtectorId) -> Result<bool> {
-        for ProtectedPolicyKey { protector_id, .. } in &self.protectors {
-            if protector_id == id {
-                if keystore::remove_protector_from_policy(&self.policy.keyid, protector_id)? {
+        for ProtectedPolicyKey { protector, .. } in &self.protectors {
+            if &protector.id == id {
+                if keystore::remove_protector_from_policy(&self.policy.keyid, &protector.id)? {
                     // TODO: add an option to make this conditional
-                    keystore::remove_protector_if_unused(protector_id)?;
+                    keystore::remove_protector_if_unused(&protector.id)?;
                     return Ok(true);
                 }
                 return Ok(false);
@@ -229,20 +229,19 @@ pub fn encrypt_dir(path: &Path, protector_key: ProtectorKey) -> Result<PolicyKey
 }
 
 /// Get an existing protector
-pub fn get_protector_by_str(id_str: impl AsRef<str>) -> Result<(ProtectorId, Protector)> {
+pub fn get_protector_by_str(id_str: impl AsRef<str>) -> Result<Protector> {
     let id = ProtectorId::try_from(id_str.as_ref())?;
-    let Some(prot) = keystore::load_protector(&id)? else {
-        bail!("Protector {id} not found");
+    let Some(prot) = keystore::load_protector(id)? else {
+        bail!("Protector {} not found", id_str.as_ref());
     };
-    Ok((id, prot))
+    Ok(prot)
 }
 
 /// Create (and store on disk) a new protector using a password
 pub fn create_protector(opts: ProtectorOpts, pass: &[u8]) -> Result<ProtectorKey> {
     let protector_key = ProtectorKey::new_random();
-    let protector_id = protector_key.get_id();
     let protector = Protector::new(opts, protector_key.clone(), pass)?;
-    keystore::add_protector(&protector_id, &protector, false)?;
+    keystore::add_protector(&protector, false)?;
     Ok(protector_key)
 }
 
@@ -255,9 +254,9 @@ pub fn wrap_and_save_policy_key(protector_key: ProtectorKey, policy_key: PolicyK
 }
 
 /// Change a protector's password and save it to disk
-pub fn change_protector_password(id: &ProtectorId, mut protector: Protector, pass: &[u8], newpass: &[u8]) -> Result<bool> {
+pub fn change_protector_password(mut protector: Protector, pass: &[u8], newpass: &[u8]) -> Result<bool> {
     if protector.change_pass(pass, newpass) {
-        keystore::add_protector(id, &protector, true)?;
+        keystore::add_protector(&protector, true)?;
         Ok(true)
     } else {
         Ok(false)

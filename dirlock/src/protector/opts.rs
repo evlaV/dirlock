@@ -1,7 +1,8 @@
 
-use anyhow::{anyhow, bail, ensure, Result};
+use anyhow::{anyhow, ensure, Result};
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
+use super::ProtectorType;
 
 const DEFAULT_TPM2_PATH: &str = "/dev/tpm0";
 
@@ -34,7 +35,7 @@ impl Default for Tpm2Opts {
 /// A builder for [`ProtectorOpts`]
 #[derive(Default)]
 pub struct ProtectorOptsBuilder {
-    ptype: Option<String>,
+    ptype: Option<ProtectorType>,
     tpm2_device: Option<PathBuf>,
     kdf_iter: Option<NonZeroU32>,
 }
@@ -45,9 +46,9 @@ impl ProtectorOptsBuilder {
         ProtectorOptsBuilder::default()
     }
 
-    /// Sets the type of the protector ("password", "tpm2", ...)
-    pub fn with_type(mut self, ptype: &str) -> Self {
-        self.ptype = Some(ptype.to_string());
+    /// Sets the type of the protector
+    pub fn with_type(mut self, ptype: ProtectorType) -> Self {
+        self.ptype = Some(ptype);
         self
     }
 
@@ -68,9 +69,9 @@ impl ProtectorOptsBuilder {
     /// # Errors
     /// Returns an error some options are missing or invalid
     pub fn build(self) -> Result<ProtectorOpts> {
-        let ptype = self.ptype.unwrap_or(String::from("password"));
-        match ptype.as_str() {
-            "tpm2" => {
+        let ptype = self.ptype.unwrap_or(ProtectorType::Password);
+        match ptype {
+            ProtectorType::Tpm2 => {
                 let path = if let Some(p) = self.tpm2_device {
                     p.to_str()
                         .ok_or_else(|| anyhow!("Invalid TPM path: {}", p.display()))?
@@ -80,11 +81,10 @@ impl ProtectorOptsBuilder {
                 };
                 Ok(ProtectorOpts::Tpm2(Tpm2Opts { path, kdf_iter: self.kdf_iter }))
             },
-            "password" => {
+            ProtectorType::Password => {
                 ensure!(self.tpm2_device.is_none(), "TPM2 device set for password protector");
                 Ok(ProtectorOpts::Password(PasswordOpts { kdf_iter: self.kdf_iter }))
             },
-            x => bail!("Unknown protector type {x}"),
         }
     }
 }

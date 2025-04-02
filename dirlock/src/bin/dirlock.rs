@@ -14,6 +14,7 @@ use dirlock::{
     fscrypt,
     protector::{
         Protector,
+        ProtectorType,
         opts::{PasswordOpts, ProtectorOpts, ProtectorOptsBuilder},
     },
     util::{
@@ -88,7 +89,7 @@ struct ChangePassArgs {
 struct AddProtectorArgs {
     /// type of the protector to add (default: 'password')
     #[argh(option)]
-    type_: Option<String>,
+    type_: Option<ProtectorType>,
     /// TPM2 device (default: auto)
     #[argh(option)]
     tpm2_device: Option<PathBuf>,
@@ -147,7 +148,7 @@ enum ProtectorCommand {
 struct ProtectorCreateArgs {
     /// type of the protector to add
     #[argh(option)]
-    type_: String,
+    type_: ProtectorType,
     /// TPM2 device (default: auto)
     #[argh(option)]
     tpm2_device: Option<PathBuf>,
@@ -211,8 +212,8 @@ struct StatusArgs {
 
 #[cfg(feature = "tpm2")]
 fn display_tpm_lockout_counter(protector: &Protector) -> Result<()> {
-    use dirlock::protector::opts::Tpm2Opts;
-    if let Protector::Tpm2(_) = protector {
+    use dirlock::protector::{ProtectorType, opts::Tpm2Opts};
+    if protector.get_type() == ProtectorType::Tpm2 {
         let status = dirlock::protector::tpm2::get_status(Tpm2Opts::default())?;
         println!("This is a TPM2 protector. Failed authentication counter: {} / {}",
                  status.lockout_counter, status.max_auth_fail);
@@ -311,7 +312,7 @@ fn cmd_add_protector(args: &AddProtectorArgs) -> Result<()> {
     };
 
     let mut optsbuilder = ProtectorOptsBuilder::new();
-    if let Some(t) = &args.type_ {
+    if let Some(t) = args.type_ {
         optsbuilder = optsbuilder.with_type(t);
     }
     if let Some(d) = &args.tpm2_device {
@@ -386,7 +387,7 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
     }
 
     let protector_key = if let Some(id_str) = &args.protector {
-        let (_, protector) = dirlock::get_protector_by_str(id_str)?;
+        let protector = dirlock::get_protector_by_str(id_str)?;
         display_tpm_lockout_counter(&protector)?;
         let pass = read_password("Enter the password of the protector", ReadPassword::Once)?;
         let Some(protector_key) = protector.unwrap_key(pass.as_bytes()) else {
@@ -417,7 +418,7 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
 
 fn cmd_create_protector(args: &ProtectorCreateArgs) -> Result<()> {
     let mut optsbuilder = ProtectorOptsBuilder::new()
-        .with_type(&args.type_);
+        .with_type(args.type_);
 
     if let Some(d) = &args.tpm2_device {
         optsbuilder = optsbuilder.with_tpm2_device(d);
@@ -441,13 +442,13 @@ fn do_change_verify_protector_password(protector_id: &Option<String>, verify_onl
         eprintln!("You must specify the ID of the protector.");
         eprintln!("Available protectors:");
         for id in dirlock::keystore::protector_ids()? {
-            if let Some(prot) = dirlock::keystore::load_protector(&id)? {
-                eprintln!("{id}, type {}", prot.name());
+            if let Some(prot) = dirlock::keystore::load_protector(id)? {
+                eprintln!("{}, type {}", prot.id, prot.get_type());
             }
         }
         return Ok(());
     };
-    let (id, protector) = dirlock::get_protector_by_str(id_str)?;
+    let protector = dirlock::get_protector_by_str(id_str)?;
     display_tpm_lockout_counter(&protector)?;
     let pass = read_password("Enter the password of the protector", ReadPassword::Once)?;
     if protector.unwrap_key(pass.as_bytes()).is_none() {
@@ -458,7 +459,7 @@ fn do_change_verify_protector_password(protector_id: &Option<String>, verify_onl
         if pass == npass {
             bail!("The old and new passwords are identical");
         }
-        if ! dirlock::change_protector_password(&id, protector, pass.as_bytes(), npass.as_bytes())? {
+        if ! dirlock::change_protector_password(protector, pass.as_bytes(), npass.as_bytes())? {
             bail!("Error changing password");
         }
     }
@@ -475,7 +476,7 @@ fn cmd_change_protector_pass(args: &ProtectorChangePassArgs) -> Result<()> {
 
 fn cmd_system_info(args: &SystemInfoArgs) -> Result<()> {
     let mut optsbuilder = ProtectorOptsBuilder::new()
-        .with_type("tpm2");
+        .with_type(ProtectorType::Tpm2);
 
     if let Some(d) = &args.tpm2_device {
         optsbuilder = optsbuilder.with_tpm2_device(d);
@@ -492,8 +493,8 @@ fn cmd_system_info(args: &SystemInfoArgs) -> Result<()> {
     println!("Protector          Type");
     println!("-----------------------");
     for id in dirlock::keystore::protector_ids()? {
-        if let Some(prot) = dirlock::keystore::load_protector(&id)? {
-            println!("{id}   {}", prot.name());
+        if let Some(prot) = dirlock::keystore::load_protector(id)? {
+            println!("{}   {}", prot.id, prot.get_type());
         }
     }
 
@@ -603,7 +604,7 @@ fn cmd_status(args: &StatusArgs) -> Result<()> {
     }
 
     for p in encrypted_dir.protectors {
-        println!("Protector: {}, type {}", &p.protector_id, p.protector.name());
+        println!("Protector: {}, type {}", &p.protector.id, p.protector.get_type());
     }
 
     Ok(())
