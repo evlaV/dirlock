@@ -74,6 +74,8 @@ use crate::protector::Protector;
 #[serde_as]
 #[derive(Serialize, Deserialize, Default)]
 pub struct Tpm2Protector {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     #[serde_as(as = "Base64")]
     public: Vec<u8>,
     #[serde_as(as = "Base64")]
@@ -107,7 +109,7 @@ impl Tpm2Protector {
         } else {
             Kdf::default()
         };
-        let mut prot = Tpm2Protector { kdf, ..Default::default() };
+        let mut prot = Tpm2Protector { kdf, name: opts.name, ..Default::default() };
         prot.wrap_key(&opts.path, prot_key, pass)?;
         Ok(prot)
     }

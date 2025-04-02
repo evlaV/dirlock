@@ -30,6 +30,8 @@ use crate::protector::Protector;
 #[serde_as]
 #[derive(Serialize, Deserialize, Default)]
 pub struct PasswordProtector {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     #[serde_as(as = "Base64")]
     wrapped_key: [u8; PROTECTOR_KEY_LEN],
     iv: AesIv,
@@ -46,7 +48,7 @@ impl PasswordProtector {
         } else {
             Kdf::default()
         };
-        let mut prot = PasswordProtector { kdf, ..Default::default() };
+        let mut prot = PasswordProtector { kdf, name: opts.name, ..Default::default() };
         prot.wrap_key(prot_key, pass);
         prot
     }

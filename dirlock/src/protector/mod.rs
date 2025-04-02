@@ -207,6 +207,18 @@ impl Protector {
         }
     }
 
+    /// Gets the name of this protector
+    pub fn get_name(&self) -> Option<&str> {
+        if let Some(name) = match &self.data {
+            ProtectorData::Password(p) => &p.name,
+            ProtectorData::Tpm2(p) => &p.name,
+        } {
+            Some(name.as_str())
+        } else {
+            None
+        }
+    }
+
     /// Gets the type of this protector
     pub fn get_type(&self) -> ProtectorType {
         match self.data {

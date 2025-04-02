@@ -146,9 +146,12 @@ enum ProtectorCommand {
 #[argh(subcommand, name = "create")]
 /// Create a new protector
 struct ProtectorCreateArgs {
-    /// type of the protector to add
+    /// protector type
     #[argh(option)]
     type_: ProtectorType,
+    /// protector name (default: none)
+    #[argh(option)]
+    name: Option<String>,
     /// TPM2 device (default: auto)
     #[argh(option)]
     tpm2_device: Option<PathBuf>,
@@ -428,6 +431,10 @@ fn cmd_create_protector(args: &ProtectorCreateArgs) -> Result<()> {
         optsbuilder = optsbuilder.with_kdf_iter(i);
     }
 
+    if let Some(name) = &args.name {
+        optsbuilder = optsbuilder.with_name(name);
+    }
+
     let opts = optsbuilder.build()?;
     let pass = read_password("Enter password for the new protector", ReadPassword::Twice)?;
     let protector_key = dirlock::create_protector(opts, pass.as_bytes())?;
@@ -490,16 +497,18 @@ fn cmd_system_info(args: &SystemInfoArgs) -> Result<()> {
         .map(|s| s.to_string())
         .unwrap_or_else(|_| String::from("TPM not found"));
 
-    println!("Protector          Type");
-    println!("-----------------------");
+    println!("{:16}    {:8}    Name", "Protector", "Type");
+    println!("--------------------------------------");
     for id in dirlock::keystore::protector_ids()? {
         if let Some(prot) = dirlock::keystore::load_protector(id)? {
-            println!("{}   {}", prot.id, prot.get_type());
+            println!("{:16}    {:8}    {}", prot.id,
+                     prot.get_type().to_string(),
+                     prot.get_name().unwrap_or("(none)"));
         }
     }
 
     println!("\nPolicy                              Protectors");
-    println!("----------------------------------------------");
+    println!("----------------------------------------------------");
     for id in dirlock::keystore::policy_key_ids()? {
         let prots = dirlock::keystore::load_policy_map(&id)?
             .keys()

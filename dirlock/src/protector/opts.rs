@@ -1,5 +1,5 @@
 
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{anyhow, bail, ensure, Result};
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use super::ProtectorType;
@@ -16,6 +16,7 @@ pub enum ProtectorOpts {
 #[derive(Default)]
 pub struct PasswordOpts {
     pub kdf_iter: Option<NonZeroU32>,
+    pub name: Option<String>,
 }
 
 
@@ -23,11 +24,12 @@ pub struct PasswordOpts {
 pub struct Tpm2Opts {
     pub path: String, // tcti_ldr::DeviceConfig wants str and not Path
     pub kdf_iter: Option<NonZeroU32>,
+    pub name: Option<String>,
 }
 
 impl Default for Tpm2Opts {
     fn default() -> Tpm2Opts {
-        Tpm2Opts { path: DEFAULT_TPM2_PATH.to_string(), kdf_iter: None }
+        Tpm2Opts { path: DEFAULT_TPM2_PATH.to_string(), kdf_iter: None, name: None }
     }
 }
 
@@ -38,6 +40,7 @@ pub struct ProtectorOptsBuilder {
     ptype: Option<ProtectorType>,
     tpm2_device: Option<PathBuf>,
     kdf_iter: Option<NonZeroU32>,
+    name: Option<String>,
 }
 
 impl ProtectorOptsBuilder {
@@ -49,6 +52,12 @@ impl ProtectorOptsBuilder {
     /// Sets the type of the protector
     pub fn with_type(mut self, ptype: ProtectorType) -> Self {
         self.ptype = Some(ptype);
+        self
+    }
+
+    /// Sets the type of the protector
+    pub fn with_name(mut self, name: &str) -> Self {
+        self.name = Some(String::from(name));
         self
     }
 
@@ -70,6 +79,11 @@ impl ProtectorOptsBuilder {
     /// Returns an error some options are missing or invalid
     pub fn build(self) -> Result<ProtectorOpts> {
         let ptype = self.ptype.unwrap_or(ProtectorType::Password);
+        if let Some(name) = &self.name {
+            if name.len() > 64 {
+                bail!("Protector name too long");
+            }
+        }
         match ptype {
             ProtectorType::Tpm2 => {
                 let path = if let Some(p) = self.tpm2_device {
@@ -79,11 +93,18 @@ impl ProtectorOptsBuilder {
                 } else {
                     DEFAULT_TPM2_PATH.to_string()
                 };
-                Ok(ProtectorOpts::Tpm2(Tpm2Opts { path, kdf_iter: self.kdf_iter }))
+                Ok(ProtectorOpts::Tpm2(Tpm2Opts {
+                    path,
+                    kdf_iter: self.kdf_iter,
+                    name: self.name,
+                }))
             },
             ProtectorType::Password => {
                 ensure!(self.tpm2_device.is_none(), "TPM2 device set for password protector");
-                Ok(ProtectorOpts::Password(PasswordOpts { kdf_iter: self.kdf_iter }))
+                Ok(ProtectorOpts::Password(PasswordOpts {
+                    kdf_iter: self.kdf_iter,
+                    name: self.name,
+                }))
             },
         }
     }
