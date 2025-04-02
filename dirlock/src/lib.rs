@@ -172,7 +172,7 @@ impl EncryptedDir {
                 }
             }
             if p.protector.change_pass(pass, newpass) {
-                keystore::add_protector(&p.protector, true)?;
+                keystore::save_protector(&p.protector, keystore::SaveProtector::UpdateExisting)?;
                 return Ok(true);
             }
         }
@@ -241,7 +241,7 @@ pub fn get_protector_by_str(id_str: impl AsRef<str>) -> Result<Protector> {
 pub fn create_protector(opts: ProtectorOpts, pass: &[u8]) -> Result<ProtectorKey> {
     let protector_key = ProtectorKey::new_random();
     let protector = Protector::new(opts, protector_key.clone(), pass)?;
-    keystore::add_protector(&protector, false)?;
+    keystore::save_protector(&protector, keystore::SaveProtector::AddNew)?;
     Ok(protector_key)
 }
 
@@ -256,7 +256,7 @@ pub fn wrap_and_save_policy_key(protector_key: ProtectorKey, policy_key: PolicyK
 /// Change a protector's password and save it to disk
 pub fn change_protector_password(mut protector: Protector, pass: &[u8], newpass: &[u8]) -> Result<bool> {
     if protector.change_pass(pass, newpass) {
-        keystore::add_protector(&protector, true)?;
+        keystore::save_protector(&protector, keystore::SaveProtector::UpdateExisting)?;
         Ok(true)
     } else {
         Ok(false)

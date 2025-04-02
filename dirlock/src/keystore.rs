@@ -88,12 +88,25 @@ pub fn load_protector(id: ProtectorId) -> Result<Option<Protector>> {
     Ok(Some(Protector { id, data }))
 }
 
+/// Whether to overwrite an existing protector
+pub enum SaveProtector {
+    /// Add a new protector (don't overwrite an existing one)
+    AddNew,
+    /// Update an existing protector
+    UpdateExisting,
+}
+
 /// Save a protector to disk
-fn save_protector(prot: &Protector) -> Result<()> {
+pub fn save_protector(prot: &Protector, save: SaveProtector) -> Result<()> {
     let path = &keystore_dirs().protectors;
     fs::create_dir_all(path)
         .map_err(|e| anyhow!("Failed to create {}: {e}", path.display()))?;
     let filename = path.join(prot.id.to_string());
+    match (filename.exists(), save) {
+        (true, SaveProtector::AddNew) => bail!("Trying to overwrite an existing protector"),
+        (false, SaveProtector::UpdateExisting) => bail!("Trying to update a nonexistent protector"),
+        _ => (),
+    }
     // TODO: create a temporary file first, then rename
     let mut file = fs::File::create(filename)
         .map_err(|e| anyhow!("Failed to store protector {}: {e}", prot.id))?;
@@ -150,17 +163,6 @@ pub fn remove_protector_from_policy(policy_id: &PolicyKeyId, protector_id: &Prot
         return Ok(false);
     };
     save_policy_map(policy_id, &policy_map).and(Ok(true))
-}
-
-/// Add a protector to the key store
-pub fn add_protector(prot: &Protector, overwrite: bool) -> Result<()> {
-    if !overwrite {
-        let path = keystore_dirs().protectors.join(prot.id.to_string());
-        if path.exists() {
-            bail!("Trying to overwrite an existing protector");
-        }
-    }
-    save_protector(prot)
 }
 
 /// Removes a protector if it's not being used in any policy
