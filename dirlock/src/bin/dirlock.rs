@@ -314,14 +314,10 @@ fn cmd_add_protector(args: &AddProtectorArgs) -> Result<()> {
         x => bail!("{}", x),
     };
 
-    let mut optsbuilder = ProtectorOptsBuilder::new();
-    if let Some(t) = args.type_ {
-        optsbuilder = optsbuilder.with_type(t);
-    }
-    if let Some(d) = &args.tpm2_device {
-        optsbuilder = optsbuilder.with_tpm2_device(d);
-    }
-    let protector_opts = optsbuilder.build()?;
+    let protector_opts = ProtectorOptsBuilder::new()
+        .with_type(args.type_)
+        .with_tpm2_device(args.tpm2_device.clone())
+        .build()?;
 
     let pass = read_password("Enter the current password", ReadPassword::Once)?;
     let Some(policy_key) = encrypted_dir.get_master_key(pass.as_bytes(), None) else {
@@ -420,22 +416,13 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
 }
 
 fn cmd_create_protector(args: &ProtectorCreateArgs) -> Result<()> {
-    let mut optsbuilder = ProtectorOptsBuilder::new()
-        .with_type(args.type_);
+    let opts = ProtectorOptsBuilder::new()
+        .with_type(Some(args.type_))
+        .with_tpm2_device(args.tpm2_device.clone())
+        .with_kdf_iter(args.kdf_iter)
+        .with_name(args.name.clone())
+        .build()?;
 
-    if let Some(d) = &args.tpm2_device {
-        optsbuilder = optsbuilder.with_tpm2_device(d);
-    }
-
-    if let Some(i) = args.kdf_iter {
-        optsbuilder = optsbuilder.with_kdf_iter(i);
-    }
-
-    if let Some(name) = &args.name {
-        optsbuilder = optsbuilder.with_name(name);
-    }
-
-    let opts = optsbuilder.build()?;
     let pass = read_password("Enter password for the new protector", ReadPassword::Twice)?;
     let protector_key = dirlock::create_protector(opts, pass.as_bytes())?;
 
@@ -482,14 +469,11 @@ fn cmd_change_protector_pass(args: &ProtectorChangePassArgs) -> Result<()> {
 }
 
 fn cmd_system_info(args: &SystemInfoArgs) -> Result<()> {
-    let mut optsbuilder = ProtectorOptsBuilder::new()
-        .with_type(ProtectorType::Tpm2);
-
-    if let Some(d) = &args.tpm2_device {
-        optsbuilder = optsbuilder.with_tpm2_device(d);
-    }
-
-    let ProtectorOpts::Tpm2(opts) = optsbuilder.build()? else {
+    let ProtectorOpts::Tpm2(opts) = ProtectorOptsBuilder::new()
+        .with_type(Some(ProtectorType::Tpm2))
+        .with_tpm2_device(args.tpm2_device.clone())
+        .build()?
+    else {
         unreachable!(); // We only build tpm2 opts here
     };
 

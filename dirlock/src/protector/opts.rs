@@ -1,7 +1,7 @@
 
 use anyhow::{anyhow, bail, ensure, Result};
 use std::num::NonZeroU32;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use super::ProtectorType;
 
 const DEFAULT_TPM2_PATH: &str = "/dev/tpm0";
@@ -50,26 +50,26 @@ impl ProtectorOptsBuilder {
     }
 
     /// Sets the type of the protector
-    pub fn with_type(mut self, ptype: ProtectorType) -> Self {
-        self.ptype = Some(ptype);
+    pub fn with_type(mut self, ptype: Option<ProtectorType>) -> Self {
+        self.ptype = ptype;
         self
     }
 
     /// Sets the type of the protector
-    pub fn with_name(mut self, name: &str) -> Self {
-        self.name = Some(String::from(name));
+    pub fn with_name(mut self, name: Option<String>) -> Self {
+        self.name = name;
         self
     }
 
     /// Sets the path of the TPM2 device (default: "/dev/tpm0")
-    pub fn with_tpm2_device(mut self, path: &Path) -> Self {
-        self.tpm2_device = Some(PathBuf::from(path));
+    pub fn with_tpm2_device(mut self, path: Option<PathBuf>) -> Self {
+        self.tpm2_device = path;
         self
     }
 
     /// Sets the number of iterations used in the KDF
-    pub fn with_kdf_iter(mut self, iter: NonZeroU32) -> Self {
-        self.kdf_iter = Some(iter);
+    pub fn with_kdf_iter(mut self, iter: Option<NonZeroU32>) -> Self {
+        self.kdf_iter = iter;
         self
     }
 
