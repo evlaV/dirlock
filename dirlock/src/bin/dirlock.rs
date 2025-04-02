@@ -129,7 +129,6 @@ struct EncryptArgs {
 #[argh(subcommand, name = "protector")]
 /// Commands to manage protectors
 struct ProtectorArgs {
-    /// foo bar
     #[argh(subcommand)]
     command: ProtectorCommand,
 }
