@@ -171,8 +171,8 @@ impl EncryptedDir {
                     continue;
                 }
             }
-            if p.protector.change_pass(pass, newpass) {
-                keystore::save_protector(&p.protector, keystore::SaveProtector::UpdateExisting)?;
+            if let Some(protector_key) = p.protector.unwrap_key(pass) {
+                wrap_and_save_protector_key(&mut p.protector, protector_key, newpass)?;
                 return Ok(true);
             }
         }
@@ -253,14 +253,10 @@ pub fn wrap_and_save_policy_key(protector_key: ProtectorKey, policy_key: PolicyK
     keystore::add_protector_to_policy(&policy_id, protector_id, wrapped_policy_key)
 }
 
-/// Change a protector's password and save it to disk
-pub fn change_protector_password(mut protector: Protector, pass: &[u8], newpass: &[u8]) -> Result<bool> {
-    if protector.change_pass(pass, newpass) {
-        keystore::save_protector(&protector, keystore::SaveProtector::UpdateExisting)?;
-        Ok(true)
-    } else {
-        Ok(false)
-    }
+/// Update `protector` (wrapping its key again with a new password) and save it to disk
+pub fn wrap_and_save_protector_key(protector: &mut Protector, key: ProtectorKey, newpass: &[u8]) -> Result<()> {
+    protector.wrap_key(key, newpass)?;
+    keystore::save_protector(protector, keystore::SaveProtector::UpdateExisting)
 }
 
 /// Initialize the dirlock library

@@ -441,10 +441,10 @@ fn do_change_verify_protector_password(protector_id: &Option<String>, verify_onl
         }
         return Ok(());
     };
-    let protector = dirlock::get_protector_by_str(id_str)?;
+    let mut protector = dirlock::get_protector_by_str(id_str)?;
     display_tpm_lockout_counter(&protector)?;
     let pass = read_password("Enter the password of the protector", ReadPassword::Once)?;
-    if protector.unwrap_key(pass.as_bytes()).is_none() {
+    let Some(protector_key) = protector.unwrap_key(pass.as_bytes()) else {
         bail!("Invalid password");
     };
     if ! verify_only {
@@ -452,9 +452,7 @@ fn do_change_verify_protector_password(protector_id: &Option<String>, verify_onl
         if pass == npass {
             bail!("The old and new passwords are identical");
         }
-        if ! dirlock::change_protector_password(protector, pass.as_bytes(), npass.as_bytes())? {
-            bail!("Error changing password");
-        }
+        dirlock::wrap_and_save_protector_key(&mut protector, protector_key, npass.as_bytes())?;
     }
     Ok(())
 }

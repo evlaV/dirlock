@@ -54,7 +54,7 @@ impl PasswordProtector {
     }
 
     /// Wraps `prot_key` with `pass`. This generates new random values for IV and Salt.
-    fn wrap_key(&mut self, mut prot_key: ProtectorKey, pass: &[u8]) {
+    pub fn wrap_key(&mut self, mut prot_key: ProtectorKey, pass: &[u8]) {
         OsRng.fill_bytes(&mut self.iv.0);
         OsRng.fill_bytes(&mut self.salt.0);
         let enc_key = Aes256Key::new_from_password(pass, &self.salt, &self.kdf);
@@ -70,16 +70,6 @@ impl PasswordProtector {
             Some(prot_key)
         } else {
             None
-        }
-    }
-
-    /// Changes the password of this protector
-    pub fn change_pass(&mut self, pass: &[u8], newpass: &[u8]) -> bool {
-        if let Some(prot_key) = self.unwrap_key(pass) {
-            self.wrap_key(prot_key, newpass);
-            true
-        } else {
-            false
         }
     }
 }

@@ -91,12 +91,12 @@ impl Tpm2Protector {
         bail!("TPM support is disabled");
     }
 
-    pub fn unwrap_key(&self, _pass: &[u8]) -> Result<Option<ProtectorKey>> {
+    pub fn wrap_key(&mut self, _path: &str, _prot_key: ProtectorKey, _pass: &[u8]) -> Result<()> {
         bail!("TPM support is disabled");
     }
 
-    pub fn change_pass(&mut self, _pass: &[u8], _newpass: &[u8]) -> bool {
-        false
+    pub fn unwrap_key(&self, _pass: &[u8]) -> Result<Option<ProtectorKey>> {
+        bail!("TPM support is disabled");
     }
 }
 
@@ -115,7 +115,7 @@ impl Tpm2Protector {
     }
 
     /// Wraps `prot_key` with `pass`. This generates a new random Salt.
-    fn wrap_key(&mut self, path: &str, prot_key: ProtectorKey, pass: &[u8]) -> Result<()> {
+    pub fn wrap_key(&mut self, path: &str, prot_key: ProtectorKey, pass: &[u8]) -> Result<()> {
         let mut ctx = Context::new(TctiNameConf::Device(
             DeviceConfig::from_str(path)?
         )).map_err(|_| anyhow!("Unable to access the TPM at {}", path))?;
@@ -148,16 +148,6 @@ impl Tpm2Protector {
         };
         let raw_data : &[u8; 32] = data.value().try_into()?;
         Ok(Some(ProtectorKey::from(raw_data)))
-    }
-
-    /// Changes the password of this protector
-    pub fn change_pass(&mut self, pass: &[u8], newpass: &[u8]) -> bool {
-        if let Ok(Some(prot_key)) = self.unwrap_key(pass) {
-            let opts = Tpm2Opts::default();
-            // TODO propagate the error instead of returning 'false'
-            return self.wrap_key(&opts.path, prot_key, newpass).is_ok();
-        }
-        false
     }
 }
 

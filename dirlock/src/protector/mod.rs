@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use ctr::cipher::{KeyIvInit, StreamCipher};
 use hmac::Mac;
 use opts::ProtectorOpts;
@@ -199,12 +199,16 @@ impl Protector {
         self.unwrap_key(pass).and_then(|k| policy.unwrap_key(k))
     }
 
-    /// Changes the protector's password
-    pub fn change_pass(&mut self, pass: &[u8], newpass: &[u8]) -> bool {
-        match self.data {
-            ProtectorData::Password(ref mut p) => p.change_pass(pass, newpass),
-            ProtectorData::Tpm2(ref mut p) => p.change_pass(pass, newpass),
+    /// Wraps this protector's [`ProtectorKey`] again using a new password
+    pub fn wrap_key(&mut self, key: ProtectorKey, pass: &[u8]) -> Result<()> {
+        if key.get_id() != self.id {
+            bail!("This key doesn't belong to this protector");
         }
+        match self.data {
+            ProtectorData::Password(ref mut p) => p.wrap_key(key, pass),
+            ProtectorData::Tpm2(ref mut p) => p.wrap_key(&opts::Tpm2Opts::default().path, key, pass)?,
+        }
+        Ok(())
     }
 
     /// Gets the name of this protector
