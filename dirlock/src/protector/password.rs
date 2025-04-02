@@ -23,6 +23,9 @@ use crate::{
     },
 };
 
+#[cfg(doc)]
+use crate::protector::Protector;
+
 /// A [`Protector`] that wraps a [`ProtectorKey`] with a password
 #[serde_as]
 #[derive(Serialize, Deserialize, Default)]
