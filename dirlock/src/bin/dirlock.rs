@@ -579,7 +579,7 @@ fn cmd_status(args: &StatusArgs) -> Result<()> {
         Present => "unlocked",
         IncompletelyRemoved => "partially locked",
     };
-    println!("Encrypted, {locked}, key id {}", encrypted_dir.policy.keyid);
+    println!("Encrypted, {locked}, policy {}", encrypted_dir.policy.keyid);
 
     if ! args.verbose {
         return Ok(());
@@ -596,7 +596,11 @@ fn cmd_status(args: &StatusArgs) -> Result<()> {
     }
 
     for p in encrypted_dir.protectors {
-        println!("Protector: {}, type {}", &p.protector.id, p.protector.get_type());
+        print!("Protector: {}, type {}", &p.protector.id, p.protector.get_type());
+        if let Some(name) = p.protector.get_name() {
+            print!(", name: {name}");
+        }
+        println!();
     }
 
     Ok(())
