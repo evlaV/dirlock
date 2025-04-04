@@ -15,6 +15,7 @@ use std::{
 };
 use crate::protector::{Protector, ProtectorId, ProtectedPolicyKey, WrappedPolicyKey};
 use crate::fscrypt::PolicyKeyId;
+use crate::util::SafeFile;
 
 // If this variable is set use this keystore dir instead of the default one
 const KEYSTORE_DIR_ENV_VAR : &str = "DIRLOCK_KEYSTORE";
@@ -107,11 +108,11 @@ pub fn save_protector(prot: &Protector, save: SaveProtector) -> Result<()> {
         (false, SaveProtector::UpdateExisting) => bail!("Trying to update a nonexistent protector"),
         _ => (),
     }
-    // TODO: create a temporary file first, then rename
-    let mut file = fs::File::create(filename)
+    let mut file = SafeFile::create(&filename)
         .map_err(|e| anyhow!("Failed to store protector {}: {e}", prot.id))?;
-    serde_json::to_writer_pretty(&file, &prot.data)?;
+    serde_json::to_writer_pretty(&mut file, &prot.data)?;
     file.write_all(b"\n")?;
+    file.commit()?;
     Ok(())
 }
 
@@ -138,11 +139,11 @@ fn save_policy_map(id: &PolicyKeyId, policy_map: &PolicyMap) -> Result<()> {
     fs::create_dir_all(path)
         .map_err(|e| anyhow!("Failed to create {}: {e}", path.display()))?;
     let filename = path.join(id.to_string());
-    // TODO: create a temporary file first, then rename
-    let mut file = fs::File::create(filename)
+    let mut file = SafeFile::create(&filename)
         .map_err(|e| anyhow!("Failed to store policy key {id}: {e}"))?;
-    serde_json::to_writer_pretty(&file, policy_map)?;
+    serde_json::to_writer_pretty(&mut file, policy_map)?;
     file.write_all(b"\n")?;
+    file.commit()?;
     Ok(())
 }
 
