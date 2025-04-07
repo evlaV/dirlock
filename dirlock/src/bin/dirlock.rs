@@ -42,6 +42,7 @@ enum Command {
     ChangePass(ChangePassArgs),
     AddProtector(AddProtectorArgs),
     RemoveProtector(RemoveProtectorArgs),
+    Policy(PolicyArgs),
     Protector(ProtectorArgs),
     SystemInfo(SystemInfoArgs),
     ExportMasterKey(ExportMasterKeyArgs),
@@ -125,6 +126,26 @@ struct EncryptArgs {
     #[argh(positional)]
     dir: PathBuf,
 }
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "policy")]
+/// Commands to manage encryption policies
+struct PolicyArgs {
+    #[argh(subcommand)]
+    command: PolicyCommand,
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand)]
+enum PolicyCommand {
+    List(PolicyListArgs),
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "list")]
+/// List available encryption policies
+struct PolicyListArgs { }
+
 
 #[derive(FromArgs)]
 #[argh(subcommand, name = "protector")]
@@ -445,6 +466,20 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
     Ok(())
 }
 
+fn cmd_list_policies() -> Result<()> {
+    println!("Policy                              Protectors");
+    println!("----------------------------------------------------");
+    for id in keystore::policy_key_ids()? {
+        let prots = keystore::load_policy_map(&id)?
+            .keys()
+            .map(|prot_id| prot_id.to_string())
+            .collect::<Vec<String>>()
+            .join(", ");
+        println!("{id}    {prots}");
+    }
+    Ok(())
+}
+
 fn cmd_create_protector(args: &ProtectorCreateArgs) -> Result<()> {
     let opts = ProtectorOptsBuilder::new()
         .with_type(Some(args.type_))
@@ -533,16 +568,8 @@ fn cmd_system_info(args: &SystemInfoArgs) -> Result<()> {
         }
     }
 
-    println!("\nPolicy                              Protectors");
-    println!("----------------------------------------------------");
-    for id in keystore::policy_key_ids()? {
-        let prots = keystore::load_policy_map(&id)?
-            .keys()
-            .map(|prot_id| prot_id.to_string())
-            .collect::<Vec<String>>()
-            .join(", ");
-        println!("{id}    {prots}");
-    }
+    println!();
+    cmd_list_policies()?;
 
     println!("\nTPM information\n\
               ---------------\n\
@@ -663,6 +690,9 @@ fn main() -> Result<()> {
         AddProtector(args) => cmd_add_protector(args),
         RemoveProtector(args) => cmd_remove_protector_from_dir(args),
         Encrypt(args) => cmd_encrypt(args),
+        Policy(args) => match &args.command {
+            PolicyCommand::List(_) => cmd_list_policies(),
+        }
         Protector(args) => match &args.command {
             ProtectorCommand::List(_) => display_protector_list(),
             ProtectorCommand::Create(args) => cmd_create_protector(args),
