@@ -137,10 +137,17 @@ struct ProtectorArgs {
 #[derive(FromArgs)]
 #[argh(subcommand)]
 enum ProtectorCommand {
+    List(ProtectorListArgs),
     Create(ProtectorCreateArgs),
+    Remove(ProtectorRemoveArgs),
     VerifyPass(ProtectorVerifyPassArgs),
     ChangePass(ProtectorChangePassArgs),
 }
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "list")]
+/// List available protectors
+struct ProtectorListArgs { }
 
 #[derive(FromArgs)]
 #[argh(subcommand, name = "create")]
@@ -158,6 +165,15 @@ struct ProtectorCreateArgs {
     /// iterations for the key derivation function (default: auto)
     #[argh(option)]
     kdf_iter: Option<NonZeroU32>,
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "remove")]
+/// Remove a protector
+struct ProtectorRemoveArgs {
+    /// ID of the protector to remove
+    #[argh(positional)]
+    protector: Option<String>,
 }
 
 #[derive(FromArgs)]
@@ -230,6 +246,20 @@ fn display_tpm_lockout_counter(protector: &Protector) -> Result<()> {
 
 #[cfg(not(feature = "tpm2"))]
 fn display_tpm_lockout_counter(_protector: &Protector) -> Result<()> {
+    Ok(())
+}
+
+fn display_protector_list() -> Result<()> {
+    println!("Available protectors:");
+    for id in keystore::protector_ids()? {
+        if let Some(prot) = keystore::load_protector(id)? {
+            print!("{}, type {}", prot.id, prot.get_type());
+            if let Some(name) = prot.get_name() {
+                print!(", name: {name}");
+            }
+            println!();
+        }
+    }
     Ok(())
 }
 
@@ -332,7 +362,7 @@ fn cmd_add_protector(args: &AddProtectorArgs) -> Result<()> {
     dirlock::wrap_and_save_policy_key(protector_key, policy_key)
 }
 
-fn cmd_remove_protector(args: &RemoveProtectorArgs) -> Result<()> {
+fn cmd_remove_protector_from_dir(args: &RemoveProtectorArgs) -> Result<()> {
     let encrypted_dir = match dirlock::open_dir(&args.dir)? {
         DirStatus::Encrypted(d) => d,
         x => bail!("{}", x),
@@ -431,16 +461,30 @@ fn cmd_create_protector(args: &ProtectorCreateArgs) -> Result<()> {
     Ok(())
 }
 
-fn do_change_verify_protector_password(protector_id: &Option<String>, verify_only: bool) -> Result<()> {
-    let Some(id_str) = protector_id else {
-        eprintln!("You must specify the ID of the protector.");
-        eprintln!("Available protectors:");
-        for id in dirlock::keystore::protector_ids()? {
-            if let Some(prot) = dirlock::keystore::load_protector(id)? {
-                eprintln!("{}, type {}", prot.id, prot.get_type());
+fn cmd_remove_protector(args: &ProtectorRemoveArgs) -> Result<()> {
+    let Some(id_str) = &args.protector else {
+        println!("You must specify the ID of the protector.");
+        return display_protector_list()
+    };
+    let protector = dirlock::get_protector_by_str(id_str)?;
+    if keystore::remove_protector_if_unused(&protector.id)? {
+        println!("Protector {id_str} removed");
+    } else {
+        eprintln!("Cannot remove protector {id_str}, used by the following policies:");
+        for policy_id in keystore::policy_key_ids()? {
+            if keystore::load_policy_map(&policy_id)?.contains_key(&protector.id) {
+                println!("{policy_id}");
             }
         }
-        return Ok(());
+    }
+
+    Ok(())
+}
+
+fn do_change_verify_protector_password(protector_id: &Option<String>, verify_only: bool) -> Result<()> {
+    let Some(id_str) = protector_id else {
+        println!("You must specify the ID of the protector.");
+        return display_protector_list()
     };
     let mut protector = dirlock::get_protector_by_str(id_str)?;
     display_tpm_lockout_counter(&protector)?;
@@ -617,10 +661,12 @@ fn main() -> Result<()> {
         Unlock(args) => cmd_unlock(args),
         ChangePass(args) => cmd_change_pass(args),
         AddProtector(args) => cmd_add_protector(args),
-        RemoveProtector(args) => cmd_remove_protector(args),
+        RemoveProtector(args) => cmd_remove_protector_from_dir(args),
         Encrypt(args) => cmd_encrypt(args),
         Protector(args) => match &args.command {
+            ProtectorCommand::List(_) => display_protector_list(),
             ProtectorCommand::Create(args) => cmd_create_protector(args),
+            ProtectorCommand::Remove(args) => cmd_remove_protector(args),
             ProtectorCommand::VerifyPass(args) => cmd_verify_protector(args),
             ProtectorCommand::ChangePass(args) => cmd_change_protector_pass(args),
         },
