@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use dirlock::{
     DirStatus,
     fscrypt,
+    keystore,
     protector::{
         Protector,
         ProtectorType,
@@ -480,8 +481,8 @@ fn cmd_system_info(args: &SystemInfoArgs) -> Result<()> {
 
     println!("{:16}    {:8}    Name", "Protector", "Type");
     println!("--------------------------------------");
-    for id in dirlock::keystore::protector_ids()? {
-        if let Some(prot) = dirlock::keystore::load_protector(id)? {
+    for id in keystore::protector_ids()? {
+        if let Some(prot) = keystore::load_protector(id)? {
             println!("{:16}    {:8}    {}", prot.id,
                      prot.get_type().to_string(),
                      prot.get_name().unwrap_or("(none)"));
@@ -490,8 +491,8 @@ fn cmd_system_info(args: &SystemInfoArgs) -> Result<()> {
 
     println!("\nPolicy                              Protectors");
     println!("----------------------------------------------------");
-    for id in dirlock::keystore::policy_key_ids()? {
-        let prots = dirlock::keystore::load_policy_map(&id)?
+    for id in keystore::policy_key_ids()? {
+        let prots = keystore::load_policy_map(&id)?
             .keys()
             .map(|prot_id| prot_id.to_string())
             .collect::<Vec<String>>()
@@ -549,7 +550,7 @@ fn cmd_import_master_key() -> Result<()> {
     }
     let keyid = master_key.get_id();
 
-    if ! dirlock::keystore::get_protectors_for_policy(&keyid)?.is_empty() {
+    if ! keystore::get_protectors_for_policy(&keyid)?.is_empty() {
         bail!("This key has already been imported");
     }
 
