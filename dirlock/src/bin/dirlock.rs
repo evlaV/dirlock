@@ -265,8 +265,45 @@ fn display_tpm_lockout_counter(protector: &Protector) -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "tpm2")]
+fn display_tpm_information(tpm2_device: &Option<PathBuf>) -> Result<()> {
+    let ProtectorOpts::Tpm2(opts) = ProtectorOptsBuilder::new()
+        .with_type(Some(ProtectorType::Tpm2))
+        .with_tpm2_device(tpm2_device.clone())
+        .build()?
+    else {
+        unreachable!(); // We only build tpm2 opts here
+    };
+
+    let Ok(status) = dirlock::protector::tpm2::get_status(opts) else {
+        println!("TPM not found");
+        return Ok(());
+    };
+
+    println!("TPM information\n\
+              ---------------\n\
+              Device: {}\n\
+              Manufacturer: {}\n\
+              Locked: {} (failed auth attempts: {} / {})\n\
+              Lockout counter decreased every {} seconds",
+              status.path,
+              status.manufacturer,
+              if status.in_lockout { "yes" } else { "no" },
+              status.lockout_counter,
+              status.max_auth_fail,
+              status.lockout_interval);
+
+    Ok(())
+}
+
 #[cfg(not(feature = "tpm2"))]
 fn display_tpm_lockout_counter(_protector: &Protector) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(not(feature = "tpm2"))]
+fn display_tpm_information(_tpm2_device: &Option<PathBuf>) -> Result<()> {
+    println!("TPM support not enabled");
     Ok(())
 }
 
@@ -546,18 +583,6 @@ fn cmd_change_protector_pass(args: &ProtectorChangePassArgs) -> Result<()> {
 }
 
 fn cmd_system_info(args: &SystemInfoArgs) -> Result<()> {
-    let ProtectorOpts::Tpm2(opts) = ProtectorOptsBuilder::new()
-        .with_type(Some(ProtectorType::Tpm2))
-        .with_tpm2_device(args.tpm2_device.clone())
-        .build()?
-    else {
-        unreachable!(); // We only build tpm2 opts here
-    };
-
-    let tpm_status = dirlock::protector::tpm2::get_status(opts)
-        .map(|s| s.to_string())
-        .unwrap_or_else(|_| String::from("TPM not found"));
-
     println!("{:16}    {:8}    Name", "Protector", "Type");
     println!("--------------------------------------");
     for id in keystore::protector_ids()? {
@@ -571,9 +596,8 @@ fn cmd_system_info(args: &SystemInfoArgs) -> Result<()> {
     println!();
     cmd_list_policies()?;
 
-    println!("\nTPM information\n\
-              ---------------\n\
-              {tpm_status}");
+    println!();
+    display_tpm_information(&args.tpm2_device)?;
 
     Ok(())
 }

@@ -14,7 +14,7 @@ use {
     anyhow::anyhow,
     crate::kdf::Pbkdf2,
     rand::{RngCore, rngs::OsRng},
-    std::{fmt, str::FromStr},
+    std::str::FromStr,
     tss_esapi::{
         Context,
         TctiNameConf,
@@ -308,22 +308,6 @@ pub struct TpmStatus {
 }
 
 #[cfg(feature = "tpm2")]
-impl fmt::Display for TpmStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Device: {}\n\
-                   Manufacturer: {}\n\
-                   Locked: {} (failed auth attempts: {} / {})\n\
-                   Lockout counter decreased every {} seconds",
-               self.path,
-               self.manufacturer,
-               if self.in_lockout { "yes" } else { "no" },
-               self.lockout_counter,
-               self.max_auth_fail,
-               self.lockout_interval)
-    }
-}
-
-#[cfg(feature = "tpm2")]
 pub fn get_status(opts: Tpm2Opts) -> Result<TpmStatus> {
     use PropertyTag::*;
 
@@ -363,9 +347,4 @@ pub fn get_status(opts: Tpm2Opts) -> Result<TpmStatus> {
     }
 
     Err(anyhow!("Error getting the status of the TPM"))
-}
-
-#[cfg(not(feature = "tpm2"))]
-pub fn get_status(_opts: Tpm2Opts) -> Result<&'static str> {
-    Ok("TPM support not enabled")
 }
