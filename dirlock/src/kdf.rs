@@ -31,7 +31,7 @@ impl Kdf {
 }
 
 
-/// The PBKDF2 key derivation function using.
+/// The PBKDF2 key derivation function.
 ///
 /// This uses HMAC-SHA512 as its pseudorandom function.
 #[derive(Serialize, Deserialize)]
