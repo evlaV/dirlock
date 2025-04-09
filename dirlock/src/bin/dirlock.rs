@@ -139,6 +139,7 @@ struct PolicyArgs {
 #[argh(subcommand)]
 enum PolicyCommand {
     List(PolicyListArgs),
+    Create(PolicyCreateArgs),
 }
 
 #[derive(FromArgs)]
@@ -146,6 +147,14 @@ enum PolicyCommand {
 /// List available encryption policies
 struct PolicyListArgs { }
 
+#[derive(FromArgs)]
+#[argh(subcommand, name = "create")]
+/// Create a new encryption policy
+struct PolicyCreateArgs {
+    /// ID of the protector to use for the new policy
+    #[argh(option)]
+    protector: Option<String>,
+}
 
 #[derive(FromArgs)]
 #[argh(subcommand, name = "protector")]
@@ -517,6 +526,23 @@ fn cmd_list_policies() -> Result<()> {
     Ok(())
 }
 
+fn cmd_create_policy(args: &PolicyCreateArgs) -> Result<()> {
+    let Some(id_str) = &args.protector else {
+        println!("You must specify the ID of the protector.");
+        return display_protector_list()
+    };
+    let protector = dirlock::get_protector_by_str(id_str)?;
+    let pass = read_password("Enter password for the protector", ReadPassword::Once)?;
+    let Some(protector_key) = protector.unwrap_key(pass.as_bytes()) else {
+        bail!("Invalid password for protector {id_str}");
+    };
+    let policy_key = fscrypt::PolicyKey::new_random();
+    let policy_id = policy_key.get_id();
+    dirlock::wrap_and_save_policy_key(protector_key, policy_key)?;
+    println!("Created encryption policy {policy_id}");
+    Ok(())
+}
+
 fn cmd_create_protector(args: &ProtectorCreateArgs) -> Result<()> {
     let opts = ProtectorOptsBuilder::new()
         .with_type(Some(args.type_))
@@ -716,6 +742,7 @@ fn main() -> Result<()> {
         Encrypt(args) => cmd_encrypt(args),
         Policy(args) => match &args.command {
             PolicyCommand::List(_) => cmd_list_policies(),
+            PolicyCommand::Create(args) => cmd_create_policy(args),
         }
         Protector(args) => match &args.command {
             ProtectorCommand::List(_) => display_protector_list(),
