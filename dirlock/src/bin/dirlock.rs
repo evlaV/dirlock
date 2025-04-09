@@ -140,6 +140,7 @@ struct PolicyArgs {
 enum PolicyCommand {
     List(PolicyListArgs),
     Create(PolicyCreateArgs),
+    Remove(PolicyRemoveArgs),
 }
 
 #[derive(FromArgs)]
@@ -154,6 +155,18 @@ struct PolicyCreateArgs {
     /// ID of the protector to use for the new policy
     #[argh(option)]
     protector: Option<String>,
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "remove")]
+/// Permanently remove an encryption policy
+struct PolicyRemoveArgs {
+    /// ID of the policy to remove
+    #[argh(option)]
+    policy: Option<String>,
+    /// remove a policy without asking for confirmation
+    #[argh(switch, long = "force")]
+    force: bool,
 }
 
 #[derive(FromArgs)]
@@ -543,6 +556,43 @@ fn cmd_create_policy(args: &PolicyCreateArgs) -> Result<()> {
     Ok(())
 }
 
+fn cmd_remove_policy(args: &PolicyRemoveArgs) -> Result<()> {
+    let Some(id_str) = &args.policy else {
+        println!("You must specify the ID of the policy.");
+        return cmd_list_policies();
+    };
+    let policy_id = fscrypt::PolicyKeyId::try_from(id_str.as_str())?;
+    if keystore::load_policy_map(&policy_id)?.is_empty() {
+        bail!("Encryption policy {id_str} not found");
+    }
+    if ! args.force {
+        print!("You are about to delete all data from the encryption\n\
+                policy {id_str}\n\
+                \n\
+                This operation is irreversible, and unless you have a backup\n\
+                of the policy and all its associated data you will no longer\n\
+                be able to unlock any directory encrypted with it.\n\
+                \n\
+                Are you sure that you want to proceed? (yes / NO) ");
+        loop {
+            io::stdout().flush()?;
+            let mut s = String::new();
+            io::stdin().read_line(&mut s)?;
+            match s.trim_end() {
+                "yes" => break,
+                "y" => eprint!("Please type 'yes' if you want to proceed: "),
+                _ => {
+                    println!("Operation cancelled");
+                    return Ok(());
+                }
+            }
+        }
+    }
+    keystore::remove_policy(&policy_id)?;
+    println!("Encryption policy {id_str} removed successfully");
+    Ok(())
+}
+
 fn cmd_create_protector(args: &ProtectorCreateArgs) -> Result<()> {
     let opts = ProtectorOptsBuilder::new()
         .with_type(Some(args.type_))
@@ -743,6 +793,7 @@ fn main() -> Result<()> {
         Policy(args) => match &args.command {
             PolicyCommand::List(_) => cmd_list_policies(),
             PolicyCommand::Create(args) => cmd_create_policy(args),
+            PolicyCommand::Remove(args) => cmd_remove_policy(args),
         }
         Protector(args) => match &args.command {
             ProtectorCommand::List(_) => display_protector_list(),

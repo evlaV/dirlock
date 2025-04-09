@@ -192,3 +192,14 @@ pub fn get_protectors_for_policy(id: &PolicyKeyId) -> Result<Vec<ProtectedPolicy
     }
     Ok(result)
 }
+
+/// Remove an encryption policy permanently from disk
+pub fn remove_policy(id: &PolicyKeyId) -> Result<()> {
+    let dir = &keystore_dirs().policies;
+    let policy_file = dir.join(id.to_string());
+    if !dir.exists() || !policy_file.exists() {
+        bail!("Policy not found");
+    }
+    fs::remove_file(policy_file)?;
+    Ok(())
+}
