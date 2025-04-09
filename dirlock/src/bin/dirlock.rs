@@ -202,7 +202,7 @@ struct ProtectorCreateArgs {
 /// Remove a protector
 struct ProtectorRemoveArgs {
     /// ID of the protector to remove
-    #[argh(positional)]
+    #[argh(option)]
     protector: Option<String>,
 }
 
@@ -211,7 +211,7 @@ struct ProtectorRemoveArgs {
 /// Verify a protector's password
 struct ProtectorVerifyPassArgs {
     /// ID of the protector to verify
-    #[argh(positional)]
+    #[argh(option)]
     protector: Option<String>,
 }
 
@@ -220,7 +220,7 @@ struct ProtectorVerifyPassArgs {
 /// Change a protector's password
 struct ProtectorChangePassArgs {
     /// ID of the protector
-    #[argh(positional)]
+    #[argh(option)]
     protector: Option<String>,
 }
 
