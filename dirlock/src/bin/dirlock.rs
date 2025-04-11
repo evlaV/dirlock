@@ -4,14 +4,17 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use argh::FromArgs;
 use std::io::{self, Write};
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 use dirlock::{
     DirStatus,
-    fscrypt,
+    fscrypt::{
+        PolicyKeyId,
+        self,
+    },
     keystore,
     protector::{
         Protector,
@@ -141,6 +144,7 @@ enum PolicyCommand {
     List(PolicyListArgs),
     Create(PolicyCreateArgs),
     Remove(PolicyRemoveArgs),
+    AddProtector(PolicyAddProtectorArgs),
 }
 
 #[derive(FromArgs)]
@@ -167,6 +171,21 @@ struct PolicyRemoveArgs {
     /// remove a policy without asking for confirmation
     #[argh(switch, long = "force")]
     force: bool,
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "add-protector")]
+/// Add a protector to an existing encryption policy
+struct PolicyAddProtectorArgs {
+    /// ID of the policy to modify
+    #[argh(option)]
+    policy: Option<String>,
+    /// ID of the protector to add
+    #[argh(option)]
+    protector: Option<String>,
+    /// ID of the protector used to unlock the policy
+    #[argh(option)]
+    unlock_with: Option<String>,
 }
 
 #[derive(FromArgs)]
@@ -561,7 +580,7 @@ fn cmd_remove_policy(args: &PolicyRemoveArgs) -> Result<()> {
         println!("You must specify the ID of the policy.");
         return cmd_list_policies();
     };
-    let policy_id = fscrypt::PolicyKeyId::try_from(id_str.as_str())?;
+    let policy_id = PolicyKeyId::try_from(id_str.as_str())?;
     if keystore::load_policy_map(&policy_id)?.is_empty() {
         bail!("Encryption policy {id_str} not found");
     }
@@ -590,6 +609,55 @@ fn cmd_remove_policy(args: &PolicyRemoveArgs) -> Result<()> {
     }
     keystore::remove_policy(&policy_id)?;
     println!("Encryption policy {id_str} removed successfully");
+    Ok(())
+}
+
+fn cmd_policy_add_protector(args: &PolicyAddProtectorArgs) -> Result<()> {
+    let policy_id = if let Some(s) = &args.policy {
+        PolicyKeyId::try_from(s.as_str())?
+    } else {
+        bail!("You must specify the ID of the encryption policy.");
+    };
+    let protector = if let Some(s) = &args.protector {
+        dirlock::get_protector_by_str(s)?
+    } else {
+        bail!("You must specify the ID of the protector to add.");
+    };
+
+    let policy_map = keystore::load_policy_map(&policy_id)?;
+    if policy_map.is_empty() {
+        bail!("Policy {policy_id} not found");
+    }
+    if policy_map.contains_key(&protector.id) {
+        bail!("Policy {policy_id} is already protected with protector {}", protector.id);
+    }
+
+    let unlock_with = if let Some(s) = &args.unlock_with {
+        dirlock::get_protector_by_str(s)?
+    } else if policy_map.len() == 1 {
+        let id = policy_map.keys().next().unwrap();
+        keystore::load_protector(id.clone())?
+            .ok_or_else(|| anyhow!("Error reading protector {id}"))?
+    } else {
+        bail!("You must specify the ID of the protector to unlock this policy.");
+    };
+    let Some(wrapped_policy_key) = policy_map.get(&unlock_with.id) else {
+        bail!("Policy {policy_id} cannot be unlocked with protector {}", unlock_with.id);
+    };
+
+    let pass = read_password("Enter the password of the protector to add", ReadPassword::Once)?;
+    let Some(protector_key) = protector.unwrap_key(pass.as_bytes()) else {
+        bail!("Invalid password");
+    };
+
+    let pass = read_password("Enter the password of the existing protector", ReadPassword::Once)?;
+    let Some(policy_key) = unlock_with.unwrap_policy_key(wrapped_policy_key, pass.as_bytes()) else {
+        bail!("Invalid password");
+    };
+
+    dirlock::wrap_and_save_policy_key(protector_key, policy_key)?;
+    println!("Protector {} added to policy {policy_id}", unlock_with.id);
+
     Ok(())
 }
 
@@ -794,6 +862,7 @@ fn main() -> Result<()> {
             PolicyCommand::List(_) => cmd_list_policies(),
             PolicyCommand::Create(args) => cmd_create_policy(args),
             PolicyCommand::Remove(args) => cmd_remove_policy(args),
+            PolicyCommand::AddProtector(args) => cmd_policy_add_protector(args),
         }
         Protector(args) => match &args.command {
             ProtectorCommand::List(_) => display_protector_list(),
