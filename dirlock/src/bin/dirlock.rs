@@ -145,6 +145,7 @@ enum PolicyCommand {
     Create(PolicyCreateArgs),
     Remove(PolicyRemoveArgs),
     AddProtector(PolicyAddProtectorArgs),
+    RemoveProtector(PolicyRemoveProtectorArgs),
 }
 
 #[derive(FromArgs)]
@@ -186,6 +187,18 @@ struct PolicyAddProtectorArgs {
     /// ID of the protector used to unlock the policy
     #[argh(option)]
     unlock_with: Option<String>,
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "remove-protector")]
+/// Remove a protector from an encryption policy
+struct PolicyRemoveProtectorArgs {
+    /// ID of the policy to modify
+    #[argh(option)]
+    policy: Option<String>,
+    /// ID of the protector to remove
+    #[argh(option)]
+    protector: Option<String>,
 }
 
 #[derive(FromArgs)]
@@ -661,6 +674,35 @@ fn cmd_policy_add_protector(args: &PolicyAddProtectorArgs) -> Result<()> {
     Ok(())
 }
 
+fn cmd_policy_remove_protector(args: &PolicyRemoveProtectorArgs) -> Result<()> {
+    let policy_id = if let Some(s) = &args.policy {
+        PolicyKeyId::try_from(s.as_str())?
+    } else {
+        bail!("You must specify the ID of the encryption policy.");
+    };
+    let protector = if let Some(s) = &args.protector {
+        dirlock::get_protector_by_str(s)?
+    } else {
+        bail!("You must specify the ID of the protector to remove.");
+    };
+
+    let policy_map = keystore::load_policy_map(&policy_id)?;
+    if policy_map.is_empty() {
+        bail!("Policy {policy_id} not found");
+    }
+    if ! policy_map.contains_key(&protector.id) {
+        bail!("Protector {} is not used in this policy", protector.id);
+    }
+    if policy_map.len() == 1 {
+        bail!("Cannot remove the last protector. Use the 'policy remove' command instead.");
+    }
+
+    keystore::remove_protector_from_policy(&policy_id, &protector.id)?;
+    println!("Protector {} remove from policy {policy_id}", protector.id);
+
+    Ok(())
+}
+
 fn cmd_create_protector(args: &ProtectorCreateArgs) -> Result<()> {
     let opts = ProtectorOptsBuilder::new()
         .with_type(Some(args.type_))
@@ -863,6 +905,7 @@ fn main() -> Result<()> {
             PolicyCommand::Create(args) => cmd_create_policy(args),
             PolicyCommand::Remove(args) => cmd_remove_policy(args),
             PolicyCommand::AddProtector(args) => cmd_policy_add_protector(args),
+            PolicyCommand::RemoveProtector(args) => cmd_policy_remove_protector(args),
         }
         Protector(args) => match &args.command {
             ProtectorCommand::List(_) => display_protector_list(),
