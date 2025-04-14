@@ -362,14 +362,13 @@ fn display_tpm_information(_tpm2_device: &Option<PathBuf>) -> Result<()> {
 }
 
 fn display_protector_list() -> Result<()> {
-    println!("Available protectors:");
+    println!("{:16}    {:8}    Name", "Protector", "Type");
+    println!("--------------------------------------");
     for id in keystore::protector_ids()? {
         if let Some(prot) = keystore::load_protector(id)? {
-            print!("{}, type {}", prot.id, prot.get_type());
-            if let Some(name) = prot.get_name() {
-                print!(", name: {name}");
-            }
-            println!();
+            println!("{:16}    {:8}    {}", prot.id,
+                     prot.get_type().to_string(),
+                     prot.get_name().unwrap_or("(none)"));
         }
     }
     Ok(())
@@ -769,15 +768,7 @@ fn cmd_change_protector_pass(args: &ProtectorChangePassArgs) -> Result<()> {
 }
 
 fn cmd_system_info(args: &SystemInfoArgs) -> Result<()> {
-    println!("{:16}    {:8}    Name", "Protector", "Type");
-    println!("--------------------------------------");
-    for id in keystore::protector_ids()? {
-        if let Some(prot) = keystore::load_protector(id)? {
-            println!("{:16}    {:8}    {}", prot.id,
-                     prot.get_type().to_string(),
-                     prot.get_name().unwrap_or("(none)"));
-        }
-    }
+    display_protector_list()?;
 
     println!();
     cmd_list_policies()?;
