@@ -142,23 +142,25 @@ impl EncryptedDir {
             .map_err(|e|anyhow!("Unable to lock directory: {e}"))
     }
 
+    /// Finds a protector using its ID
+    pub fn get_protector_by_id(&self, id: &ProtectorId) -> Option<&Protector> {
+        self.protectors.iter()
+            .find_map(|p| if &p.protector.id == id { Some(&p.protector) } else { None })
+    }
+
     /// Finds a protector that can be unlocked with the given password
-    pub fn get_protector_id_by_pass(&self, pass: &[u8]) -> Result<ProtectorId> {
-        for p in &self.protectors {
-            if p.protector.unwrap_key(pass).is_some() {
-                return Ok(p.protector.id.clone());
-            }
-        }
-        bail!("No protector found with that password in the directory");
+    pub fn get_protector_id_by_pass(&self, pass: &[u8]) -> Result<&ProtectorId> {
+        self.protectors.iter().find(|p| p.protector.unwrap_key(pass).is_some())
+            .map(|p| &p.protector.id)
+            .ok_or_else(|| anyhow!("No protector found with that password in the directory"))
     }
 
     /// Find a protector using its ID in string form
-    pub fn get_protector_id_by_str(&self, id_str: impl AsRef<str>) -> Result<ProtectorId> {
+    pub fn get_protector_id_by_str(&self, id_str: impl AsRef<str>) -> Result<&ProtectorId> {
         let id = ProtectorId::try_from(id_str.as_ref())?;
-        if !self.protectors.iter().any(|p| p.protector.id == id) {
-            bail!("No protector found with that ID in the directory");
-        }
-        Ok(id)
+        self.protectors.iter().find(|p| p.protector.id == id)
+            .map(|p| &p.protector.id)
+            .ok_or_else(|| anyhow!("No protector found with that ID in the directory"))
     }
 
     /// Changes the password of a protector used to lock this directory

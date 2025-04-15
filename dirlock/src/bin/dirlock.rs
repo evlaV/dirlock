@@ -361,17 +361,30 @@ fn display_tpm_information(_tpm2_device: &Option<PathBuf>) -> Result<()> {
     Ok(())
 }
 
-fn display_protector_list() -> Result<()> {
+fn do_display_protector_list(list: Vec<&Protector>) {
     println!("{:16}    {:8}    Name", "Protector", "Type");
     println!("--------------------------------------");
+    for prot in list {
+        println!("{:16}    {:8}    {}", prot.id,
+                 prot.get_type().to_string(),
+                 prot.get_name().unwrap_or("(none)"));
+    }
+}
+
+fn display_protector_list() -> Result<()> {
+    let mut list = vec![];
     for id in keystore::protector_ids()? {
         if let Some(prot) = keystore::load_protector(id)? {
-            println!("{:16}    {:8}    {}", prot.id,
-                     prot.get_type().to_string(),
-                     prot.get_name().unwrap_or("(none)"));
+            list.push(prot);
         }
     }
+    do_display_protector_list(list.iter().collect());
     Ok(())
+}
+
+fn display_protectors_from_dir(dir: &dirlock::EncryptedDir) {
+    let list = dir.protectors.iter().map(|p| &p.protector).collect();
+    do_display_protector_list(list);
 }
 
 fn cmd_lock(args: &LockArgs) -> Result<()> {
@@ -415,7 +428,7 @@ fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
 
     let pass = read_password("Enter encryption password", ReadPassword::Once)?;
 
-    if ! encrypted_dir.unlock(pass.as_bytes(), protector_id.as_ref())? {
+    if ! encrypted_dir.unlock(pass.as_bytes(), protector_id)? {
         bail!("Unable to unlock directory {}: wrong password", args.dir.display())
     }
 
@@ -423,30 +436,25 @@ fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
 }
 
 fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
-    let mut encrypted_dir = match dirlock::open_dir(&args.dir)? {
+    let encrypted_dir = match dirlock::open_dir(&args.dir)? {
         DirStatus::Encrypted(d) => d,
         x => bail!("{}", x),
     };
 
     let protector_id = match &args.protector {
-        Some(id_str) => Some(encrypted_dir.get_protector_id_by_str(id_str)?),
-        None => None
+        Some(id_str) => encrypted_dir.get_protector_id_by_str(id_str)?,
+        None => {
+            if encrypted_dir.protectors.len() == 1 {
+                &encrypted_dir.protectors[0].protector.id
+            } else {
+                println!("This directory has multiple protectors, you must select one.");
+                display_protectors_from_dir(&encrypted_dir);
+                bail!("Protector not specified");
+            }
+        },
     };
 
-    let pass = read_password("Enter the current password", ReadPassword::Once)?;
-    if ! encrypted_dir.check_pass(pass.as_bytes(), protector_id.as_ref()) {
-        bail!("Password not valid for directory {}", args.dir.display())
-    }
-
-    let npass = read_password("Enter the new password", ReadPassword::Twice)?;
-    if pass == npass {
-        bail!("The old and new passwords are identical");
-    }
-    if ! encrypted_dir.change_password(pass.as_bytes(), npass.as_bytes(), protector_id.as_ref())? {
-        bail!("Unable to change the password for directory {}", args.dir.display())
-    }
-
-    Ok(())
+    do_change_verify_protector_password(&Some(protector_id.to_string()), false)
 }
 
 fn cmd_add_protector(args: &AddProtectorArgs) -> Result<()> {
@@ -491,7 +499,7 @@ fn cmd_remove_protector_from_dir(args: &RemoveProtectorArgs) -> Result<()> {
         }
     };
 
-    if encrypted_dir.remove_protector(&protector_id)? {
+    if encrypted_dir.remove_protector(protector_id)? {
         println!("Removed protector {protector_id}");
     } else {
         bail!("Protector {protector_id} not found in directory {}", args.dir.display());
@@ -745,7 +753,7 @@ fn do_change_verify_protector_password(protector_id: &Option<String>, verify_onl
     };
     let mut protector = dirlock::get_protector_by_str(id_str)?;
     display_tpm_lockout_counter(&protector)?;
-    let pass = read_password("Enter the password of the protector", ReadPassword::Once)?;
+    let pass = read_password("Enter the current password", ReadPassword::Once)?;
     let Some(protector_key) = protector.unwrap_key(pass.as_bytes()) else {
         bail!("Invalid password");
     };
