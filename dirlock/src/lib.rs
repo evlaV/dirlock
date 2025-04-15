@@ -5,6 +5,7 @@
  */
 
 pub mod convert;
+pub(crate) mod crypto;
 pub mod fscrypt;
 pub mod kdf;
 pub mod keystore;

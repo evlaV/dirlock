@@ -5,17 +5,17 @@
  */
 
 use anyhow::{anyhow, bail, Result};
-use ctr::cipher::{KeyIvInit, StreamCipher};
-use hmac::Mac;
 use opts::ProtectorOpts;
-use rand::{RngCore, rngs::OsRng};
 use serde::{Serialize, Deserialize};
-use serde_with::{serde_as, hex::Hex, base64::Base64};
-use sha2::{Digest, Sha256, Sha512};
+use serde_with::{serde_as, hex::Hex};
+use sha2::{Digest, Sha512};
 use std::fmt;
 
+use crate::crypto::{
+    Aes256Key,
+    Salt,
+};
 use crate::fscrypt::PolicyKey;
-use crate::kdf::Kdf;
 
 pub use password::PasswordProtector as PasswordProtector;
 pub use tpm2::Tpm2Protector as Tpm2Protector;
@@ -27,45 +27,32 @@ pub mod opts;
 
 const PROTECTOR_KEY_LEN: usize = 32;
 const PROTECTOR_ID_LEN: usize = 8;
-const AES_IV_LEN: usize = 16;
-const HMAC_LEN: usize = 32;
-const SALT_LEN: usize = 32;
 
 /// A raw encryption key used to unwrap the master [`PolicyKey`]
 /// used by fscrypt.
-#[derive(Default, zeroize::ZeroizeOnDrop, Clone)]
-pub struct ProtectorKey(Box<[u8; PROTECTOR_KEY_LEN]>);
-type Aes256Key = ProtectorKey;
+#[derive(Clone)]
+pub struct ProtectorKey(Aes256Key);
 
 impl From<&[u8; PROTECTOR_KEY_LEN]> for ProtectorKey {
     fn from(src: &[u8; PROTECTOR_KEY_LEN]) -> Self {
-        ProtectorKey(Box::new(*src))
+        ProtectorKey(Aes256Key::from(src))
     }
 }
 
 impl ProtectorKey {
     /// Return a reference to the data
     pub fn secret(&self) -> &[u8; PROTECTOR_KEY_LEN] {
-        self.0.as_ref()
+        self.0.secret()
     }
 
     /// Return a mutable reference to the data
     pub fn secret_mut(&mut self) -> &mut [u8; PROTECTOR_KEY_LEN] {
-        self.0.as_mut()
+        self.0.secret_mut()
     }
 
     /// Generates a new, random key
     pub fn new_random() -> Self {
-        let mut key = ProtectorKey::default();
-        OsRng.fill_bytes(key.secret_mut());
-        key
-    }
-
-    /// Generates a new key from `pass` and `salt` using a KDF
-    pub(self) fn new_from_password(pass: &[u8], salt: &Salt, kdf: &Kdf) -> Self {
-        let mut key = ProtectorKey::default();
-        kdf.derive(pass, &salt.0, key.secret_mut());
-        key
+        ProtectorKey(Aes256Key::new_random())
     }
 
     /// Calculates the ID of this key
@@ -96,27 +83,6 @@ impl std::str::FromStr for ProtectorId {
     }
 }
 
-
-#[serde_as]
-#[derive(Default, Serialize, Deserialize)]
-struct AesIv(
-    #[serde_as(as = "Base64")]
-    [u8; AES_IV_LEN]
-);
-
-#[serde_as]
-#[derive(PartialEq, Default, Serialize, Deserialize)]
-struct Hmac(
-    #[serde_as(as = "Base64")]
-    [u8; HMAC_LEN]
-);
-
-#[serde_as]
-#[derive(Default, Serialize, Deserialize)]
-struct Salt(
-    #[serde_as(as = "Base64")]
-    [u8; SALT_LEN]
-);
 
 /// A wrapped [`PolicyKey`] together with a [`Protector`] that can unwrap it
 pub struct ProtectedPolicyKey {
@@ -233,58 +199,11 @@ impl Protector {
 }
 
 
-/// Stretches a 256-bit key into two new keys of the same size using HKDF
-fn stretch_key<'a>(key: &Aes256Key, buffer: &'a mut [u8; 64]) -> (&'a [u8; 32], &'a [u8; 32]) {
-    // Run HKDF-expand to get a 512-bit key
-    let hkdf = hkdf::Hkdf::<sha2::Sha256>::new(None, key.secret());
-    hkdf.expand(&[], buffer).unwrap();
-    // Split the generated key in two
-    let k1 : &[u8; 32] = buffer[ 0..32].try_into().unwrap();
-    let k2 : &[u8; 32] = buffer[32..64].try_into().unwrap();
-    (k1, k2)
-}
-
-/// Decrypts `data` using `key` and `iv`, returns whether the HMAC is valid
-fn aes_dec(key: &Aes256Key, iv: &AesIv, expected_hmac: &Hmac, data: &mut [u8]) -> bool {
-    // Stretch the original key to get the encryption and authentication keys
-    let mut buffer = zeroize::Zeroizing::new([0u8; 64]);
-    let (enc_key, auth_key) = stretch_key(key, &mut buffer);
-
-    // Calculate the MAC of the encrypted data and return if it's not correct
-    let mut mac = hmac::Hmac::<Sha256>::new_from_slice(auth_key).unwrap();
-    mac.update(&iv.0);
-    mac.update(data);
-    if hmac::digest::CtOutput::new(expected_hmac.0.into()) != mac.finalize() {
-        return false;
-    }
-
-    // Decrypt the data
-    let mut cipher = ctr::Ctr128BE::<aes::Aes256>::new(enc_key.into(), &iv.0.into());
-    cipher.apply_keystream(data);
-    true
-}
-
-/// Encrypts `data` using `key` and `iv`, returns an Hmac
-fn aes_enc(key: &Aes256Key, iv: &AesIv, data: &mut [u8]) -> Hmac {
-    // Stretch the original key to get the encryption and the authentication key
-    let mut buffer = zeroize::Zeroizing::new([0u8; 64]);
-    let (enc_key, auth_key) = stretch_key(key, &mut buffer);
-
-    // Encrypt the data
-    let mut cipher = ctr::Ctr128BE::<aes::Aes256>::new(enc_key.into(), &iv.0.into());
-    cipher.apply_keystream(data);
-
-    // Calculate the MAC of the encrypted data and return it
-    let mut mac = hmac::Hmac::<Sha256>::new_from_slice(auth_key).unwrap();
-    mac.update(&iv.0);
-    mac.update(data);
-    Hmac(mac.finalize().into_bytes().into())
-}
-
-
 #[cfg(test)]
 mod tests {
+    use crate::crypto::{AesIv, Hmac};
     use crate::fscrypt::PolicyKeyId;
+    use serde_with::{serde_as, base64::Base64};
     use super::*;
 
     // This is a helper type since ProtectorKey does not have a serializer
@@ -378,13 +297,13 @@ mod tests {
             // Start with the wrapped key
             let mut data = BitArray256(wrapped_key.0);
             // Unwrap it and validate the HMAC
-            assert!(aes_dec(&enc_key, &aes_iv, &hmac, &mut data.0), "HMAC validation failed");
+            assert!(enc_key.decrypt(&aes_iv, &hmac, &mut data.0), "HMAC validation failed");
             // Check the key we just unwrapped
             assert_eq!(data, unwrapped_key, "Unwrapped key doesn't match the expected value");
             // Check the key ID
             assert_eq!(ProtectorKey::from(&data.0).get_id().0, protector_id.0, "Protector ID doesn't match the expected value");
             // Wrap the key again and validate the HMAC
-            assert_eq!(aes_enc(&enc_key, &aes_iv, &mut data.0).0, hmac.0, "HMAC validation failed");
+            assert_eq!(enc_key.encrypt(&aes_iv, &mut data.0).0, hmac.0, "HMAC validation failed");
             // Check the key we just wrapped
             assert_eq!(data, wrapped_key, "Wrapped key doesn't match the expected value");
         }
@@ -405,13 +324,13 @@ mod tests {
             // Start with the wrapped key
             let mut data = BitArray512(wrapped_key.0);
             // Unwrap it and validate the HMAC
-            assert!(aes_dec(&enc_key, &aes_iv, &hmac, &mut data.0), "HMAC validation failed");
+            assert!(enc_key.decrypt(&aes_iv, &hmac, &mut data.0), "HMAC validation failed");
             // Check the key we just unwrapped
             assert_eq!(data, unwrapped_key, "Unwrapped key doesn't match the expected value");
             // Check the key ID
             assert_eq!(PolicyKey::from(&data.0).get_id(), policy_id, "Policy ID doesn't match the expected value");
             // Wrap the key again and validate the HMAC
-            assert_eq!(aes_enc(&enc_key, &aes_iv, &mut data.0).0, hmac.0, "HMAC validation failed");
+            assert_eq!(enc_key.encrypt(&aes_iv, &mut data.0).0, hmac.0, "HMAC validation failed");
             // Check the key we just wrapped
             assert_eq!(data, wrapped_key, "Wrapped key doesn't match the expected value");
         }

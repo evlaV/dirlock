@@ -10,15 +10,15 @@ use serde_with::{serde_as, base64::Base64};
 use crate::kdf::{Kdf, Pbkdf2};
 
 use crate::{
-    protector::{
+    crypto::{
         Aes256Key,
         AesIv,
         Hmac,
-        ProtectorKey,
         Salt,
+    },
+    protector::{
+        ProtectorKey,
         PROTECTOR_KEY_LEN,
-        aes_dec,
-        aes_enc,
         opts::PasswordOpts,
     },
 };
@@ -58,7 +58,7 @@ impl PasswordProtector {
         OsRng.fill_bytes(&mut self.iv.0);
         OsRng.fill_bytes(&mut self.salt.0);
         let enc_key = Aes256Key::new_from_password(pass, &self.salt, &self.kdf);
-        self.hmac = aes_enc(&enc_key, &self.iv, prot_key.secret_mut());
+        self.hmac = enc_key.encrypt(&self.iv, prot_key.secret_mut());
         self.wrapped_key = *prot_key.secret();
     }
 
@@ -66,7 +66,7 @@ impl PasswordProtector {
     pub fn unwrap_key(&self, pass: &[u8]) -> Option<ProtectorKey> {
         let mut prot_key = ProtectorKey::from(&self.wrapped_key);
         let key = Aes256Key::new_from_password(pass, &self.salt, &self.kdf);
-        if aes_dec(&key, &self.iv, &self.hmac, prot_key.secret_mut()) {
+        if key.decrypt(&self.iv, &self.hmac, prot_key.secret_mut()) {
             Some(prot_key)
         } else {
             None
