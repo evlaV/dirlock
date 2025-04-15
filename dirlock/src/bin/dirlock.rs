@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{bail, Result};
 use argh::FromArgs;
 use std::io::{self, Write};
 use std::num::NonZeroU32;
@@ -18,6 +18,7 @@ use dirlock::{
     keystore,
     protector::{
         Protector,
+        ProtectorId,
         ProtectorType,
         opts::{PasswordOpts, ProtectorOpts, ProtectorOptsBuilder},
     },
@@ -70,7 +71,7 @@ struct LockArgs {
 struct UnlockArgs {
     /// ID of the protector used to unlock this directory
     #[argh(option)]
-    protector: Option<String>,
+    protector: Option<ProtectorId>,
     /// directory
     #[argh(positional)]
     dir: PathBuf,
@@ -82,7 +83,7 @@ struct UnlockArgs {
 struct ChangePassArgs {
     /// ID of the protector whose password is to be changed
     #[argh(option)]
-    protector: Option<String>,
+    protector: Option<ProtectorId>,
     /// directory
     #[argh(positional)]
     dir: PathBuf,
@@ -109,7 +110,7 @@ struct AddProtectorArgs {
 struct RemoveProtectorArgs {
     /// ID of the protector to remove
     #[argh(option)]
-    protector: Option<String>,
+    protector: Option<ProtectorId>,
     /// directory
     #[argh(positional)]
     dir: PathBuf,
@@ -121,7 +122,7 @@ struct RemoveProtectorArgs {
 struct EncryptArgs {
     /// encrypt the directory using an existing protector
     #[argh(option)]
-    protector: Option<String>,
+    protector: Option<ProtectorId>,
     /// force encrypting a directory with data
     #[argh(switch, long = "force")]
     force: bool,
@@ -159,7 +160,7 @@ struct PolicyListArgs { }
 struct PolicyCreateArgs {
     /// ID of the protector to use for the new policy
     #[argh(option)]
-    protector: Option<String>,
+    protector: Option<ProtectorId>,
 }
 
 #[derive(FromArgs)]
@@ -183,10 +184,10 @@ struct PolicyAddProtectorArgs {
     policy: Option<String>,
     /// ID of the protector to add
     #[argh(option)]
-    protector: Option<String>,
+    protector: Option<ProtectorId>,
     /// ID of the protector used to unlock the policy
     #[argh(option)]
-    unlock_with: Option<String>,
+    unlock_with: Option<ProtectorId>,
 }
 
 #[derive(FromArgs)]
@@ -198,7 +199,7 @@ struct PolicyRemoveProtectorArgs {
     policy: Option<String>,
     /// ID of the protector to remove
     #[argh(option)]
-    protector: Option<String>,
+    protector: Option<ProtectorId>,
 }
 
 #[derive(FromArgs)]
@@ -248,7 +249,7 @@ struct ProtectorCreateArgs {
 struct ProtectorRemoveArgs {
     /// ID of the protector to remove
     #[argh(option)]
-    protector: Option<String>,
+    protector: Option<ProtectorId>,
 }
 
 #[derive(FromArgs)]
@@ -257,7 +258,7 @@ struct ProtectorRemoveArgs {
 struct ProtectorVerifyPassArgs {
     /// ID of the protector to verify
     #[argh(option)]
-    protector: Option<String>,
+    protector: Option<ProtectorId>,
 }
 
 #[derive(FromArgs)]
@@ -266,7 +267,7 @@ struct ProtectorVerifyPassArgs {
 struct ProtectorChangePassArgs {
     /// ID of the protector
     #[argh(option)]
-    protector: Option<String>,
+    protector: Option<ProtectorId>,
 }
 
 #[derive(FromArgs)]
@@ -421,14 +422,13 @@ fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
         x => bail!("{}", x),
     };
 
-    let protector_id = match &args.protector {
-        Some(id_str) => Some(encrypted_dir.get_protector_id_by_str(id_str)?),
-        None => None
-    };
+    if let Some(id) = &args.protector {
+        let _ = encrypted_dir.get_protector_by_id(id)?;
+    }
 
     let pass = read_password("Enter encryption password", ReadPassword::Once)?;
 
-    if ! encrypted_dir.unlock(pass.as_bytes(), protector_id)? {
+    if ! encrypted_dir.unlock(pass.as_bytes(), args.protector.as_ref())? {
         bail!("Unable to unlock directory {}: wrong password", args.dir.display())
     }
 
@@ -441,11 +441,11 @@ fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
         x => bail!("{}", x),
     };
 
-    let protector_id = match &args.protector {
-        Some(id_str) => encrypted_dir.get_protector_id_by_str(id_str)?,
+    let protector = match &args.protector {
+        Some(id) => encrypted_dir.get_protector_by_id(id)?,
         None => {
             if encrypted_dir.protectors.len() == 1 {
-                &encrypted_dir.protectors[0].protector.id
+                &encrypted_dir.protectors[0].protector
             } else {
                 println!("This directory has multiple protectors, you must select one.");
                 display_protectors_from_dir(&encrypted_dir);
@@ -454,7 +454,7 @@ fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
         },
     };
 
-    do_change_verify_protector_password(&Some(protector_id.to_string()), false)
+    do_change_verify_protector_password(Some(protector.id), false)
 }
 
 fn cmd_add_protector(args: &AddProtectorArgs) -> Result<()> {
@@ -492,7 +492,7 @@ fn cmd_remove_protector_from_dir(args: &RemoveProtectorArgs) -> Result<()> {
     }
 
     let protector_id = match &args.protector {
-        Some(id_str) => encrypted_dir.get_protector_id_by_str(id_str)?,
+        Some(id) => &encrypted_dir.get_protector_by_id(id)?.id,
         None => {
             let pass = read_password("Enter the password of the protector that you want to remove", ReadPassword::Once)?;
             encrypted_dir.get_protector_id_by_pass(pass.as_bytes())?
@@ -534,8 +534,8 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
         bail!("The directory is not empty. Use --force to override");
     }
 
-    let protector_key = if let Some(id_str) = &args.protector {
-        let protector = dirlock::get_protector_by_str(id_str)?;
+    let protector_key = if let Some(id) = args.protector {
+        let protector = dirlock::get_protector_by_id(id)?;
         display_tpm_lockout_counter(&protector)?;
         let pass = read_password("Enter the password of the protector", ReadPassword::Once)?;
         let Some(protector_key) = protector.unwrap_key(pass.as_bytes()) else {
@@ -579,14 +579,14 @@ fn cmd_list_policies() -> Result<()> {
 }
 
 fn cmd_create_policy(args: &PolicyCreateArgs) -> Result<()> {
-    let Some(id_str) = &args.protector else {
+    let Some(id) = args.protector else {
         println!("You must specify the ID of the protector.");
         return display_protector_list()
     };
-    let protector = dirlock::get_protector_by_str(id_str)?;
+    let protector = dirlock::get_protector_by_id(id)?;
     let pass = read_password("Enter password for the protector", ReadPassword::Once)?;
     let Some(protector_key) = protector.unwrap_key(pass.as_bytes()) else {
-        bail!("Invalid password for protector {id_str}");
+        bail!("Invalid password for protector {id}");
     };
     let policy_key = fscrypt::PolicyKey::new_random();
     let policy_id = policy_key.get_id();
@@ -638,8 +638,8 @@ fn cmd_policy_add_protector(args: &PolicyAddProtectorArgs) -> Result<()> {
     } else {
         bail!("You must specify the ID of the encryption policy.");
     };
-    let protector = if let Some(s) = &args.protector {
-        dirlock::get_protector_by_str(s)?
+    let protector = if let Some(id) = &args.protector {
+        dirlock::get_protector_by_id(*id)?
     } else {
         bail!("You must specify the ID of the protector to add.");
     };
@@ -652,12 +652,11 @@ fn cmd_policy_add_protector(args: &PolicyAddProtectorArgs) -> Result<()> {
         bail!("Policy {policy_id} is already protected with protector {}", protector.id);
     }
 
-    let unlock_with = if let Some(s) = &args.unlock_with {
-        dirlock::get_protector_by_str(s)?
+    let unlock_with = if let Some(id) = args.unlock_with {
+        dirlock::get_protector_by_id(id)?
     } else if policy_map.len() == 1 {
         let id = policy_map.keys().next().unwrap();
-        keystore::load_protector(id.clone())?
-            .ok_or_else(|| anyhow!("Error reading protector {id}"))?
+        dirlock::get_protector_by_id(*id)?
     } else {
         bail!("You must specify the ID of the protector to unlock this policy.");
     };
@@ -687,8 +686,8 @@ fn cmd_policy_remove_protector(args: &PolicyRemoveProtectorArgs) -> Result<()> {
     } else {
         bail!("You must specify the ID of the encryption policy.");
     };
-    let protector = if let Some(s) = &args.protector {
-        dirlock::get_protector_by_str(s)?
+    let protector = if let Some(id) = args.protector {
+        dirlock::get_protector_by_id(id)?
     } else {
         bail!("You must specify the ID of the protector to remove.");
     };
@@ -727,11 +726,12 @@ fn cmd_create_protector(args: &ProtectorCreateArgs) -> Result<()> {
 }
 
 fn cmd_remove_protector(args: &ProtectorRemoveArgs) -> Result<()> {
-    let Some(id_str) = &args.protector else {
+    let Some(id) = args.protector else {
         println!("You must specify the ID of the protector.");
         return display_protector_list()
     };
-    let protector = dirlock::get_protector_by_str(id_str)?;
+    let id_str = id.to_string();
+    let protector = dirlock::get_protector_by_id(id)?;
     if keystore::remove_protector_if_unused(&protector.id)? {
         println!("Protector {id_str} removed");
     } else {
@@ -746,12 +746,12 @@ fn cmd_remove_protector(args: &ProtectorRemoveArgs) -> Result<()> {
     Ok(())
 }
 
-fn do_change_verify_protector_password(protector_id: &Option<String>, verify_only: bool) -> Result<()> {
-    let Some(id_str) = protector_id else {
+fn do_change_verify_protector_password(protector_id: Option<ProtectorId>, verify_only: bool) -> Result<()> {
+    let Some(id) = protector_id else {
         println!("You must specify the ID of the protector.");
         return display_protector_list()
     };
-    let mut protector = dirlock::get_protector_by_str(id_str)?;
+    let mut protector = dirlock::get_protector_by_id(id)?;
     display_tpm_lockout_counter(&protector)?;
     let pass = read_password("Enter the current password", ReadPassword::Once)?;
     let Some(protector_key) = protector.unwrap_key(pass.as_bytes()) else {
@@ -768,11 +768,11 @@ fn do_change_verify_protector_password(protector_id: &Option<String>, verify_onl
 }
 
 fn cmd_verify_protector(args: &ProtectorVerifyPassArgs) -> Result<()> {
-    do_change_verify_protector_password(&args.protector, true)
+    do_change_verify_protector_password(args.protector, true)
 }
 
 fn cmd_change_protector_pass(args: &ProtectorChangePassArgs) -> Result<()> {
-    do_change_verify_protector_password(&args.protector, false)
+    do_change_verify_protector_password(args.protector, false)
 }
 
 fn cmd_system_info(args: &SystemInfoArgs) -> Result<()> {

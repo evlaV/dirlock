@@ -58,7 +58,7 @@ pub fn protector_ids() -> Result<impl Iterator<Item = ProtectorId>> {
     fn id_from_entry(d: fs::DirEntry) -> Option<ProtectorId> {
         let path = d.path();
         if let Some(path_str) = path.file_name().and_then(OsStr::to_str) {
-            ProtectorId::try_from(path_str).ok()
+            path_str.parse::<ProtectorId>().ok()
         } else {
             None
         }

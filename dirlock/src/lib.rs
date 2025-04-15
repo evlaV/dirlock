@@ -143,9 +143,10 @@ impl EncryptedDir {
     }
 
     /// Finds a protector using its ID
-    pub fn get_protector_by_id(&self, id: &ProtectorId) -> Option<&Protector> {
+    pub fn get_protector_by_id(&self, id: &ProtectorId) -> Result<&Protector> {
         self.protectors.iter()
             .find_map(|p| if &p.protector.id == id { Some(&p.protector) } else { None })
+            .ok_or_else(|| anyhow!("No protector found with that ID in the directory"))
     }
 
     /// Finds a protector that can be unlocked with the given password
@@ -153,14 +154,6 @@ impl EncryptedDir {
         self.protectors.iter().find(|p| p.protector.unwrap_key(pass).is_some())
             .map(|p| &p.protector.id)
             .ok_or_else(|| anyhow!("No protector found with that password in the directory"))
-    }
-
-    /// Find a protector using its ID in string form
-    pub fn get_protector_id_by_str(&self, id_str: impl AsRef<str>) -> Result<&ProtectorId> {
-        let id = ProtectorId::try_from(id_str.as_ref())?;
-        self.protectors.iter().find(|p| p.protector.id == id)
-            .map(|p| &p.protector.id)
-            .ok_or_else(|| anyhow!("No protector found with that ID in the directory"))
     }
 
     /// Changes the password of a protector used to lock this directory
@@ -231,10 +224,9 @@ pub fn encrypt_dir(path: &Path, protector_key: ProtectorKey) -> Result<PolicyKey
 }
 
 /// Get an existing protector
-pub fn get_protector_by_str(id_str: impl AsRef<str>) -> Result<Protector> {
-    let id = ProtectorId::try_from(id_str.as_ref())?;
+pub fn get_protector_by_id(id: ProtectorId) -> Result<Protector> {
     let Some(prot) = keystore::load_protector(id)? else {
-        bail!("Protector {} not found", id_str.as_ref());
+        bail!("Protector not found");
     };
     Ok(prot)
 }

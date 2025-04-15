@@ -79,16 +79,16 @@ impl ProtectorKey {
 }
 
 #[serde_as]
-#[derive(Eq, PartialEq, Clone, Hash, Default, Serialize, Deserialize, derive_more::Display)]
+#[derive(Eq, PartialEq, Clone, Copy, Hash, Default, Serialize, Deserialize, derive_more::Display)]
 #[display("{}", hex::encode(_0))]
 pub struct ProtectorId(
     #[serde_as(as = "Hex")]
     [u8; PROTECTOR_ID_LEN]
 );
 
-impl TryFrom<&str> for ProtectorId {
-    type Error = anyhow::Error;
-    fn try_from(s: &str) -> Result<Self> {
+impl std::str::FromStr for ProtectorId {
+    type Err = anyhow::Error;
+    fn from_str(s: &str) -> Result<Self> {
         let mut ret = ProtectorId::default();
         hex::decode_to_slice(s, &mut ret.0)
             .map_err(|_| anyhow!("Invalid protector ID: {s}"))?;
