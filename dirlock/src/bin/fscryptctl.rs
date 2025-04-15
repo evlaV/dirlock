@@ -9,7 +9,7 @@ use std::io::Read;
 use argh::FromArgs;
 use std::path::PathBuf;
 
-use dirlock::fscrypt;
+use dirlock::fscrypt::{self, PolicyKeyId};
 
 #[derive(FromArgs)]
 /// Disk encryption tool.
@@ -46,7 +46,7 @@ struct SetPolicyArgs {
     dir: PathBuf,
     /// key id
     #[argh(positional)]
-    keyid: String
+    keyid: PolicyKeyId
 }
 
 #[derive(FromArgs)]
@@ -58,7 +58,7 @@ struct KeyStatusArgs {
     mountpoint: PathBuf,
     /// key id
     #[argh(positional)]
-    keyid: String
+    keyid: PolicyKeyId
 }
 
 #[derive(FromArgs)]
@@ -79,7 +79,7 @@ struct RemoveKeyArgs {
     mountpoint: PathBuf,
     /// key id
     #[argh(positional)]
-    keyid: String
+    keyid: PolicyKeyId
 }
 
 fn cmd_get_policy(args: &GetPolicyArgs) -> Result<()> {
@@ -94,15 +94,13 @@ fn cmd_get_policy(args: &GetPolicyArgs) -> Result<()> {
 }
 
 fn cmd_set_policy(args: &SetPolicyArgs) -> Result<()> {
-    let keyid = fscrypt::PolicyKeyId::try_from(args.keyid.as_str())?;
-    fscrypt::set_policy(&args.dir, &keyid)?;
+    fscrypt::set_policy(&args.dir, &args.keyid)?;
     println!("Set policy {} in directory {}", args.keyid, &args.dir.display());
     Ok(())
 }
 
 fn cmd_key_status(args: &KeyStatusArgs) -> Result<()> {
-    let keyid = fscrypt::PolicyKeyId::try_from(args.keyid.as_str())?;
-    let (status, flags) = fscrypt::get_key_status(&args.mountpoint, &keyid)?;
+    let (status, flags) = fscrypt::get_key_status(&args.mountpoint, &args.keyid)?;
     println!("Got status of key {} in directory {}: {:?}", &args.keyid, args.mountpoint.display(), status);
     if flags.contains(fscrypt::KeyStatusFlags::AddedBySelf) {
         println!("(key added by self)");
@@ -120,8 +118,7 @@ fn cmd_add_key(args: &AddKeyArgs) -> Result<()> {
 }
 
 fn cmd_remove_key(args: &RemoveKeyArgs) -> Result<()> {
-    let keyid = fscrypt::PolicyKeyId::try_from(args.keyid.as_str())?;
-    fscrypt::remove_key(&args.mountpoint, &keyid, fscrypt::RemoveKeyUsers::CurrentUser)?;
+    fscrypt::remove_key(&args.mountpoint, &args.keyid, fscrypt::RemoveKeyUsers::CurrentUser)?;
     println!("Removed key {} from directory {}", &args.keyid, args.mountpoint.display());
     Ok(())
 }

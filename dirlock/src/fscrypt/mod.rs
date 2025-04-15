@@ -7,7 +7,7 @@
 mod linux;
 use linux::*;
 
-use anyhow::{bail, ensure, Result};
+use anyhow::{anyhow, bail, ensure, Result};
 use nix::errno::Errno;
 use num_enum::{FromPrimitive, TryFromPrimitive};
 use rand::{RngCore, rngs::OsRng};
@@ -41,12 +41,13 @@ pub struct PolicyKeyId(
     [u8; FSCRYPT_KEY_IDENTIFIER_SIZE]
 );
 
-impl TryFrom<&str> for PolicyKeyId {
-    type Error = anyhow::Error;
+impl std::str::FromStr for PolicyKeyId {
+    type Err = anyhow::Error;
     /// Create a key identifier from an hex string
-    fn try_from(s: &str) -> Result<Self> {
+    fn from_str(s: &str) -> Result<Self> {
         let mut ret = PolicyKeyId::default();
-        hex::decode_to_slice(s, &mut ret.0)?;
+        hex::decode_to_slice(s, &mut ret.0)
+            .map_err(|_| anyhow!("Invalid policy ID: {s}"))?;
         Ok(ret)
     }
 }

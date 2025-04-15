@@ -169,7 +169,7 @@ struct PolicyCreateArgs {
 struct PolicyRemoveArgs {
     /// ID of the policy to remove
     #[argh(option)]
-    policy: Option<String>,
+    policy: Option<PolicyKeyId>,
     /// remove a policy without asking for confirmation
     #[argh(switch, long = "force")]
     force: bool,
@@ -181,7 +181,7 @@ struct PolicyRemoveArgs {
 struct PolicyAddProtectorArgs {
     /// ID of the policy to modify
     #[argh(option)]
-    policy: Option<String>,
+    policy: Option<PolicyKeyId>,
     /// ID of the protector to add
     #[argh(option)]
     protector: Option<ProtectorId>,
@@ -196,7 +196,7 @@ struct PolicyAddProtectorArgs {
 struct PolicyRemoveProtectorArgs {
     /// ID of the policy to modify
     #[argh(option)]
-    policy: Option<String>,
+    policy: Option<PolicyKeyId>,
     /// ID of the protector to remove
     #[argh(option)]
     protector: Option<ProtectorId>,
@@ -596,17 +596,16 @@ fn cmd_create_policy(args: &PolicyCreateArgs) -> Result<()> {
 }
 
 fn cmd_remove_policy(args: &PolicyRemoveArgs) -> Result<()> {
-    let Some(id_str) = &args.policy else {
+    let Some(id) = &args.policy else {
         println!("You must specify the ID of the policy.");
         return cmd_list_policies();
     };
-    let policy_id = PolicyKeyId::try_from(id_str.as_str())?;
-    if keystore::load_policy_map(&policy_id)?.is_empty() {
-        bail!("Encryption policy {id_str} not found");
+    if keystore::load_policy_map(id)?.is_empty() {
+        bail!("Encryption policy {id} not found");
     }
     if ! args.force {
         print!("You are about to delete all data from the encryption\n\
-                policy {id_str}\n\
+                policy {id}\n\
                 \n\
                 This operation is irreversible, and unless you have a backup\n\
                 of the policy and all its associated data you will no longer\n\
@@ -627,15 +626,13 @@ fn cmd_remove_policy(args: &PolicyRemoveArgs) -> Result<()> {
             }
         }
     }
-    keystore::remove_policy(&policy_id)?;
-    println!("Encryption policy {id_str} removed successfully");
+    keystore::remove_policy(id)?;
+    println!("Encryption policy {id} removed successfully");
     Ok(())
 }
 
 fn cmd_policy_add_protector(args: &PolicyAddProtectorArgs) -> Result<()> {
-    let policy_id = if let Some(s) = &args.policy {
-        PolicyKeyId::try_from(s.as_str())?
-    } else {
+    let Some(policy_id) = &args.policy else {
         bail!("You must specify the ID of the encryption policy.");
     };
     let protector = if let Some(id) = &args.protector {
@@ -644,7 +641,7 @@ fn cmd_policy_add_protector(args: &PolicyAddProtectorArgs) -> Result<()> {
         bail!("You must specify the ID of the protector to add.");
     };
 
-    let policy_map = keystore::load_policy_map(&policy_id)?;
+    let policy_map = keystore::load_policy_map(policy_id)?;
     if policy_map.is_empty() {
         bail!("Policy {policy_id} not found");
     }
@@ -681,9 +678,7 @@ fn cmd_policy_add_protector(args: &PolicyAddProtectorArgs) -> Result<()> {
 }
 
 fn cmd_policy_remove_protector(args: &PolicyRemoveProtectorArgs) -> Result<()> {
-    let policy_id = if let Some(s) = &args.policy {
-        PolicyKeyId::try_from(s.as_str())?
-    } else {
+    let Some(policy_id) = &args.policy else {
         bail!("You must specify the ID of the encryption policy.");
     };
     let protector = if let Some(id) = args.protector {
@@ -692,7 +687,7 @@ fn cmd_policy_remove_protector(args: &PolicyRemoveProtectorArgs) -> Result<()> {
         bail!("You must specify the ID of the protector to remove.");
     };
 
-    let policy_map = keystore::load_policy_map(&policy_id)?;
+    let policy_map = keystore::load_policy_map(policy_id)?;
     if policy_map.is_empty() {
         bail!("Policy {policy_id} not found");
     }
@@ -703,7 +698,7 @@ fn cmd_policy_remove_protector(args: &PolicyRemoveProtectorArgs) -> Result<()> {
         bail!("Cannot remove the last protector. Use the 'policy remove' command instead.");
     }
 
-    keystore::remove_protector_from_policy(&policy_id, &protector.id)?;
+    keystore::remove_protector_from_policy(policy_id, &protector.id)?;
     println!("Protector {} remove from policy {policy_id}", protector.id);
 
     Ok(())

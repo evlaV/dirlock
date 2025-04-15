@@ -43,7 +43,7 @@ pub fn policy_key_ids() -> Result<impl Iterator<Item = PolicyKeyId>> {
     fn id_from_entry(d: fs::DirEntry) -> Option<PolicyKeyId> {
         let path = d.path();
         if let Some(path_str) = path.file_name().and_then(OsStr::to_str) {
-            PolicyKeyId::try_from(path_str).ok()
+            path_str.parse::<PolicyKeyId>().ok()
         } else {
             None
         }
