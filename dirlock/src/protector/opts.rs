@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use super::ProtectorType;
 
 const DEFAULT_TPM2_PATH: &str = "/dev/tpm0";
+pub const PROTECTOR_NAME_MAX_LEN: usize = 128;
 
 /// Available options for protectors
 pub enum ProtectorOpts {
@@ -85,7 +86,7 @@ impl ProtectorOptsBuilder {
     pub fn build(self) -> Result<ProtectorOpts> {
         let ptype = self.ptype.unwrap_or(ProtectorType::Password);
         if let Some(name) = &self.name {
-            if name.len() > 64 {
+            if name.len() > PROTECTOR_NAME_MAX_LEN {
                 bail!("Protector name too long");
             }
         }

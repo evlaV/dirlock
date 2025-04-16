@@ -20,7 +20,12 @@ use dirlock::{
         Protector,
         ProtectorId,
         ProtectorType,
-        opts::{PasswordOpts, ProtectorOpts, ProtectorOptsBuilder},
+        opts::{
+            PROTECTOR_NAME_MAX_LEN,
+            PasswordOpts,
+            ProtectorOpts,
+            ProtectorOptsBuilder,
+        },
     },
     util::{
         ReadPassword,
@@ -90,6 +95,12 @@ struct ChangePassArgs {
 #[argh(subcommand, name = "encrypt")]
 /// Encrypt a directory
 struct EncryptArgs {
+    /// create a new protector of this type (default: password)
+    #[argh(option)]
+    protector_type: Option<ProtectorType>,
+    /// name of the new protector (default: name of the directory)
+    #[argh(option)]
+    protector_name: Option<String>,
     /// encrypt the directory using an existing protector
     #[argh(option)]
     protector: Option<ProtectorId>,
@@ -426,6 +437,10 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
 
     let empty_dir = dir_is_empty(&args.dir)?;
 
+    if args.protector.is_some() && (args.protector_name.is_some() || args.protector_type.is_some()) {
+        bail!("Cannot set protector options for an existing protector");
+    }
+
     if args.force && !empty_dir {
         println!("You are about to encrypt a directory that contains data.\n\
                   This feature is *experimental*. Make sure that you are not\n\
@@ -453,7 +468,19 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
         };
         protector_key
     } else {
-        let opts = ProtectorOpts::Password(PasswordOpts::default());
+        let name = args.protector_name.clone().unwrap_or_else(|| {
+            let mut n = format!("Protector for {}", args.dir.display());
+            if n.len() > PROTECTOR_NAME_MAX_LEN {
+                n.truncate(PROTECTOR_NAME_MAX_LEN - 4);
+                n.push_str(" ...");
+            }
+            n
+        });
+
+        let opts = ProtectorOptsBuilder::new()
+            .with_type(args.protector_type)
+            .with_name(Some(name))
+            .build()?;
         let pass = read_password("Enter encryption password", ReadPassword::Twice)?;
         dirlock::create_protector(opts, pass.as_bytes())?
     };
