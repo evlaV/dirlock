@@ -44,8 +44,6 @@ enum Command {
     Lock(LockArgs),
     Unlock(UnlockArgs),
     ChangePass(ChangePassArgs),
-    AddProtector(AddProtectorArgs),
-    RemoveProtector(RemoveProtectorArgs),
     Policy(PolicyArgs),
     Protector(ProtectorArgs),
     SystemInfo(SystemInfoArgs),
@@ -82,33 +80,6 @@ struct UnlockArgs {
 /// Change the encryption password of a directory
 struct ChangePassArgs {
     /// ID of the protector whose password is to be changed
-    #[argh(option)]
-    protector: Option<ProtectorId>,
-    /// directory
-    #[argh(positional)]
-    dir: PathBuf,
-}
-
-#[derive(FromArgs)]
-#[argh(subcommand, name = "add-protector")]
-/// Adds a new protector to a directory
-struct AddProtectorArgs {
-    /// type of the protector to add (default: 'password')
-    #[argh(option)]
-    type_: Option<ProtectorType>,
-    /// TPM2 device (default: auto)
-    #[argh(option)]
-    tpm2_device: Option<PathBuf>,
-    /// directory
-    #[argh(positional)]
-    dir: PathBuf,
-}
-
-#[derive(FromArgs)]
-#[argh(subcommand, name = "remove-protector")]
-/// Remove a protector from a directory
-struct RemoveProtectorArgs {
-    /// ID of the protector to remove
     #[argh(option)]
     protector: Option<ProtectorId>,
     /// directory
@@ -455,57 +426,6 @@ fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
     };
 
     do_change_verify_protector_password(Some(protector.id), false)
-}
-
-fn cmd_add_protector(args: &AddProtectorArgs) -> Result<()> {
-    let encrypted_dir = match dirlock::open_dir(&args.dir)? {
-        DirStatus::Encrypted(d) => d,
-        x => bail!("{}", x),
-    };
-
-    let protector_opts = ProtectorOptsBuilder::new()
-        .with_type(args.type_)
-        .with_tpm2_device(args.tpm2_device.clone())
-        .build()?;
-
-    let pass = read_password("Enter the current password", ReadPassword::Once)?;
-    let Some(policy_key) = encrypted_dir.get_master_key(pass.as_bytes(), None) else {
-        bail!("Password not valid for directory {}", args.dir.display())
-    };
-
-    let npass = read_password("Enter password for the new protector", ReadPassword::Twice)?;
-    if encrypted_dir.check_pass(npass.as_bytes(), None) {
-        bail!("There is already a protector with that password");
-    }
-    let protector_key = dirlock::create_protector(protector_opts, npass.as_bytes())?;
-    dirlock::wrap_and_save_policy_key(protector_key, policy_key)
-}
-
-fn cmd_remove_protector_from_dir(args: &RemoveProtectorArgs) -> Result<()> {
-    let encrypted_dir = match dirlock::open_dir(&args.dir)? {
-        DirStatus::Encrypted(d) => d,
-        x => bail!("{}", x),
-    };
-
-    if encrypted_dir.protectors.len() == 1 {
-        bail!("Only one protector left in that directory, refusing to remove it");
-    }
-
-    let protector_id = match &args.protector {
-        Some(id) => &encrypted_dir.get_protector_by_id(id)?.id,
-        None => {
-            let pass = read_password("Enter the password of the protector that you want to remove", ReadPassword::Once)?;
-            encrypted_dir.get_protector_id_by_pass(pass.as_bytes())?
-        }
-    };
-
-    if encrypted_dir.remove_protector(protector_id)? {
-        println!("Removed protector {protector_id}");
-    } else {
-        bail!("Protector {protector_id} not found in directory {}", args.dir.display());
-    }
-
-    Ok(())
 }
 
 fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
@@ -891,8 +811,6 @@ fn main() -> Result<()> {
         Lock(args) => cmd_lock(args),
         Unlock(args) => cmd_unlock(args),
         ChangePass(args) => cmd_change_pass(args),
-        AddProtector(args) => cmd_add_protector(args),
-        RemoveProtector(args) => cmd_remove_protector_from_dir(args),
         Encrypt(args) => cmd_encrypt(args),
         Policy(args) => match &args.command {
             PolicyCommand::List(_) => cmd_list_policies(),
