@@ -213,9 +213,9 @@ struct ProtectorCreateArgs {
     /// protector type
     #[argh(option)]
     type_: ProtectorType,
-    /// protector name (default: none)
+    /// protector name
     #[argh(option)]
-    name: Option<String>,
+    name: String,
     /// TPM2 device (default: auto)
     #[argh(option)]
     tpm2_device: Option<PathBuf>,
@@ -340,7 +340,7 @@ fn do_display_protector_list(list: Vec<&Protector>) {
     for prot in list {
         println!("{:16}    {:8}    {}", prot.id,
                  prot.get_type().to_string(),
-                 prot.get_name().unwrap_or("(none)"));
+                 prot.get_name());
     }
 }
 
@@ -479,7 +479,7 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
 
         let opts = ProtectorOptsBuilder::new()
             .with_type(args.protector_type)
-            .with_name(Some(name))
+            .with_name(name)
             .build()?;
         let pass = read_password("Enter encryption password", ReadPassword::Twice)?;
         dirlock::create_protector(opts, pass.as_bytes())?
@@ -802,14 +802,7 @@ fn cmd_status(args: &StatusArgs) -> Result<()> {
         println!("Flags: {}", encrypted_dir.policy.flags.flags);
     }
 
-    for p in encrypted_dir.protectors {
-        print!("Protector: {}, type {}", &p.protector.id, p.protector.get_type());
-        if let Some(name) = p.protector.get_name() {
-            print!(", name: {name}");
-        }
-        println!();
-    }
-
+    display_protectors_from_dir(&encrypted_dir);
     Ok(())
 }
 

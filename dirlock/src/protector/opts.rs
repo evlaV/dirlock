@@ -22,7 +22,7 @@ pub enum ProtectorOpts {
 #[derive(Default)]
 pub struct PasswordOpts {
     pub kdf_iter: Option<NonZeroU32>,
-    pub name: Option<String>,
+    pub name: String,
 }
 
 
@@ -30,12 +30,12 @@ pub struct PasswordOpts {
 pub struct Tpm2Opts {
     pub path: String, // tcti_ldr::DeviceConfig wants str and not Path
     pub kdf_iter: Option<NonZeroU32>,
-    pub name: Option<String>,
+    pub name: String,
 }
 
 impl Default for Tpm2Opts {
     fn default() -> Tpm2Opts {
-        Tpm2Opts { path: DEFAULT_TPM2_PATH.to_string(), kdf_iter: None, name: None }
+        Tpm2Opts { path: DEFAULT_TPM2_PATH.to_string(), kdf_iter: None, name: "".to_string() }
     }
 }
 
@@ -62,8 +62,8 @@ impl ProtectorOptsBuilder {
     }
 
     /// Sets the type of the protector
-    pub fn with_name(mut self, name: Option<String>) -> Self {
-        self.name = name;
+    pub fn with_name(mut self, name: String) -> Self {
+        self.name = Some(name);
         self
     }
 
@@ -85,10 +85,11 @@ impl ProtectorOptsBuilder {
     /// Returns an error if some options are missing or invalid
     pub fn build(self) -> Result<ProtectorOpts> {
         let ptype = self.ptype.unwrap_or(ProtectorType::Password);
-        if let Some(name) = &self.name {
-            if name.len() > PROTECTOR_NAME_MAX_LEN {
-                bail!("Protector name too long");
-            }
+        let Some(name) = self.name else {
+            bail!("Protector name not set");
+        };
+        if name.len() > PROTECTOR_NAME_MAX_LEN {
+            bail!("Protector name too long");
         }
         match ptype {
             ProtectorType::Tpm2 => {
@@ -102,14 +103,14 @@ impl ProtectorOptsBuilder {
                 Ok(ProtectorOpts::Tpm2(Tpm2Opts {
                     path,
                     kdf_iter: self.kdf_iter,
-                    name: self.name,
+                    name
                 }))
             },
             ProtectorType::Password => {
                 ensure!(self.tpm2_device.is_none(), "TPM2 device set for password protector");
                 Ok(ProtectorOpts::Password(PasswordOpts {
                     kdf_iter: self.kdf_iter,
-                    name: self.name,
+                    name
                 }))
             },
         }

@@ -74,8 +74,7 @@ use crate::protector::Protector;
 #[serde_as]
 #[derive(Serialize, Deserialize, Default)]
 pub struct Tpm2Protector {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub name: Option<String>,
+    pub name: String,
     #[serde_as(as = "Base64")]
     public: Vec<u8>,
     #[serde_as(as = "Base64")]
