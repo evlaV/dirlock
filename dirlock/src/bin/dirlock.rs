@@ -294,7 +294,9 @@ fn display_tpm_lockout_counter(protector: &Protector) -> Result<()> {
 
 #[cfg(feature = "tpm2")]
 fn display_tpm_information(tpm2_device: &Option<PathBuf>) -> Result<()> {
+    // TODO: get rid of this builder, we don't need this to get the status of the TPM
     let ProtectorOpts::Tpm2(opts) = ProtectorOptsBuilder::new()
+        .with_name(String::new())
         .with_type(Some(ProtectorType::Tpm2))
         .with_tpm2_device(tpm2_device.clone())
         .build()?
