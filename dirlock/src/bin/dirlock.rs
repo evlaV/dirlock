@@ -46,7 +46,6 @@ enum Command {
     ChangePass(ChangePassArgs),
     Policy(PolicyArgs),
     Protector(ProtectorArgs),
-    SystemInfo(SystemInfoArgs),
     ExportMasterKey(ExportMasterKeyArgs),
     ImportMasterKey(ImportMasterKeyArgs),
 }
@@ -242,15 +241,6 @@ struct ProtectorChangePassArgs {
 }
 
 #[derive(FromArgs)]
-#[argh(subcommand, name = "system-info")]
-/// Show information about the system
-struct SystemInfoArgs {
-    /// TPM2 device (default: auto)
-    #[argh(option)]
-    tpm2_device: Option<PathBuf>,
-}
-
-#[derive(FromArgs)]
 #[argh(subcommand, name = "export-master-key")]
 /// Export the master encryption key of a directory
 struct ExportMasterKeyArgs {
@@ -266,14 +256,14 @@ struct ImportMasterKeyArgs { }
 
 #[derive(FromArgs)]
 #[argh(subcommand, name = "status")]
-/// Get the encryption status of a directory
+/// Show the status of the system or a directory
 struct StatusArgs {
-    /// verbose output (list protectors and encryption parameters)
-    #[argh(switch, short = 'v', long = "verbose")]
-    verbose: bool,
-    /// directory
+    /// TPM2 device (default: auto)
+    #[argh(option)]
+    tpm2_device: Option<PathBuf>,
+    /// directory (default: show global status)
     #[argh(positional)]
-    dir: PathBuf,
+    dir: Option<PathBuf>,
 }
 
 #[cfg(feature = "tpm2")]
@@ -690,18 +680,6 @@ fn cmd_change_protector_pass(args: &ProtectorChangePassArgs) -> Result<()> {
     do_change_verify_protector_password(args.protector, false)
 }
 
-fn cmd_system_info(args: &SystemInfoArgs) -> Result<()> {
-    display_protector_list()?;
-
-    println!();
-    cmd_list_policies()?;
-
-    println!();
-    display_tpm_information(&args.tpm2_device)?;
-
-    Ok(())
-}
-
 fn cmd_export_master_key(args: &ExportMasterKeyArgs) -> Result<()> {
     use base64::prelude::*;
     let encrypted_dir = match dirlock::open_dir(&args.dir)? {
@@ -760,7 +738,19 @@ fn cmd_import_master_key() -> Result<()> {
 fn cmd_status(args: &StatusArgs) -> Result<()> {
     use fscrypt::KeyStatus::*;
 
-    let encrypted_dir = match dirlock::open_dir(&args.dir)? {
+    let Some(dir) = &args.dir else {
+        display_protector_list()?;
+
+        println!();
+        cmd_list_policies()?;
+
+        println!();
+        display_tpm_information(&args.tpm2_device)?;
+
+        return Ok(());
+    };
+
+    let encrypted_dir = match dirlock::open_dir(dir)? {
         DirStatus::Encrypted(d) => d,
         x => {
             println!("{x}");
@@ -774,10 +764,6 @@ fn cmd_status(args: &StatusArgs) -> Result<()> {
         IncompletelyRemoved => "partially locked",
     };
     println!("Encrypted, {locked}, policy {}", encrypted_dir.policy.keyid);
-
-    if ! args.verbose {
-        return Ok(());
-    }
 
     println!("Contents: {}",  encrypted_dir.policy.contents_mode);
     println!("Filenames: {}", encrypted_dir.policy.filenames_mode);
@@ -826,7 +812,6 @@ fn main() -> Result<()> {
             ProtectorCommand::VerifyPass(args) => cmd_verify_protector(args),
             ProtectorCommand::ChangePass(args) => cmd_change_protector_pass(args),
         },
-        SystemInfo(args) => cmd_system_info(args),
         ExportMasterKey(args) => cmd_export_master_key(args),
         ImportMasterKey(_) => cmd_import_master_key(),
         Status(args) => cmd_status(args),
