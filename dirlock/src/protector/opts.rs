@@ -81,7 +81,7 @@ impl ProtectorOptsBuilder {
     /// Builds the [`ProtectorOpts`].
     ///
     /// # Errors
-    /// Returns an error some options are missing or invalid
+    /// Returns an error if some options are missing or invalid
     pub fn build(self) -> Result<ProtectorOpts> {
         let ptype = self.ptype.unwrap_or(ProtectorType::Password);
         if let Some(name) = &self.name {
