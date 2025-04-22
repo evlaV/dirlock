@@ -197,10 +197,13 @@ impl Protector {
     }
 
     /// Returns a PAM prompt for this protector
-    pub fn get_pam_prompt(&self) -> &'static str {
-        match self.data {
-            ProtectorData::Password(_) => "Enter password: ",
-            ProtectorData::Tpm2(_) => "Enter TPM2 PIN: ",
+    ///
+    /// # Errors
+    /// Returns the string message to show to the user if the protector cannot be used
+    pub fn get_pam_prompt(&self) -> Result<String, String> {
+        match &self.data {
+            ProtectorData::Password(_) => Ok(String::from("Enter password: ")),
+            ProtectorData::Tpm2(p) => p.get_pam_prompt(),
         }
     }
 }

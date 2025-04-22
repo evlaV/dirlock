@@ -97,6 +97,10 @@ impl Tpm2Protector {
     pub fn unwrap_key(&self, _pass: &[u8]) -> Result<Option<ProtectorKey>> {
         bail!("TPM support is disabled");
     }
+
+    pub fn get_pam_prompt(&self) -> Result<String, String> {
+        Err(String::from("TPM support is disabled"))
+    }
 }
 
 #[cfg(feature = "tpm2")]
@@ -147,6 +151,22 @@ impl Tpm2Protector {
         };
         let raw_data : &[u8; 32] = data.value().try_into()?;
         Ok(Some(ProtectorKey::from(raw_data)))
+    }
+
+    /// Returns the PAM prompt, or an error message if the TPM is not usable
+    pub fn get_pam_prompt(&self) -> Result<String, String> {
+        let Ok(s) = get_status(Tpm2Opts::default()) else {
+            return Err(String::from("Error connecting to the TPM"));
+        };
+        let retries = s.max_auth_fail - s.lockout_counter;
+        if retries == 0 {
+            Err(format!("The TPM is locked, wait up to {} seconds before trying again",
+                        s.lockout_interval))
+        } else if retries < 10 {
+            Ok(format!("Enter TPM2 PIN ({retries} retries left): "))
+        } else {
+            Ok(String::from("Enter TPM2 PIN: "))
+        }
     }
 }
 

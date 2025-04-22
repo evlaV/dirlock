@@ -42,10 +42,16 @@ fn do_authenticate(pamh: Pam) -> Result<(), PamError> {
     };
 
     for p in &encrypted_dir.protectors {
-        let prompt = Some(p.protector.get_pam_prompt());
+        let prompt = match p.protector.get_pam_prompt() {
+            Ok(p) => p,
+            Err(e) => {
+                _ = pamh.conv(Some(&e), PamMsgStyle::ERROR_MSG);
+                continue;
+            },
+        };
 
         // Get the password
-        let pass = pamh.conv(prompt, PamMsgStyle::PROMPT_ECHO_OFF)?
+        let pass = pamh.conv(Some(&prompt), PamMsgStyle::PROMPT_ECHO_OFF)?
             .map(|p| p.to_bytes())
             .ok_or(PamError::AUTH_ERR)?;
 
@@ -56,9 +62,9 @@ fn do_authenticate(pamh: Pam) -> Result<(), PamError> {
             Ok(false) => log_notice(&pamh, format!("authentication failure; user={user} protector={protid}")),
             Err(e) => log_notice(&pamh, format!("authentication failure; user={user} protector={protid} error={e}")),
         }
-    }
 
-    _ = pamh.conv(Some("Authentication failed"), PamMsgStyle::ERROR_MSG);
+        _ = pamh.conv(Some("Authentication failed"), PamMsgStyle::ERROR_MSG);
+    }
 
     Err(PamError::AUTH_ERR)
 }
