@@ -41,23 +41,26 @@ fn do_authenticate(pamh: Pam) -> Result<(), PamError> {
         Err(_)      => return Err(PamError::SERVICE_ERR),
     };
 
-    // Get the password
-    let pass = pamh.get_authtok(None)?
-        .map(|p| p.to_bytes())
-        .ok_or(PamError::AUTH_ERR)?;
+    for p in &encrypted_dir.protectors {
+        let prompt = Some(p.protector.get_pam_prompt());
 
-    // Unlock the home directory with the password
-    match encrypted_dir.unlock(pass, None) {
-        Ok(true) => Ok(()),
-        Ok(false) => {
-            log_notice(&pamh, format!("authentication failure; user={user}"));
-            Err(PamError::AUTH_ERR)
-        },
-        Err(e) => {
-            log_notice(&pamh, format!("authentication failure; user={user} error={e}"));
-            Err(PamError::AUTH_ERR)
+        // Get the password
+        let pass = pamh.conv(prompt, PamMsgStyle::PROMPT_ECHO_OFF)?
+            .map(|p| p.to_bytes())
+            .ok_or(PamError::AUTH_ERR)?;
+
+        // Unlock the home directory with the password
+        let protid = &p.protector.id;
+        match encrypted_dir.unlock(pass, Some(protid)) {
+            Ok(true) => return Ok(()),
+            Ok(false) => log_notice(&pamh, format!("authentication failure; user={user} protector={protid}")),
+            Err(e) => log_notice(&pamh, format!("authentication failure; user={user} protector={protid} error={e}")),
         }
     }
+
+    _ = pamh.conv(Some("Authentication failed"), PamMsgStyle::ERROR_MSG);
+
+    Err(PamError::AUTH_ERR)
 }
 
 
@@ -137,6 +140,7 @@ pam_module!(FscryptPam);
 
 impl PamServiceModule for FscryptPam {
     fn authenticate(pamh: Pam, _flags: PamFlags, _args: Vec<String>) -> PamError {
+        dirlock::init();
         do_authenticate(pamh).err().unwrap_or(PamError::SUCCESS)
     }
 
@@ -145,6 +149,7 @@ impl PamServiceModule for FscryptPam {
     }
 
     fn chauthtok(pamh: Pam, flags: PamFlags, _args: Vec<String>) -> PamError {
+        dirlock::init();
         do_chauthtok(pamh, flags).err().unwrap_or(PamError::SUCCESS)
     }
 }

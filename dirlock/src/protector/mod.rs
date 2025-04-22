@@ -192,6 +192,14 @@ impl Protector {
             ProtectorData::Tpm2(_) => ProtectorType::Tpm2,
         }
     }
+
+    /// Returns a PAM prompt for this protector
+    pub fn get_pam_prompt(&self) -> &'static str {
+        match self.data {
+            ProtectorData::Password(_) => "Enter password: ",
+            ProtectorData::Tpm2(_) => "Enter TPM2 PIN: ",
+        }
+    }
 }
 
 
