@@ -9,6 +9,7 @@ use opts::ProtectorOpts;
 use serde::{Serialize, Deserialize};
 use serde_with::{serde_as, hex::Hex};
 use sha2::{Digest, Sha512};
+use std::cmp;
 use std::fmt;
 
 use crate::crypto::{
@@ -66,7 +67,7 @@ impl ProtectorKey {
 }
 
 #[serde_as]
-#[derive(Eq, PartialEq, Clone, Copy, Hash, Default, Serialize, Deserialize, derive_more::Display)]
+#[derive(Eq, PartialEq, Ord, PartialOrd, Clone, Copy, Hash, Default, Serialize, Deserialize, derive_more::Display)]
 #[display("{}", hex::encode(_0))]
 pub struct ProtectorId(
     #[serde_as(as = "Hex")]
@@ -92,10 +93,12 @@ pub struct ProtectedPolicyKey {
 
 
 /// An enum of the existing protector types
-#[derive(Copy, Clone, PartialEq)]
+// The order is used to decide which protector to use first in the
+// cases where the user didn't select a specific one (notably PAM).
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum ProtectorType {
-    Password,
     Tpm2,
+    Password,
 }
 
 const PROTECTOR_TYPE_NAMES: &[(&str, ProtectorType)] = &[
@@ -201,6 +204,30 @@ impl Protector {
         }
     }
 }
+
+impl cmp::Ord for Protector {
+    fn cmp(&self, other: &Self) -> cmp::Ordering {
+        match self.get_type().cmp(&other.get_type()) {
+            cmp::Ordering::Equal => self.id.cmp(&other.id),
+            x => x,
+        }
+    }
+}
+
+impl cmp::PartialOrd for Protector {
+    fn partial_cmp(&self, other: &Self) -> Option<cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl cmp::PartialEq for Protector {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl cmp::Eq for Protector { }
+
 
 
 #[cfg(test)]

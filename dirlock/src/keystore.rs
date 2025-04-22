@@ -190,6 +190,7 @@ pub fn get_protectors_for_policy(id: &PolicyKeyId) -> Result<Vec<ProtectedPolicy
             result.push(ProtectedPolicyKey{ protector, policy_key });
         }
     }
+    result.sort_unstable_by(|a, b| a.protector.cmp(&b.protector));
     Ok(result)
 }
 
