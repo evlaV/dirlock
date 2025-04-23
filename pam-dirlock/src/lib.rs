@@ -42,8 +42,8 @@ fn do_authenticate(pamh: Pam) -> Result<(), PamError> {
     };
 
     for p in &encrypted_dir.protectors {
-        let prompt = match p.protector.get_pam_prompt() {
-            Ok(p) => p,
+        let prompt = match p.protector.get_prompt() {
+            Ok(p) => format!("{p}: "),
             Err(e) => {
                 _ = pamh.conv(Some(&e), PamMsgStyle::ERROR_MSG);
                 continue;

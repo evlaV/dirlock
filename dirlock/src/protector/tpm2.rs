@@ -98,7 +98,7 @@ impl Tpm2Protector {
         bail!("TPM support is disabled");
     }
 
-    pub fn get_pam_prompt(&self) -> Result<String, String> {
+    pub fn get_prompt(&self) -> Result<String, String> {
         Err(String::from("TPM support is disabled"))
     }
 }
@@ -153,8 +153,8 @@ impl Tpm2Protector {
         Ok(Some(ProtectorKey::from(raw_data)))
     }
 
-    /// Returns the PAM prompt, or an error message if the TPM is not usable
-    pub fn get_pam_prompt(&self) -> Result<String, String> {
+    /// Returns the prompt, or an error message if the TPM is not usable
+    pub fn get_prompt(&self) -> Result<String, String> {
         let Ok(s) = get_status(Tpm2Opts::default()) else {
             return Err(String::from("Error connecting to the TPM"));
         };
@@ -163,9 +163,9 @@ impl Tpm2Protector {
             Err(format!("The TPM is locked, wait up to {} seconds before trying again",
                         s.lockout_interval))
         } else if retries < 10 {
-            Ok(format!("Enter TPM2 PIN ({retries} retries left): "))
+            Ok(format!("Enter TPM2 PIN ({retries} retries left)"))
         } else {
-            Ok(String::from("Enter TPM2 PIN: "))
+            Ok(String::from("Enter TPM2 PIN"))
         }
     }
 }
