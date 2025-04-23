@@ -396,17 +396,33 @@ fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
         x => bail!("{}", x),
     };
 
-    if let Some(id) = &args.protector {
-        let _ = encrypted_dir.get_protector_by_id(id)?;
+    // If the user selected a protector then use it, otherwise try all of them
+    let prots = if let Some(id) = &args.protector {
+        vec![encrypted_dir.get_protector_by_id(id)?]
+    } else {
+        encrypted_dir.protectors.iter().map(|p| &p.protector).collect()
+    };
+
+    for p in &prots {
+        let prompt = match p.get_prompt() {
+            Ok(p) => p,
+            Err(e) => {
+                println!("{e}");
+                continue;
+            },
+        };
+        if prots.len() > 1 {
+            println!("Trying to unlock directory with protector {} (\"{}\")", p.id, p.get_name());
+        }
+        let pass = read_password(&prompt, ReadPassword::Once)?;
+
+        if encrypted_dir.unlock(pass.as_bytes(), Some(&p.id))? {
+            return Ok(());
+        }
+        println!("Authentication failed");
     }
 
-    let pass = read_password("Enter encryption password", ReadPassword::Once)?;
-
-    if ! encrypted_dir.unlock(pass.as_bytes(), args.protector.as_ref())? {
-        bail!("Unable to unlock directory {}: wrong password", args.dir.display())
-    }
-
-    Ok(())
+    bail!("Unable to unlock directory");
 }
 
 fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
