@@ -57,7 +57,7 @@ fn do_authenticate(pamh: Pam) -> Result<(), PamError> {
 
         // Unlock the home directory with the password
         let protid = &p.protector.id;
-        match encrypted_dir.unlock(pass, Some(protid)) {
+        match encrypted_dir.unlock(pass, protid) {
             Ok(true) => return Ok(()),
             Ok(false) => log_notice(&pamh, format!("authentication failure; user={user} protector={protid}")),
             Err(e) => log_notice(&pamh, format!("authentication failure; user={user} protector={protid} error={e}")),

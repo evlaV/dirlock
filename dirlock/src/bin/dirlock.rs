@@ -416,7 +416,7 @@ fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
         }
         let pass = read_password(&prompt, ReadPassword::Once)?;
 
-        if encrypted_dir.unlock(pass.as_bytes(), Some(&p.id))? {
+        if encrypted_dir.unlock(pass.as_bytes(), &p.id)? {
             return Ok(());
         }
         println!("Authentication failed");
