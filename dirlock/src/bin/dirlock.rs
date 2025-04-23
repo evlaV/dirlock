@@ -11,6 +11,7 @@ use std::num::NonZeroU32;
 use std::path::PathBuf;
 use dirlock::{
     DirStatus,
+    EncryptedDir,
     fscrypt::{
         PolicyKeyId,
         self,
@@ -256,6 +257,9 @@ struct ProtectorChangePassArgs {
 #[argh(subcommand, name = "export-master-key")]
 /// Export the master encryption key of a directory
 struct ExportMasterKeyArgs {
+    /// ID of the protector used to unlock the directory
+    #[argh(option)]
+    protector: Option<ProtectorId>,
     /// directory
     #[argh(positional)]
     dir: PathBuf,
@@ -338,9 +342,24 @@ fn display_protector_list() -> Result<()> {
     Ok(())
 }
 
-fn display_protectors_from_dir(dir: &dirlock::EncryptedDir) {
+fn display_protectors_from_dir(dir: &EncryptedDir) {
     let list = dir.protectors.iter().map(|p| &p.protector).collect();
     do_display_protector_list(list);
+}
+
+fn get_dir_protector<'a>(dir: &'a EncryptedDir, prot: &Option<ProtectorId>) -> Result<&'a Protector> {
+    match prot {
+        Some(id) => dir.get_protector_by_id(id),
+        None => {
+            if dir.protectors.len() == 1 {
+                Ok(&dir.protectors[0].protector)
+            } else {
+                println!("This directory has multiple protectors, you must select one.");
+                display_protectors_from_dir(dir);
+                bail!("Protector not specified");
+            }
+        },
+    }
 }
 
 fn cmd_lock(args: &LockArgs) -> Result<()> {
@@ -412,19 +431,7 @@ fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
         x => bail!("{}", x),
     };
 
-    let protector = match &args.protector {
-        Some(id) => encrypted_dir.get_protector_by_id(id)?,
-        None => {
-            if encrypted_dir.protectors.len() == 1 {
-                &encrypted_dir.protectors[0].protector
-            } else {
-                println!("This directory has multiple protectors, you must select one.");
-                display_protectors_from_dir(&encrypted_dir);
-                bail!("Protector not specified");
-            }
-        },
-    };
-
+    let protector = get_dir_protector(&encrypted_dir, &args.protector)?;
     do_change_verify_protector_password(Some(protector.id), false)
 }
 
@@ -713,15 +720,17 @@ fn cmd_export_master_key(args: &ExportMasterKeyArgs) -> Result<()> {
         x => bail!("{x}"),
     };
 
+    let protector = get_dir_protector(&encrypted_dir, &args.protector)?;
+
     eprintln!("This will print to stdout the master key with ID {}", encrypted_dir.policy.keyid);
     eprintln!("- This is the encryption key for directory {}", args.dir.display());
     eprintln!("- This feature is only available while this tool is under development");
     eprintln!("- The printed key is *raw and unprotected*, you are reponsible for keeping it safe");
     eprintln!();
-    let pass = read_password("Enter the current encryption password", ReadPassword::Once)?;
+    let pass = read_password_for_protector(protector)?;
 
-    let Some(k) = encrypted_dir.get_master_key(pass.as_bytes(), None) else {
-        bail!("Unable to unlock master key for directory {}", args.dir.display());
+    let Some(k) = encrypted_dir.get_master_key(pass.as_bytes(), Some(&protector.id)) else {
+        bail!("Authentication failed");
     };
 
     println!("{}", BASE64_STANDARD.encode(k.secret()));
