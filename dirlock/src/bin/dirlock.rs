@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{bail, Result};
 use argh::FromArgs;
 use std::io::{self, Write};
 use std::num::NonZeroU32;
@@ -31,6 +31,7 @@ use dirlock::{
         ReadPassword,
         dir_is_empty,
         read_password,
+        read_password_for_protector,
     },
 };
 
@@ -459,8 +460,7 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
 
     let protector_key = if let Some(id) = args.protector {
         let protector = dirlock::get_protector_by_id(id)?;
-        let prompt = protector.get_prompt().map_err(|e| anyhow!("{e}"))?;
-        let pass = read_password(&prompt, ReadPassword::Once)?;
+        let pass = read_password_for_protector(&protector)?;
         let Some(protector_key) = protector.unwrap_key(pass.as_bytes()) else {
             bail!("Invalid password");
         };
@@ -519,8 +519,7 @@ fn cmd_create_policy(args: &PolicyCreateArgs) -> Result<()> {
         return display_protector_list()
     };
     let protector = dirlock::get_protector_by_id(id)?;
-    let prompt = protector.get_prompt().map_err(|e| anyhow!("{e}"))?;
-    let pass = read_password(&prompt, ReadPassword::Once)?;
+    let pass = read_password_for_protector(&protector)?;
     let Some(protector_key) = protector.unwrap_key(pass.as_bytes()) else {
         bail!("Invalid password for protector {id}");
     };
@@ -598,15 +597,13 @@ fn cmd_policy_add_protector(args: &PolicyAddProtectorArgs) -> Result<()> {
     };
 
     println!("Unlocking new protector {} (\"{}\")", protector.id, protector.get_name());
-    let prompt = protector.get_prompt().map_err(|e| anyhow!("{e}"))?;
-    let pass = read_password(&prompt, ReadPassword::Once)?;
+    let pass = read_password_for_protector(&protector)?;
     let Some(protector_key) = protector.unwrap_key(pass.as_bytes()) else {
         bail!("Invalid password");
     };
 
     println!("Unlocking existing protector {} (\"{}\")", unlock_with.id, unlock_with.get_name());
-    let prompt = unlock_with.get_prompt().map_err(|e| anyhow!("{e}"))?;
-    let pass = read_password(&prompt, ReadPassword::Once)?;
+    let pass = read_password_for_protector(&unlock_with)?;
     let Some(policy_key) = unlock_with.unwrap_policy_key(wrapped_policy_key, pass.as_bytes()) else {
         bail!("Invalid password");
     };
@@ -687,8 +684,7 @@ fn do_change_verify_protector_password(protector_id: Option<ProtectorId>, verify
         return display_protector_list()
     };
     let mut protector = dirlock::get_protector_by_id(id)?;
-    let prompt = protector.get_prompt().map_err(|e| anyhow!("{e}"))?;
-    let pass = read_password(&prompt, ReadPassword::Once)?;
+    let pass = read_password_for_protector(&protector)?;
     let Some(protector_key) = protector.unwrap_key(pass.as_bytes()) else {
         bail!("Invalid password");
     };

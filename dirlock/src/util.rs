@@ -10,6 +10,8 @@ use std::os::fd::FromRawFd;
 use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
 
+use crate::protector::Protector;
+
 /// Get the user's home dir, or None if the user does not exist
 pub(crate) fn get_homedir(user: &str) -> Result<Option<PathBuf>> {
     homedir::home(user)
@@ -42,6 +44,11 @@ pub fn read_password(prompt: &str, times: ReadPassword) -> Result<Zeroizing<Stri
     Ok(pass)
 }
 
+/// Prompt the user for a password for a specific protector and return it
+pub fn read_password_for_protector(prot: &Protector) -> Result<Zeroizing<String>> {
+    let prompt = prot.get_prompt().map_err(|e| anyhow!("{e}"))?;
+    read_password(&prompt, ReadPassword::Once)
+}
 
 /// Helper to safely write the new version of a file to disk.
 ///
