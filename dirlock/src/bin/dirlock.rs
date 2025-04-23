@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use argh::FromArgs;
 use std::io::{self, Write};
 use std::num::NonZeroU32;
@@ -278,21 +278,6 @@ struct StatusArgs {
 }
 
 #[cfg(feature = "tpm2")]
-fn display_tpm_lockout_counter(protector: &Protector) -> Result<()> {
-    use dirlock::protector::{ProtectorType, opts::Tpm2Opts};
-    if protector.get_type() == ProtectorType::Tpm2 {
-        let status = dirlock::protector::tpm2::get_status(Tpm2Opts::default())?;
-        println!("This is a TPM2 protector. Failed authentication counter: {} / {}",
-                 status.lockout_counter, status.max_auth_fail);
-        if status.in_lockout {
-            bail!("The TPM is locked, you must wait up to {} seconds before trying again",
-                  status.lockout_interval);
-        }
-    }
-    Ok(())
-}
-
-#[cfg(feature = "tpm2")]
 fn display_tpm_information(tpm2_device: &Option<PathBuf>) -> Result<()> {
     // TODO: get rid of this builder, we don't need this to get the status of the TPM
     let ProtectorOpts::Tpm2(opts) = ProtectorOptsBuilder::new()
@@ -322,11 +307,6 @@ fn display_tpm_information(tpm2_device: &Option<PathBuf>) -> Result<()> {
               status.max_auth_fail,
               status.lockout_interval);
 
-    Ok(())
-}
-
-#[cfg(not(feature = "tpm2"))]
-fn display_tpm_lockout_counter(_protector: &Protector) -> Result<()> {
     Ok(())
 }
 
@@ -479,8 +459,8 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
 
     let protector_key = if let Some(id) = args.protector {
         let protector = dirlock::get_protector_by_id(id)?;
-        display_tpm_lockout_counter(&protector)?;
-        let pass = read_password("Enter the password of the protector", ReadPassword::Once)?;
+        let prompt = protector.get_prompt().map_err(|e| anyhow!("{e}"))?;
+        let pass = read_password(&prompt, ReadPassword::Once)?;
         let Some(protector_key) = protector.unwrap_key(pass.as_bytes()) else {
             bail!("Invalid password");
         };
@@ -539,7 +519,8 @@ fn cmd_create_policy(args: &PolicyCreateArgs) -> Result<()> {
         return display_protector_list()
     };
     let protector = dirlock::get_protector_by_id(id)?;
-    let pass = read_password("Enter password for the protector", ReadPassword::Once)?;
+    let prompt = protector.get_prompt().map_err(|e| anyhow!("{e}"))?;
+    let pass = read_password(&prompt, ReadPassword::Once)?;
     let Some(protector_key) = protector.unwrap_key(pass.as_bytes()) else {
         bail!("Invalid password for protector {id}");
     };
@@ -616,12 +597,16 @@ fn cmd_policy_add_protector(args: &PolicyAddProtectorArgs) -> Result<()> {
         bail!("Policy {policy_id} cannot be unlocked with protector {}", unlock_with.id);
     };
 
-    let pass = read_password("Enter the password of the protector to add", ReadPassword::Once)?;
+    println!("Unlocking new protector {} (\"{}\")", protector.id, protector.get_name());
+    let prompt = protector.get_prompt().map_err(|e| anyhow!("{e}"))?;
+    let pass = read_password(&prompt, ReadPassword::Once)?;
     let Some(protector_key) = protector.unwrap_key(pass.as_bytes()) else {
         bail!("Invalid password");
     };
 
-    let pass = read_password("Enter the password of the existing protector", ReadPassword::Once)?;
+    println!("Unlocking existing protector {} (\"{}\")", unlock_with.id, unlock_with.get_name());
+    let prompt = unlock_with.get_prompt().map_err(|e| anyhow!("{e}"))?;
+    let pass = read_password(&prompt, ReadPassword::Once)?;
     let Some(policy_key) = unlock_with.unwrap_policy_key(wrapped_policy_key, pass.as_bytes()) else {
         bail!("Invalid password");
     };
@@ -702,8 +687,8 @@ fn do_change_verify_protector_password(protector_id: Option<ProtectorId>, verify
         return display_protector_list()
     };
     let mut protector = dirlock::get_protector_by_id(id)?;
-    display_tpm_lockout_counter(&protector)?;
-    let pass = read_password("Enter the current password", ReadPassword::Once)?;
+    let prompt = protector.get_prompt().map_err(|e| anyhow!("{e}"))?;
+    let pass = read_password(&prompt, ReadPassword::Once)?;
     let Some(protector_key) = protector.unwrap_key(pass.as_bytes()) else {
         bail!("Invalid password");
     };
