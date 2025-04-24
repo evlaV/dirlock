@@ -150,13 +150,6 @@ impl EncryptedDir {
             .ok_or_else(|| anyhow!("No protector found with that ID in the directory"))
     }
 
-    /// Finds a protector that can be unlocked with the given password
-    pub fn get_protector_id_by_pass(&self, pass: &[u8]) -> Result<&ProtectorId> {
-        self.protectors.iter().find(|p| p.protector.unwrap_key(pass).is_some())
-            .map(|p| &p.protector.id)
-            .ok_or_else(|| anyhow!("No protector found with that password in the directory"))
-    }
-
     /// Changes the password of a protector used to lock this directory
     ///
     /// If `protector_id` is `None`, change the first protector with a matching password.
