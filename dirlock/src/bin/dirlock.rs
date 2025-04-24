@@ -151,7 +151,7 @@ struct PolicyCreateArgs {
 /// Permanently remove an encryption policy
 struct PolicyRemoveArgs {
     /// ID of the policy to remove
-    #[argh(option)]
+    #[argh(positional)]
     policy: Option<PolicyKeyId>,
     /// remove a policy without asking for confirmation
     #[argh(switch, long = "force")]
@@ -231,7 +231,7 @@ struct ProtectorCreateArgs {
 /// Remove a protector
 struct ProtectorRemoveArgs {
     /// ID of the protector to remove
-    #[argh(option)]
+    #[argh(positional)]
     protector: Option<ProtectorId>,
 }
 
@@ -240,7 +240,7 @@ struct ProtectorRemoveArgs {
 /// Verify a protector's password
 struct ProtectorVerifyPassArgs {
     /// ID of the protector to verify
-    #[argh(option)]
+    #[argh(positional)]
     protector: Option<ProtectorId>,
 }
 
@@ -249,7 +249,7 @@ struct ProtectorVerifyPassArgs {
 /// Change a protector's password
 struct ProtectorChangePassArgs {
     /// ID of the protector
-    #[argh(option)]
+    #[argh(positional)]
     protector: Option<ProtectorId>,
 }
 
