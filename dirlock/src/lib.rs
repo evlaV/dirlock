@@ -174,23 +174,6 @@ impl EncryptedDir {
         }
         Ok(false)
     }
-
-    /// Remove a protector from a directory.
-    /// Note: this will remove the protector even if it's the only one left.
-    pub fn remove_protector(&self, id: &ProtectorId) -> Result<bool> {
-        for ProtectedPolicyKey { protector, .. } in &self.protectors {
-            if &protector.id == id {
-                if keystore::remove_protector_from_policy(&self.policy.keyid, &protector.id)? {
-                    // TODO: add an option to make this conditional
-                    keystore::remove_protector_if_unused(&protector.id)?;
-                    return Ok(true);
-                }
-                return Ok(false);
-            }
-        }
-
-        Ok(false)
-    }
 }
 
 
