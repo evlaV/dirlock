@@ -9,6 +9,7 @@ use std::{
     collections::HashMap,
     ffi::OsStr,
     fs,
+    io::ErrorKind,
     io::Write,
     path::{Path, PathBuf},
     sync::OnceLock,
@@ -39,7 +40,7 @@ fn keystore_dirs() -> &'static KeystoreDirs {
 }
 
 /// Return an iterator to the IDs of all policy keys available in the key store
-pub fn policy_key_ids() -> Result<impl Iterator<Item = PolicyKeyId>> {
+pub fn policy_key_ids() -> Result<Vec<PolicyKeyId>> {
     fn id_from_entry(d: fs::DirEntry) -> Option<PolicyKeyId> {
         let path = d.path();
         if let Some(path_str) = path.file_name().and_then(OsStr::to_str) {
@@ -50,11 +51,15 @@ pub fn policy_key_ids() -> Result<impl Iterator<Item = PolicyKeyId>> {
     }
 
     let policy_dir = &keystore_dirs().policies;
-    Ok(fs::read_dir(policy_dir)?.flatten().filter_map(id_from_entry))
+    match fs::read_dir(policy_dir) {
+        Ok(d) => Ok(d.flatten().filter_map(id_from_entry).collect()),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(vec![]),
+        Err(e) => bail!("{e}"),
+    }
 }
 
 /// Return an iterator to the IDs of all protectors available in the key store
-pub fn protector_ids() -> Result<impl Iterator<Item = ProtectorId>> {
+pub fn protector_ids() -> Result<Vec<ProtectorId>> {
     fn id_from_entry(d: fs::DirEntry) -> Option<ProtectorId> {
         let path = d.path();
         if let Some(path_str) = path.file_name().and_then(OsStr::to_str) {
@@ -65,7 +70,11 @@ pub fn protector_ids() -> Result<impl Iterator<Item = ProtectorId>> {
     }
 
     let protector_dir = &keystore_dirs().protectors;
-    Ok(fs::read_dir(protector_dir)?.flatten().filter_map(id_from_entry))
+    match fs::read_dir(protector_dir) {
+        Ok(d) => Ok(d.flatten().filter_map(id_from_entry).collect()),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(vec![]),
+        Err(e) => bail!("{e}"),
+    }
 }
 
 /// This contains several instances of the same fscrypt policy key
