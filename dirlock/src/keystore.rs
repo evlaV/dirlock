@@ -40,7 +40,7 @@ fn keystore_dirs() -> &'static KeystoreDirs {
 }
 
 /// Return an iterator to the IDs of all policy keys available in the key store
-pub fn policy_key_ids() -> Result<Vec<PolicyKeyId>> {
+pub fn policy_key_ids() -> std::io::Result<Vec<PolicyKeyId>> {
     fn id_from_entry(d: fs::DirEntry) -> Option<PolicyKeyId> {
         let path = d.path();
         if let Some(path_str) = path.file_name().and_then(OsStr::to_str) {
@@ -54,12 +54,12 @@ pub fn policy_key_ids() -> Result<Vec<PolicyKeyId>> {
     match fs::read_dir(policy_dir) {
         Ok(d) => Ok(d.flatten().filter_map(id_from_entry).collect()),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(vec![]),
-        Err(e) => bail!("{e}"),
+        Err(e) => Err(e),
     }
 }
 
 /// Return an iterator to the IDs of all protectors available in the key store
-pub fn protector_ids() -> Result<Vec<ProtectorId>> {
+pub fn protector_ids() -> std::io::Result<Vec<ProtectorId>> {
     fn id_from_entry(d: fs::DirEntry) -> Option<ProtectorId> {
         let path = d.path();
         if let Some(path_str) = path.file_name().and_then(OsStr::to_str) {
@@ -73,7 +73,7 @@ pub fn protector_ids() -> Result<Vec<ProtectorId>> {
     match fs::read_dir(protector_dir) {
         Ok(d) => Ok(d.flatten().filter_map(id_from_entry).collect()),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(vec![]),
-        Err(e) => bail!("{e}"),
+        Err(e) => Err(e),
     }
 }
 
@@ -204,11 +204,11 @@ pub fn get_protectors_for_policy(id: &PolicyKeyId) -> Result<Vec<ProtectedPolicy
 }
 
 /// Remove an encryption policy permanently from disk
-pub fn remove_policy(id: &PolicyKeyId) -> Result<()> {
+pub fn remove_policy(id: &PolicyKeyId) -> std::io::Result<()> {
     let dir = &keystore_dirs().policies;
     let policy_file = dir.join(id.to_string());
     if !dir.exists() || !policy_file.exists() {
-        bail!("Policy not found");
+        return Err(ErrorKind::NotFound.into());
     }
     fs::remove_file(policy_file)?;
     Ok(())
