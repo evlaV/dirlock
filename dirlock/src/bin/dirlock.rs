@@ -62,7 +62,7 @@ enum Command {
 /// Lock an encrypted directory
 struct LockArgs {
     /// lock the directory no matter who unlocked it
-    #[argh(switch, long = "all-users")]
+    #[argh(switch)]
     all_users: bool,
     /// directory
     #[argh(positional)]
@@ -107,7 +107,7 @@ struct EncryptArgs {
     #[argh(option)]
     protector: Option<ProtectorId>,
     /// force encrypting a directory with data
-    #[argh(switch, long = "force")]
+    #[argh(switch)]
     force: bool,
     /// directory
     #[argh(positional)]
@@ -153,8 +153,8 @@ struct PolicyRemoveArgs {
     /// ID of the policy to remove
     #[argh(positional)]
     policy: Option<PolicyKeyId>,
-    /// remove a policy without asking for confirmation
-    #[argh(switch, long = "force")]
+    /// don't ask for confirmation
+    #[argh(switch)]
     force: bool,
 }
 
