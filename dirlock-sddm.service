@@ -5,7 +5,7 @@ PartOf=sddm.service
 
 [Service]
 Type=oneshot
-ExecStart=/var/lib/dirlock/dirlock-sddm-helper
+ExecStart=/usr/lib/steamos/dirlock-sddm-helper
 
 [Install]
 WantedBy=sddm.service

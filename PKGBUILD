@@ -5,10 +5,9 @@ pkgver=0.0.1
 pkgrel=1
 arch=('x86_64')
 source=("git+ssh://git@gitlab.steamos.cloud/holo/$pkgname.git#branch=master"
-        'atomic-update.conf'
         'dirlock-sddm-helper'
         'dirlock-sddm.service'
-        'dirlock.install'
+        'steamos-enable-dirlock'
         'aes-0.8.4.tar.gz::https://crates.io/api/v1/crates/aes/0.8.4/download'
         'aho-corasick-1.1.3.tar.gz::https://crates.io/api/v1/crates/aho-corasick/1.1.3/download'
         'android-tzdata-0.1.1.tar.gz::https://crates.io/api/v1/crates/android-tzdata/0.1.1/download'
@@ -180,7 +179,6 @@ sha256sums=('SKIP'
             'SKIP'
             'SKIP'
             'SKIP'
-            'SKIP'
             'b169f7a6d4742236a0a00c541b845991d0ac43e546831af1249753ab4c3aa3a0'
             '8e60d3430d3a69478ad0993f19238d2df97c507009a52b3c10addcd7f6bcb916'
             'e999941b234f3131b00bc13c22d06e8c5ff726d1b6318ac7eb276997bbb4fef0'
@@ -343,7 +341,6 @@ sha256sums=('SKIP'
             'fa4f8080344d4671fb4e831a13ad1e68092748387dfc4f55e356242fae12ce3e'
             'ced3678a2879b30306d323f4542626697a464a97c0a07c9aebf7ebca65cd4dde'
             'ce36e65b0d2999d2aafac989fb249189a141aee1f53c612c1f37d72631959f69')
-install=dirlock.install
 
 pkgver() {
   cd "$srcdir/$pkgname"
@@ -381,22 +378,22 @@ package() {
 
   cd "$srcdir/$pkgname"
 
-  # dirlock does not come with the system.
-  # Install binaries in /var/lib so they survive OS updates.
-  install -d -m0755 "$pkgdir/var/lib/dirlock/"
-  install -m755 ../dirlock-sddm-helper "$pkgdir/var/lib/dirlock/"
-  install -m755 "target/release/dirlock" "$pkgdir/var/lib/dirlock"
-  install -m755 "target/release/fscryptctl" "$pkgdir/var/lib/dirlock"
-  install -m644 "target/release/libpam_dirlock.so" "$pkgdir/var/lib/dirlock/pam_dirlock.so"
+  # Data dir
+  install -d -m0700 "$pkgdir/var/lib/dirlock/"
 
-  # Create a symlink for convenience, although it'll be gone after an OS update
-  install -d -m0755 "$pkgdir/usr/bin"
-  ln -s /var/lib/dirlock/dirlock "$pkgdir/usr/bin"
+  # Main binary
+  install -m755 -D "target/release/dirlock" "$pkgdir/usr/bin/dirlock"
 
-  install -d -m0755 "$pkgdir/etc/systemd/system/sddm.service.wants/"
-  install -m644 ../dirlock-sddm.service "$pkgdir/etc/systemd/system/"
-  ln -s ../dirlock-sddm.service "$pkgdir/etc/systemd/system/sddm.service.wants"
+  # PAM module
+  install -m644 -D "target/release/libpam_dirlock.so" "$pkgdir/usr/lib/security/pam_dirlock.so"
 
-  install -d -m0755 "$pkgdir/etc/atomic-update.conf.d/"
-  install -m644 ../atomic-update.conf "$pkgdir/etc/atomic-update.conf.d/dirlock.conf"
+  # Helper script to enable encryption in SteamOS
+  install -m755 -D ../steamos-enable-dirlock "$pkgdir/usr/lib/steamos/steamos-enable-dirlock"
+
+  # systemd service (SteamOS integration)
+  install -m644 -D ../dirlock-sddm.service "$pkgdir/usr/lib/systemd/system/dirlock-sddm.service"
+  install -m755 -D ../dirlock-sddm-helper "$pkgdir/usr/lib/steamos/dirlock-sddm-helper"
+
+  # Low-level debug tool
+  install -m755 -D "target/release/fscryptctl" "$pkgdir/usr/lib/dirlock/fscryptctl"
 }
