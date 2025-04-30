@@ -31,6 +31,7 @@ enable_fs_encryption() {
 enable_atomic_update_conf() {
     echo -e "** ${CYAN}Creating /etc/atomic-update.conf.d/dirlock.conf${NC}"
     cat > /etc/atomic-update.conf.d/dirlock.conf <<-EOF
+	/etc/dirlock.conf
 	/etc/pam.d/sudo
 	/etc/pam.d/system-auth
 	EOF
