@@ -175,7 +175,7 @@ impl Protector {
         }
         match self.data {
             ProtectorData::Password(ref mut p) => p.wrap_key(key, pass),
-            ProtectorData::Tpm2(ref mut p) => p.wrap_key(&opts::Tpm2Opts::default().path, key, pass)?,
+            ProtectorData::Tpm2(ref mut p) => p.wrap_key(key, pass)?,
         }
         Ok(())
     }

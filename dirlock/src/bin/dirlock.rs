@@ -218,9 +218,6 @@ struct ProtectorCreateArgs {
     /// protector name
     #[argh(option)]
     name: String,
-    /// TPM2 device (default: auto)
-    #[argh(option)]
-    tpm2_device: Option<PathBuf>,
     /// iterations for the key derivation function (default: auto)
     #[argh(option)]
     kdf_iter: Option<NonZeroU32>,
@@ -274,27 +271,14 @@ struct ImportMasterKeyArgs { }
 #[argh(subcommand, name = "status")]
 /// Show the status of the system or a directory
 struct StatusArgs {
-    /// TPM2 device (default: auto)
-    #[argh(option)]
-    tpm2_device: Option<PathBuf>,
     /// directory (default: show global status)
     #[argh(positional)]
     dir: Option<PathBuf>,
 }
 
 #[cfg(feature = "tpm2")]
-fn display_tpm_information(tpm2_device: &Option<PathBuf>) -> Result<()> {
-    // TODO: get rid of this builder, we don't need this to get the status of the TPM
-    let ProtectorOpts::Tpm2(opts) = ProtectorOptsBuilder::new()
-        .with_name(String::new())
-        .with_type(Some(ProtectorType::Tpm2))
-        .with_tpm2_device(tpm2_device.clone())
-        .build()?
-    else {
-        unreachable!(); // We only build tpm2 opts here
-    };
-
-    let Ok(status) = dirlock::protector::tpm2::get_status(opts) else {
+fn display_tpm_information() -> Result<()> {
+    let Ok(status) = dirlock::protector::tpm2::get_status() else {
         println!("TPM not found");
         return Ok(());
     };
@@ -316,7 +300,7 @@ fn display_tpm_information(tpm2_device: &Option<PathBuf>) -> Result<()> {
 }
 
 #[cfg(not(feature = "tpm2"))]
-fn display_tpm_information(_tpm2_device: &Option<PathBuf>) -> Result<()> {
+fn display_tpm_information() -> Result<()> {
     println!("TPM support not enabled");
     Ok(())
 }
@@ -651,7 +635,6 @@ fn cmd_policy_remove_protector(args: &PolicyRemoveProtectorArgs) -> Result<()> {
 fn cmd_create_protector(args: &ProtectorCreateArgs) -> Result<()> {
     let opts = ProtectorOptsBuilder::new()
         .with_type(Some(args.type_))
-        .with_tpm2_device(args.tpm2_device.clone())
         .with_kdf_iter(args.kdf_iter)
         .with_name(args.name.clone())
         .build()?;
@@ -780,7 +763,7 @@ fn cmd_status(args: &StatusArgs) -> Result<()> {
         cmd_list_policies()?;
 
         println!();
-        display_tpm_information(&args.tpm2_device)?;
+        display_tpm_information()?;
 
         return Ok(());
     };

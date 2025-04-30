@@ -4,6 +4,9 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
+#[cfg(feature = "tpm2")]
+pub(crate) mod config;
+
 pub mod convert;
 pub(crate) mod crypto;
 pub mod fscrypt;

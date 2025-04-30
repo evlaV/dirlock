@@ -12,6 +12,7 @@ use crate::kdf::Kdf;
 #[cfg(feature = "tpm2")]
 use {
     anyhow::anyhow,
+    crate::config::Config,
     crate::kdf::Pbkdf2,
     rand::{RngCore, rngs::OsRng},
     std::str::FromStr,
@@ -90,7 +91,7 @@ impl Tpm2Protector {
         bail!("TPM support is disabled");
     }
 
-    pub fn wrap_key(&mut self, _path: &str, _prot_key: ProtectorKey, _pass: &[u8]) -> Result<()> {
+    pub fn wrap_key(&mut self, _prot_key: ProtectorKey, _pass: &[u8]) -> Result<()> {
         bail!("TPM support is disabled");
     }
 
@@ -113,12 +114,13 @@ impl Tpm2Protector {
             Kdf::default()
         };
         let mut prot = Tpm2Protector { kdf, name: opts.name, ..Default::default() };
-        prot.wrap_key(&opts.path, prot_key, pass)?;
+        prot.wrap_key(prot_key, pass)?;
         Ok(prot)
     }
 
     /// Wraps `prot_key` with `pass`. This generates a new random Salt.
-    pub fn wrap_key(&mut self, path: &str, prot_key: ProtectorKey, pass: &[u8]) -> Result<()> {
+    pub fn wrap_key(&mut self, prot_key: ProtectorKey, pass: &[u8]) -> Result<()> {
+        let path = Config::tpm2_device()?;
         let mut ctx = Context::new(TctiNameConf::Device(
             DeviceConfig::from_str(path)?
         )).map_err(|_| anyhow!("Unable to access the TPM at {}", path))?;
@@ -155,7 +157,7 @@ impl Tpm2Protector {
 
     /// Returns the prompt, or an error message if the TPM is not usable
     pub fn get_prompt(&self) -> Result<String, String> {
-        let Ok(s) = get_status(Tpm2Opts::default()) else {
+        let Ok(s) = get_status() else {
             return Err(String::from("Error connecting to the TPM"));
         };
         let retries = s.max_auth_fail - s.lockout_counter;
@@ -327,11 +329,12 @@ pub struct TpmStatus {
 }
 
 #[cfg(feature = "tpm2")]
-pub fn get_status(opts: Tpm2Opts) -> Result<TpmStatus> {
+pub fn get_status() -> Result<TpmStatus> {
     use PropertyTag::*;
 
+    let path = Config::tpm2_device()?;
     let mut ctx = Context::new(TctiNameConf::Device(
-        DeviceConfig::from_str(&opts.path)?
+        DeviceConfig::from_str(path)?
     ))?;
 
     let perm = ctx.get_tpm_property(Permanent)?.unwrap_or(0);
@@ -355,7 +358,7 @@ pub fn get_status(opts: Tpm2Opts) -> Result<TpmStatus> {
 
         if props.len() == values.len() {
             return Ok(TpmStatus {
-                path: opts.path,
+                path: path.to_string(),
                 manufacturer,
                 lockout_counter: values[0],
                 max_auth_fail: values[1],
