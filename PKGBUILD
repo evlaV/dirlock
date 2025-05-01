@@ -8,6 +8,8 @@ source=("git+ssh://git@gitlab.steamos.cloud/holo/$pkgname.git#branch=master"
         'dirlock-sddm-helper'
         'dirlock-sddm.service'
         'steamos-enable-dirlock'
+        'steamos-encrypt-home'
+        'steamos-decrypt-home'
         'aes-0.8.4.tar.gz::https://crates.io/api/v1/crates/aes/0.8.4/download'
         'aho-corasick-1.1.3.tar.gz::https://crates.io/api/v1/crates/aho-corasick/1.1.3/download'
         'android-tzdata-0.1.1.tar.gz::https://crates.io/api/v1/crates/android-tzdata/0.1.1/download'
@@ -176,6 +178,8 @@ makedepends=('cargo'
              'holo-rust-packaging-tools')
 license=('BSD-3-Clause')
 sha256sums=('SKIP'
+            'SKIP'
+            'SKIP'
             'SKIP'
             'SKIP'
             'SKIP'
@@ -387,8 +391,10 @@ package() {
   # PAM module
   install -m644 -D "target/release/libpam_dirlock.so" "$pkgdir/usr/lib/security/pam_dirlock.so"
 
-  # Helper script to enable encryption in SteamOS
+  # Helper scripts to enable encryption in SteamOS
   install -m755 -D ../steamos-enable-dirlock "$pkgdir/usr/lib/steamos/steamos-enable-dirlock"
+  install -m755 -D ../steamos-encrypt-home "$pkgdir/usr/lib/steamos/steamos-encrypt-home"
+  install -m755 -D ../steamos-decrypt-home "$pkgdir/usr/lib/steamos/steamos-decrypt-home"
 
   # systemd service (SteamOS integration)
   install -m644 -D ../dirlock-sddm.service "$pkgdir/usr/lib/systemd/system/dirlock-sddm.service"

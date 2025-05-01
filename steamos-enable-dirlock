@@ -22,7 +22,7 @@ enable_fs_encryption() {
     if dumpe2fs -h /dev/disk/by-label/home 2> /dev/null | grep -q '^Filesystem features:.*encrypt'; then
         echo -e "${GREEN}OK${NC}"
     else
-        echo -e "${RED}NO${NC}"
+        echo -e "NO"
         echo -en "** ${CYAN}Enabling encryption support in the /home filesystem${NC}: "
         if tune2fs -O encrypt /dev/disk/by-label/home > /dev/null; then
             echo -e "${GREEN}OK${NC}"
@@ -47,7 +47,7 @@ enable_systemd_service() {
     if systemctl is-enabled -q dirlock-sddm.service; then
         echo -e "${GREEN}OK${NC}"
     else
-        echo -e "${RED}NO${NC}"
+        echo -e "NO"
         echo -en "** ${CYAN}Enabling the dirlock-sddm.service${NC}: "
         if systemctl enable -q dirlock-sddm.service; then
             echo -e "${GREEN}OK${NC}"
@@ -93,7 +93,7 @@ update_pam_config() {
     if grep -q '^auth\s.*\spam_dirlock.so' /etc/pam.d/system-auth && grep -q '^password\s.*\spam_dirlock.so' /etc/pam.d/system-auth; then
         echo -e "${GREEN}OK${NC}"
     else
-        echo -e "${RED}NO${NC}"
+        echo -e "NO"
         echo -en "** ${CYAN}Enabling dirlock in /etc/pam.d/system-auth${NC}: "
         if [ -e "/var/lib/overlays/etc/upper/pam.d/system-auth" ]; then
             echo -e "${RED}NO${NC}"
@@ -116,7 +116,7 @@ update_pam_config() {
     if grep -q '^auth\s.*\spam_dirlock.so' /etc/pam.d/sudo; then
         echo -e "${GREEN}OK${NC}"
     else
-        echo -e "${RED}NO${NC}"
+        echo -e "NO"
         echo -en "** ${CYAN}Enabling dirlock in /etc/pam.d/sudo${NC}: "
         if [ -e "/var/lib/overlays/etc/upper/pam.d/sudo" ]; then
             echo -e "${RED}NO${NC}"
@@ -136,6 +136,16 @@ update_pam_config() {
     return $retcode
 }
 
+check_tpm_support() {
+    echo -en "** ${CYAN}Checking if a TPM is available and usable${NC}: "
+    if dirlock tpm2-test &> /dev/null; then
+        echo -e "${GREEN}OK${NC}"
+    else
+        echo -e "${RED}NO${NC}"
+        echo -e "${RED}WARNING${NC}: dirlock will use a normal password if a TPM is not available"
+    fi
+}
+
 cat <<EOF
 This tool will guide you through enabling filesystem encryption
 on SteamOS using the dirlock tool.
@@ -150,11 +160,11 @@ to a normal, unencrypted home.
 
 The following tasks will be performed now:
 
-- Enabling encryption support in the /home filesystem.
-- Enabling the SDDM integration service, so you are asked for a PIN or
-  password when the home directory is locked.
-- Updating the PAM configuration to support encrypted accounts.
-- Creating /etc/atomic-update.conf.d/dirlock.conf so the PAM
+- Encryption support in the /home filesystem will be enabled.
+- The SDDM integration service will be enabled. This is used to ask
+  for a PIN or password when the home directory is locked.
+- The PAM configuration will be updated to support encrypted accounts.
+- /etc/atomic-update.conf.d/dirlock.conf will be created so the PAM
   configuration survives OS updates.
 
 EOF
@@ -176,6 +186,7 @@ needs_pam_review=0
 if ! update_pam_config; then
     needs_pam_review=1
 fi
+check_tpm_support
 
 echo
 echo "====================================="
@@ -184,7 +195,7 @@ cat <<EOF
 
 You can now encrypt the home directory with the following command:
 
-   dirlock encrypt --force /home/deck
+   /usr/lib/steamos/steamos-encrypt-home
 
 After that, reboot the system and you should see the login screen where
 you have to introduce your PIN or password.
