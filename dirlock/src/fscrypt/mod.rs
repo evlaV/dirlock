@@ -25,7 +25,7 @@ use std::{
 use zeroize::Zeroize;
 
 /// All our keys use the maximum length allowed by fscrypt
-pub(crate) const POLICY_KEY_LEN: usize = FSCRYPT_MAX_KEY_SIZE;
+pub const POLICY_KEY_LEN: usize = FSCRYPT_MAX_KEY_SIZE;
 
 /// An 8-byte key descriptor for v1 fscrypt policies
 #[derive(derive_more::Display)]

@@ -211,12 +211,20 @@ pub fn get_protector_by_id(id: ProtectorId) -> Result<Protector> {
     Ok(prot)
 }
 
-/// Create (and store on disk) a new protector using a password
-pub fn create_protector(opts: ProtectorOpts, pass: &[u8]) -> Result<ProtectorKey> {
+/// Whether to save a protector when creating it
+pub enum CreateProtector {
+    CreateAndSave,
+    CreateOnly,
+}
+
+/// Create a new protector (without saving it to disk)
+pub fn create_protector(opts: ProtectorOpts, pass: &[u8], create: CreateProtector) -> Result<(Protector, ProtectorKey)> {
     let protector_key = ProtectorKey::new_random();
     let protector = Protector::new(opts, protector_key.clone(), pass)?;
-    keystore::save_protector(&protector, keystore::SaveProtector::AddNew)?;
-    Ok(protector_key)
+    if matches!(create, CreateProtector::CreateAndSave) {
+        keystore::save_protector(&protector, keystore::SaveProtector::AddNew)?;
+    }
+    Ok((protector, protector_key))
 }
 
 /// Wrap `policy_key` using `protector_key` and store the result on disk

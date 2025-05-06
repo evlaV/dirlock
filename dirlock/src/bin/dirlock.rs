@@ -10,9 +10,11 @@ use std::io::{self, Write};
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 use dirlock::{
+    CreateProtector,
     DirStatus,
     EncryptedDir,
     fscrypt::{
+        PolicyKey,
         PolicyKeyId,
         self,
     },
@@ -52,6 +54,7 @@ enum Command {
     ChangePass(ChangePassArgs),
     Policy(PolicyArgs),
     Protector(ProtectorArgs),
+    Tpm2Test(Tpm2TestArgs),
     ExportMasterKey(ExportMasterKeyArgs),
     ImportMasterKey(ImportMasterKeyArgs),
 }
@@ -248,6 +251,11 @@ struct ProtectorChangePassArgs {
     #[argh(positional)]
     protector: Option<ProtectorId>,
 }
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "tpm2-test")]
+/// Test if a TPM2 is available and is usable
+struct Tpm2TestArgs { }
 
 #[derive(FromArgs)]
 #[argh(subcommand, name = "export-master-key")]
@@ -467,7 +475,8 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
             .with_name(name)
             .build()?;
         let pass = read_new_password_for_protector(opts.get_type())?;
-        dirlock::create_protector(opts, pass.as_bytes())?
+        let (_, protector_key) = dirlock::create_protector(opts, pass.as_bytes(), CreateProtector::CreateAndSave)?;
+        protector_key
     };
 
     let keyid = if args.force && !empty_dir {
@@ -510,7 +519,7 @@ fn cmd_create_policy(args: &PolicyCreateArgs) -> Result<()> {
     let Some(protector_key) = protector.unwrap_key(pass.as_bytes()) else {
         bail!("Invalid password for protector {id}");
     };
-    let policy_key = fscrypt::PolicyKey::new_random();
+    let policy_key = PolicyKey::new_random();
     let policy_id = policy_key.get_id();
     dirlock::wrap_and_save_policy_key(protector_key, policy_key)?;
     println!("Created encryption policy {policy_id}");
@@ -636,9 +645,9 @@ fn cmd_create_protector(args: &ProtectorCreateArgs) -> Result<()> {
         .build()?;
 
     let pass = read_new_password_for_protector(opts.get_type())?;
-    let protector_key = dirlock::create_protector(opts, pass.as_bytes())?;
+    let (protector, _) = dirlock::create_protector(opts, pass.as_bytes(), CreateProtector::CreateAndSave)?;
 
-    println!("Created protector {}", protector_key.get_id());
+    println!("Created protector {}", protector.id);
 
     Ok(())
 }
@@ -729,7 +738,7 @@ fn cmd_import_master_key() -> Result<()> {
     eprint!("Enter master key: ");
     io::stdin().read_line(&mut key)?;
 
-    let mut master_key = fscrypt::PolicyKey::default();
+    let mut master_key = PolicyKey::default();
     match BASE64_STANDARD.decode_slice(key.trim(), master_key.secret_mut()) {
         Err(e) => bail!("Unable to decode key: {e}"),
         Ok(x) if x != 64 => bail!("Wrong key size"),
@@ -743,9 +752,44 @@ fn cmd_import_master_key() -> Result<()> {
 
     let opts = ProtectorOpts::Password(PasswordOpts::default());
     let pass = read_new_password_for_protector(opts.get_type())?;
-    let protector_key = dirlock::create_protector(opts, pass.as_bytes())?;
+    let (_, protector_key) = dirlock::create_protector(opts, pass.as_bytes(), CreateProtector::CreateAndSave)?;
     dirlock::wrap_and_save_policy_key(protector_key, master_key)?;
     println!("Imported key for policy {keyid}");
+    Ok(())
+}
+
+#[cfg(not(feature = "tpm2"))]
+fn cmd_tpm2_test() -> Result<()> {
+    bail!("TPM support is disabled");
+}
+
+#[cfg(feature = "tpm2")]
+fn cmd_tpm2_test() -> Result<()> {
+    use dirlock::protector::WrappedPolicyKey;
+    use rand::RngCore;
+
+    match dirlock::protector::tpm2::get_status() {
+        Ok(s) if s.in_lockout => bail!("TPM in lockout mode"),
+        Ok(_) => (),
+        Err(_) => bail!("No TPM found"),
+    }
+
+    let mut raw_key = [0u8; dirlock::fscrypt::POLICY_KEY_LEN];
+    rand::rngs::OsRng.fill_bytes(&mut raw_key);
+    let pass = "test";
+
+    let opts = ProtectorOptsBuilder::new()
+        .with_name(String::from(pass))
+        .with_type(Some(ProtectorType::Tpm2))
+        .build()?;
+    let (protector, protector_key) = dirlock::create_protector(opts, pass.as_bytes(), CreateProtector::CreateOnly)?;
+    let policy_key = PolicyKey::from(&raw_key);
+    let wrapped = WrappedPolicyKey::new(policy_key, &protector_key);
+    match protector.unwrap_policy_key(&wrapped, pass.as_bytes()) {
+        Some(k) if *k.secret() == raw_key => (),
+        _ => bail!("Failed decrypting data with the TPM"),
+    }
+
     Ok(())
 }
 
@@ -819,6 +863,7 @@ fn main() -> Result<()> {
             ProtectorCommand::VerifyPass(args) => cmd_verify_protector(args),
             ProtectorCommand::ChangePass(args) => cmd_change_protector_pass(args),
         },
+        Tpm2Test(_) => cmd_tpm2_test(),
         ExportMasterKey(args) => cmd_export_master_key(args),
         ImportMasterKey(_) => cmd_import_master_key(),
         Status(args) => cmd_status(args),
