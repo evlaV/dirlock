@@ -101,9 +101,9 @@ pub enum ProtectorType {
     Password,
 }
 
-const PROTECTOR_TYPE_NAMES: &[(&str, ProtectorType)] = &[
-    ("password", ProtectorType::Password),
-    ("tpm2", ProtectorType::Tpm2),
+const PROTECTOR_TYPE_NAMES: &[(&str, ProtectorType, &str)] = &[
+    ("password", ProtectorType::Password, "password"),
+    ("tpm2", ProtectorType::Tpm2, "TPM2 PIN"),
 ];
 
 impl fmt::Display for ProtectorType {
@@ -126,6 +126,15 @@ impl std::str::FromStr for ProtectorType {
                            PROTECTOR_TYPE_NAMES.iter()
                            .map(|x| x.0)
                            .collect::<Vec<_>>().join(", ")))
+    }
+}
+
+impl ProtectorType {
+    pub fn credential_name(&self) -> &'static str {
+        PROTECTOR_TYPE_NAMES.iter()
+            .find(|x| &x.1 == self)
+            .map(|x| x.2)
+            .unwrap()
     }
 }
 

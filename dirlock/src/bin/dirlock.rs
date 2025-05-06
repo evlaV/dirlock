@@ -29,10 +29,9 @@ use dirlock::{
         },
     },
     util::{
-        ReadPassword,
         dir_is_empty,
-        read_password,
         read_password_for_protector,
+        read_new_password_for_protector,
     },
 };
 
@@ -388,17 +387,14 @@ fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
     };
 
     for p in &prots {
-        let prompt = match p.get_prompt() {
-            Ok(p) => p,
-            Err(e) => {
-                println!("{e}");
-                continue;
-            },
-        };
+        if let Err(e) = p.get_prompt() {
+            println!("{e}");
+            continue;
+        }
         if prots.len() > 1 {
             println!("Trying to unlock directory with protector {} (\"{}\")", p.id, p.get_name());
         }
-        let pass = read_password(&prompt, ReadPassword::Once)?;
+        let pass = read_password_for_protector(p)?;
 
         if encrypted_dir.unlock(pass.as_bytes(), &p.id)? {
             return Ok(());
@@ -470,7 +466,7 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
             .with_type(args.protector_type)
             .with_name(name)
             .build()?;
-        let pass = read_password("Enter encryption password", ReadPassword::Twice)?;
+        let pass = read_new_password_for_protector(opts.get_type())?;
         dirlock::create_protector(opts, pass.as_bytes())?
     };
 
@@ -639,7 +635,7 @@ fn cmd_create_protector(args: &ProtectorCreateArgs) -> Result<()> {
         .with_name(args.name.clone())
         .build()?;
 
-    let pass = read_password("Enter password for the new protector", ReadPassword::Twice)?;
+    let pass = read_new_password_for_protector(opts.get_type())?;
     let protector_key = dirlock::create_protector(opts, pass.as_bytes())?;
 
     println!("Created protector {}", protector_key.get_id());
@@ -679,7 +675,7 @@ fn do_change_verify_protector_password(protector_id: Option<ProtectorId>, verify
         bail!("Invalid password");
     };
     if ! verify_only {
-        let npass = read_password("Enter the new password", ReadPassword::Twice)?;
+        let npass = read_new_password_for_protector(protector.get_type())?;
         if pass == npass {
             bail!("The old and new passwords are identical");
         }
@@ -746,7 +742,7 @@ fn cmd_import_master_key() -> Result<()> {
     }
 
     let opts = ProtectorOpts::Password(PasswordOpts::default());
-    let pass = read_password("Enter password to protect this key", ReadPassword::Twice)?;
+    let pass = read_new_password_for_protector(opts.get_type())?;
     let protector_key = dirlock::create_protector(opts, pass.as_bytes())?;
     dirlock::wrap_and_save_policy_key(protector_key, master_key)?;
     println!("Imported key for policy {keyid}");

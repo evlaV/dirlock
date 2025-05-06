@@ -16,6 +16,15 @@ pub enum ProtectorOpts {
     Password(PasswordOpts),
 }
 
+impl ProtectorOpts {
+    pub fn get_type(&self) -> ProtectorType {
+        match self {
+            ProtectorOpts::Tpm2(_) => ProtectorType::Tpm2,
+            ProtectorOpts::Password(_) => ProtectorType::Password,
+        }
+    }
+}
+
 
 /// Options for password protectors
 #[derive(Default)]

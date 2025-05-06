@@ -10,7 +10,7 @@ use std::os::fd::FromRawFd;
 use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
 
-use crate::protector::Protector;
+use crate::protector::{Protector, ProtectorType};
 
 /// Get the user's home dir, or None if the user does not exist
 pub(crate) fn get_homedir(user: &str) -> Result<Option<PathBuf>> {
@@ -24,22 +24,15 @@ pub fn dir_is_empty(dir: &Path) -> Result<bool> {
     Ok(empty)
 }
 
-/// Number of times that the user has to enter a password
-pub enum ReadPassword {
-    Once,
-    Twice,
-}
-
-/// Prompt the user for a password and return it
-pub fn read_password(prompt: &str, times: ReadPassword) -> Result<Zeroizing<String>> {
-    eprint!("{prompt}: ");
+/// Prompt the user for a new protector password (with confirmation) and return it
+pub fn read_new_password_for_protector(ptype: ProtectorType) -> Result<Zeroizing<String>> {
+    let name = ptype.credential_name();
+    eprint!("Enter a new {name}: ");
     let pass = Zeroizing::new(rpassword::read_password()?);
-    if matches!(times, ReadPassword::Twice) {
-        eprint!("Repeat the password: ");
-        let pass2 = Zeroizing::new(rpassword::read_password()?);
-        if pass != pass2 {
-            bail!("Passwords don't match");
-        }
+    eprint!("Repeat the {name}: ");
+    let pass2 = Zeroizing::new(rpassword::read_password()?);
+    if pass != pass2 {
+        bail!("The values don't match");
     }
     Ok(pass)
 }
@@ -47,7 +40,9 @@ pub fn read_password(prompt: &str, times: ReadPassword) -> Result<Zeroizing<Stri
 /// Prompt the user for a password for a specific protector and return it
 pub fn read_password_for_protector(prot: &Protector) -> Result<Zeroizing<String>> {
     let prompt = prot.get_prompt().map_err(|e| anyhow!("{e}"))?;
-    read_password(&prompt, ReadPassword::Once)
+    eprint!("{prompt}: ");
+    let pass = Zeroizing::new(rpassword::read_password()?);
+    Ok(pass)
 }
 
 /// Helper to safely write the new version of a file to disk.
