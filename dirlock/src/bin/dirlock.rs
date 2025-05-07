@@ -278,6 +278,9 @@ struct ImportMasterKeyArgs { }
 #[argh(subcommand, name = "status")]
 /// Show the status of the system or a directory
 struct StatusArgs {
+    /// brief output
+    #[argh(switch, short = 'b')]
+    brief: bool,
     /// directory (default: show global status)
     #[argh(positional)]
     dir: Option<PathBuf>,
@@ -797,6 +800,10 @@ fn cmd_status(args: &StatusArgs) -> Result<()> {
     use fscrypt::KeyStatus::*;
 
     let Some(dir) = &args.dir else {
+        if args.brief {
+            bail!("The brief output can only be used on a directory");
+        }
+
         display_protector_list()?;
 
         println!();
@@ -807,6 +814,21 @@ fn cmd_status(args: &StatusArgs) -> Result<()> {
 
         return Ok(());
     };
+
+    if args.brief {
+        let s = match dirlock::open_dir(dir)? {
+            DirStatus::Unencrypted => "unencrypted",
+            DirStatus::Unsupported => "unsupported",
+            DirStatus::KeyMissing => "key-missing",
+            DirStatus::Encrypted(d) => match d.key_status {
+                Absent => "locked",
+                Present => "unlocked",
+                IncompletelyRemoved => "partially-locked",
+            }
+        };
+        println!("{s}");
+        return Ok(());
+    }
 
     let encrypted_dir = match dirlock::open_dir(dir)? {
         DirStatus::Encrypted(d) => d,
