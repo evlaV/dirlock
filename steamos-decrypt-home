@@ -19,7 +19,7 @@ fi
 
 check_unencrypted_home() {
     echo -en "** ${CYAN}Checking if /home/deck is encrypted${NC}: "
-    if dirlock status /home/deck | grep -q ^Encrypted; then
+    if dirlock status -b /home/deck | grep -qwE 'locked|unlocked'; then
         echo -e "${GREEN}OK${NC}"
     else
         echo -e "${RED}NO${NC}"
@@ -30,7 +30,7 @@ check_unencrypted_home() {
 
 check_unlocked_home() {
     echo -en "** ${CYAN}Checking if /home/deck is unlocked${NC}: "
-    if dirlock status /home/deck | grep -q '^Encrypted, unlocked'; then
+    if dirlock status -b /home/deck | grep -q unlocked; then
         echo -e "${GREEN}OK${NC}"
     else
         echo -e "${RED}NO${NC}"

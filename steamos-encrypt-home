@@ -33,7 +33,7 @@ check_encryption_enabled() {
 
 check_unencrypted_home() {
     echo -en "** ${CYAN}Checking if /home/deck is unencrypted${NC}: "
-    if dirlock status /home/deck | grep -q ^Encrypted; then
+    if dirlock status -b /home/deck | grep -qwE 'locked|unlocked'; then
         echo -e "${RED}NO${NC}"
         echo "ERROR: /home/deck is already encrypted" >&2
         return 1
