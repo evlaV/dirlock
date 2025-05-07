@@ -42,7 +42,7 @@ pub(crate) struct Pbkdf2 {
 impl Default for Pbkdf2 {
     /// Create a PBKDF2 with the default parameters
     fn default() -> Self {
-        Self { iterations: 65535 }
+        Self { iterations: 1000000 }
     }
 }
 
