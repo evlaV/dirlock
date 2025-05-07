@@ -1,10 +1,11 @@
 # Maintainer: Alberto Garcia <berto@igalia.com>
 
 pkgname=dirlock
+_commit=99e94bca948d249a860c6038c5889f52ea54ef77
 pkgver=0.0.1
 pkgrel=1
 arch=('x86_64')
-source=("git+ssh://git@gitlab.steamos.cloud/holo/$pkgname.git#branch=master"
+source=("git+ssh://git@gitlab.steamos.cloud/holo/$pkgname.git#commit=$_commit"
         'dirlock-sddm-helper'
         'dirlock-sddm.service'
         'steamos-enable-dirlock'
