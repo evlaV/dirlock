@@ -246,6 +246,8 @@ impl cmp::Eq for Protector { }
 mod tests {
     use crate::crypto::{AesIv, Hmac};
     use crate::fscrypt::PolicyKeyId;
+    use opts::ProtectorOptsBuilder;
+    use rand::{RngCore, rngs::OsRng};
     use serde_with::{serde_as, base64::Base64};
     use super::*;
 
@@ -378,6 +380,69 @@ mod tests {
             assert_eq!(data, wrapped_key, "Wrapped key doesn't match the expected value");
         }
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_protectors() -> Result<()> {
+        for t in PROTECTOR_TYPE_NAMES {
+            let ptype = t.1;
+
+            // Test the ProtectorType API and the PROTECTOR_TYPE_NAMES array
+            assert_eq!(ptype.to_string(), t.0);
+            assert!   (ptype == str::parse(t.0).unwrap());
+            assert_eq!(ptype.credential_name(), t.2);
+
+            if ptype == ProtectorType::Tpm2 && cfg!(not(feature = "tpm2")) {
+                continue;
+            }
+
+            for i in 1..=5 {
+                // Use a different password in each iteration
+                let mut pass = vec![0u8; 8 + i];
+                OsRng.fill_bytes(&mut pass);
+
+                // Change the number of iterations in each test.
+                let opts = ProtectorOptsBuilder::new()
+                    .with_type(Some(ptype))
+                    .with_kdf_iter(std::num::NonZeroU32::new((i * 50) as u32))
+                    .with_name(format!("test {i}, type {ptype}"))
+                    .build().unwrap();
+
+                // Generate random keys to wrap
+                let protkey = ProtectorKey::new_random();
+                let polkey = PolicyKey::new_random();
+                let wrapped_polkey = WrappedPolicyKey::new(polkey.clone(), &protkey);
+
+                // Create a protector
+                let mut prot = Protector::new(opts, protkey.clone(), &pass).unwrap();
+                assert!(ptype == prot.get_type());
+
+                // Unwrap the protector key and compare the results
+                let result = prot.unwrap_key(&pass);
+                assert!(result.is_some(), "Failed to unwrap key with protector {}", prot.get_name());
+                assert_eq!(protkey.secret(), result.unwrap().secret(),
+                           "Unexpected result when unwrapping key with protector {}", prot.get_name());
+
+                // Wrap the protector key again with a different password
+                let mut pass2 = pass.clone();
+                pass2.push(b'A');
+                prot.wrap_key(protkey, &pass2).unwrap();
+
+                // Unwrap the policy key and compare the results
+                let result = prot.unwrap_policy_key(&wrapped_polkey, &pass2);
+                assert!(result.is_some(), "Failed to unwrap policy key with protector {}", prot.get_name());
+                assert_eq!(polkey.secret(), result.unwrap().secret(),
+                           "Unexpected result when unwrapping policy key with protector {}", prot.get_name());
+
+                // Test that invalid passwords (the original password in this case) are also handled correctly.
+                // Don't do it with the TPM2 protector because it can lock us out.
+                if ptype != ProtectorType::Tpm2 {
+                    assert!(prot.unwrap_key(&pass).is_none());
+                    assert!(prot.unwrap_policy_key(&wrapped_polkey, &pass).is_none());
+                }
+            }
+        }
         Ok(())
     }
 }

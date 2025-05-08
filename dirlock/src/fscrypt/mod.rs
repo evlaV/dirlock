@@ -54,7 +54,7 @@ impl std::str::FromStr for PolicyKeyId {
 
 
 /// A raw master encryption key, meant to be added to the kernel for a specific filesystem.
-#[derive(zeroize::ZeroizeOnDrop)]
+#[derive(zeroize::ZeroizeOnDrop, Clone)]
 pub struct PolicyKey(Box<[u8; POLICY_KEY_LEN]>);
 
 impl From<&[u8; POLICY_KEY_LEN]> for PolicyKey {
