@@ -2,8 +2,9 @@
 
 pkgname=dirlock
 _commit=99e94bca948d249a860c6038c5889f52ea54ef77
-pkgver=0.0.1
+pkgver=0.0.1.141.99e94bc
 pkgrel=1
+pkgdesc='Tool for managing encrypted directories'
 arch=('x86_64')
 source=("git+ssh://git@gitlab.steamos.cloud/holo/$pkgname.git#commit=$_commit"
         'dirlock-sddm-helper'
@@ -175,7 +176,8 @@ source=("git+ssh://git@gitlab.steamos.cloud/holo/$pkgname.git#commit=$_commit"
         'zeroize_derive-1.4.2.tar.gz::https://crates.io/api/v1/crates/zeroize_derive/1.4.2/download')
 depends=('tpm2-tss'
          'pam')
-makedepends=('cargo'
+makedepends=('git'
+             'cargo'
              'holo-rust-packaging-tools')
 license=('BSD-3-Clause')
 sha256sums=('SKIP'
