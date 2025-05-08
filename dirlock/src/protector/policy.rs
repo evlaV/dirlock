@@ -41,12 +41,41 @@ impl WrappedPolicyKey {
     }
 
     /// Unwraps a [`PolicyKey`] with a [`ProtectorKey`]
-    pub fn unwrap_key(&self, protector_key: ProtectorKey) -> Option<PolicyKey> {
+    pub fn unwrap_key(&self, protector_key: &ProtectorKey) -> Option<PolicyKey> {
         let mut raw_key = PolicyKey::from(&self.wrapped_key);
         if protector_key.0.decrypt(&self.iv, &self.hmac, raw_key.secret_mut()) {
             Some(raw_key)
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_wrapped_policy_key() -> anyhow::Result<()> {
+        for _ in 0..5 {
+            // Generate random keys
+            let mut protkey = ProtectorKey::new_random();
+            let polkey = PolicyKey::new_random();
+
+            // Wrap the policy key with the protector key
+            let wrapped = WrappedPolicyKey::new(polkey.clone(), &protkey);
+
+            // Unwrap it and check the results
+            let result = wrapped.unwrap_key(&protkey);
+            assert!(result.is_some());
+            assert_eq!(result.unwrap().secret(), polkey.secret());
+
+            // Modify the protector key and verify that unwrapping now fails
+            protkey.secret_mut()[0] ^= 1;
+            let result = wrapped.unwrap_key(&protkey);
+            assert!(result.is_none());
+        }
+
+        Ok(())
     }
 }

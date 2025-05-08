@@ -174,7 +174,7 @@ impl Protector {
 
     /// Unwraps a [`PolicyKey`] using this protector's key
     pub fn unwrap_policy_key(&self, policy: &WrappedPolicyKey, pass: &[u8]) -> Option<PolicyKey> {
-        self.unwrap_key(pass).and_then(|k| policy.unwrap_key(k))
+        self.unwrap_key(pass).and_then(|k| policy.unwrap_key(&k))
     }
 
     /// Wraps this protector's [`ProtectorKey`] again using a new password
