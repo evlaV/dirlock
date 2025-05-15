@@ -769,7 +769,6 @@ fn cmd_tpm2_test() -> Result<()> {
 #[cfg(feature = "tpm2")]
 fn cmd_tpm2_test() -> Result<()> {
     use dirlock::protector::WrappedPolicyKey;
-    use rand::RngCore;
 
     match dirlock::protector::tpm2::get_status() {
         Ok(s) if s.in_lockout => bail!("TPM in lockout mode"),
@@ -777,8 +776,8 @@ fn cmd_tpm2_test() -> Result<()> {
         Err(_) => bail!("No TPM found"),
     }
 
-    let mut raw_key = [0u8; dirlock::fscrypt::POLICY_KEY_LEN];
-    rand::rngs::OsRng.fill_bytes(&mut raw_key);
+    let policy_key = PolicyKey::new_random();
+    let raw_key = *policy_key.secret();
     let pass = "test";
 
     let opts = ProtectorOptsBuilder::new()
@@ -786,7 +785,6 @@ fn cmd_tpm2_test() -> Result<()> {
         .with_type(Some(ProtectorType::Tpm2))
         .build()?;
     let (protector, protector_key) = dirlock::create_protector(opts, pass.as_bytes(), CreateProtector::CreateOnly)?;
-    let policy_key = PolicyKey::from(&raw_key);
     let wrapped = WrappedPolicyKey::new(policy_key, &protector_key);
     match protector.unwrap_policy_key(&wrapped, pass.as_bytes()) {
         Some(k) if *k.secret() == raw_key => (),
