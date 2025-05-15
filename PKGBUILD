@@ -381,7 +381,7 @@ build () {
 
 package() {
   # Runtime dependency
-  depends+=('qt6-virtualkeyboard')
+  depends+=('qt6-virtualkeyboard' 'tpm2-tools')
 
   cd "$srcdir/$pkgname"
 
