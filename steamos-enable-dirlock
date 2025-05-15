@@ -78,7 +78,7 @@ update_pam_entry() {
     sed -f - -i "$pamfile" <<-EOF
 	/^-\?$group.*success=$value/ {
 		i\
-		$group       [success=$next user_unknown=ignore default=die]   pam_dirlock.so
+		$group       [success=$next user_unknown=ignore module_unknown=ignore default=die]   pam_dirlock.so
 	}
 	EOF
 }
@@ -210,12 +210,12 @@ if [ "$needs_pam_review" != "0" ]; then
     echo
     echo " - /etc/pam.d/system-auth:"
     echo -en "$GREEN"
-    echo "auth       [success=3 user_unknown=ignore default=die]   pam_dirlock.so"
-    echo "password   [success=2 user_unknown=ignore default=die]   pam_dirlock.so"
+    echo "auth       [success=3 user_unknown=ignore module_unknown=ignore default=die]   pam_dirlock.so"
+    echo "password   [success=2 user_unknown=ignore module_unknown=ignore default=die]   pam_dirlock.so"
     echo -en "$NC"
     echo
     echo " - /etc/pam.d/sudo:"
     echo -en "$GREEN"
-    echo "auth       [success=3 user_unknown=ignore default=die]   pam_dirlock.so"
+    echo "auth       [success=3 user_unknown=ignore module_unknown=ignore default=die]   pam_dirlock.so"
     echo -en "$NC"
 fi
