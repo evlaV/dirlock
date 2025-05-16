@@ -295,11 +295,11 @@ fn display_tpm_information() -> Result<()> {
 
     println!("TPM information\n\
               ---------------\n\
-              Device: {}\n\
+              TCTI: {}\n\
               Manufacturer: {}\n\
               Locked: {} (failed auth attempts: {} / {})\n\
               Lockout counter decreased every {} seconds",
-              status.path,
+              status.tcti,
               status.manufacturer,
               if status.in_lockout { "yes" } else { "no" },
               status.lockout_counter,

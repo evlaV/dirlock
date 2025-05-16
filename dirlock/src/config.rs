@@ -11,16 +11,18 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 
 const CONFIG_FILE_PATH:   &str = "/etc/dirlock.conf";
-const DEFAULT_TPM2_DEVICE: &str = "/dev/tpm0";
+const DEFAULT_TPM2_TCTI: &str = "device:/dev/tpm0";
 
 #[derive(Deserialize)]
 pub struct Config {
-    #[serde(default = "default_tpm2_device")]
-    tpm2_device: String,
+    #[serde(default = "default_tpm2_tcti")]
+    tpm2_tcti: String,
 }
 
-fn default_tpm2_device() -> String {
-    String::from(DEFAULT_TPM2_DEVICE)
+fn default_tpm2_tcti() -> String {
+    std::env::var("TPM2TOOLS_TCTI")
+        .or_else(|_| std::env::var("TCTI"))
+        .unwrap_or(String::from(DEFAULT_TPM2_TCTI))
 }
 
 impl Config {
@@ -34,12 +36,12 @@ impl Config {
                     .and_then(|f| serde_json::from_reader(f).map_err(|e| format!("{e}")))
                     .map_err(|e| format!("Error reading {CONFIG_FILE_PATH}: {e}"))
             } else {
-                Ok(Config { tpm2_device: default_tpm2_device() })
+                Ok(Config { tpm2_tcti: default_tpm2_tcti() })
             }
         }).as_ref().map_err(|e| anyhow!(e))
     }
 
-    pub fn tpm2_device() -> Result<&'static str> {
-        Config::get().map(|c| c.tpm2_device.as_str())
+    pub fn tpm2_tcti() -> Result<&'static str> {
+        Config::get().map(|c| c.tpm2_tcti.as_str())
     }
 }

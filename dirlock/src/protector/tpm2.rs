@@ -120,10 +120,9 @@ impl Tpm2Protector {
 
     /// Wraps `prot_key` with `pass`. This generates a new random Salt.
     pub fn wrap_key(&mut self, prot_key: ProtectorKey, pass: &[u8]) -> Result<()> {
-        let path = Config::tpm2_device()?;
-        let mut ctx = Context::new(TctiNameConf::Device(
-            DeviceConfig::from_str(path)?
-        )).map_err(|_| anyhow!("Unable to access the TPM at {}", path))?;
+        let tcti = Config::tpm2_tcti()?;
+        let mut ctx = Context::new(TctiNameConf::from_str(tcti)?)
+            .map_err(|_| anyhow!("Unable to access the TPM at {}", tcti))?;
         let primary_key = create_primary_key(&mut ctx)?;
         let mut salt = Salt::default();
         OsRng.fill_bytes(&mut salt.0);
@@ -320,7 +319,7 @@ fn unseal_data(mut ctx: Context, primary_key: KeyHandle, sealed_pub: Public, sea
 
 #[cfg(feature = "tpm2")]
 pub struct TpmStatus {
-    pub path: String,
+    pub tcti: String,
     pub manufacturer: String,
     pub lockout_counter: u32,
     pub max_auth_fail: u32,
@@ -332,10 +331,8 @@ pub struct TpmStatus {
 pub fn get_status() -> Result<TpmStatus> {
     use PropertyTag::*;
 
-    let path = Config::tpm2_device()?;
-    let mut ctx = Context::new(TctiNameConf::Device(
-        DeviceConfig::from_str(path)?
-    ))?;
+    let tcti = Config::tpm2_tcti()?;
+    let mut ctx = Context::new(TctiNameConf::from_str(tcti)?)?;
 
     let perm = ctx.get_tpm_property(Permanent)?.unwrap_or(0);
     let manufacturer = if let Some(val) = ctx.get_tpm_property(Manufacturer)? {
@@ -358,7 +355,7 @@ pub fn get_status() -> Result<TpmStatus> {
 
         if props.len() == values.len() {
             return Ok(TpmStatus {
-                path: path.to_string(),
+                tcti: tcti.to_string(),
                 manufacturer,
                 lockout_counter: values[0],
                 max_auth_fail: values[1],
