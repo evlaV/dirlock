@@ -142,7 +142,7 @@ check_tpm_support() {
         echo -e "${GREEN}OK${NC}"
         echo -en "** ${CYAN}Setting the TPM dictionary attack parameters${NC}: "
         # Set saner values for maxAuthFail and lockoutInterval
-        if tpm2_dictionarylockout -s -n 31 -t 600 &> /dev/null; then
+        if /usr/lib/dirlock/tpm2-dict-setup 31 600 &> /dev/null; then
             echo -e "${GREEN}OK${NC}"
         else
             echo -e "${RED}ERROR${NC}"
