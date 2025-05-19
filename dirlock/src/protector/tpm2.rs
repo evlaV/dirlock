@@ -15,6 +15,7 @@ use {
     crate::config::Config,
     crate::kdf::Pbkdf2,
     rand::{RngCore, rngs::OsRng},
+    std::cell::OnceCell,
     std::str::FromStr,
     tss_esapi::{
         Context,
@@ -54,7 +55,6 @@ use {
             SensitiveData,
             SymmetricDefinitionObject,
         },
-        tcti_ldr::DeviceConfig,
         traits::{Marshall, UnMarshall},
     },
     tss_esapi_sys::TPM2B_PRIVATE,
@@ -82,6 +82,9 @@ pub struct Tpm2Protector {
     private: Vec<u8>,
     salt: Salt,
     kdf: Kdf,
+    #[serde(skip)]
+    #[cfg(feature = "tpm2")]
+    tcti: OnceCell<String>,
 }
 
 // Stub used when the tpm2 feature is disabled
@@ -113,16 +116,18 @@ impl Tpm2Protector {
         } else {
             Kdf::default()
         };
-        let mut prot = Tpm2Protector { kdf, name: opts.name, ..Default::default() };
+        let tcti = match opts.tpm2_tcti {
+            Some(c) => OnceCell::from(c),
+            None => OnceCell::new(),
+        };
+        let mut prot = Tpm2Protector { kdf, name: opts.name, tcti, ..Default::default() };
         prot.wrap_key(prot_key, pass)?;
         Ok(prot)
     }
 
     /// Wraps `prot_key` with `pass`. This generates a new random Salt.
     pub fn wrap_key(&mut self, prot_key: ProtectorKey, pass: &[u8]) -> Result<()> {
-        let tcti = Config::tpm2_tcti()?;
-        let mut ctx = Context::new(TctiNameConf::from_str(tcti)?)
-            .map_err(|_| anyhow!("Unable to access the TPM at {}", tcti))?;
+        let mut ctx = self.create_context()?;
         let primary_key = create_primary_key(&mut ctx)?;
         let mut salt = Salt::default();
         OsRng.fill_bytes(&mut salt.0);
@@ -141,8 +146,7 @@ impl Tpm2Protector {
 
     /// Unwraps a [`ProtectorKey`] with a password.
     pub fn unwrap_key(&self, pass: &[u8]) -> Result<Option<ProtectorKey>> {
-        let mut ctx = Context::new(TctiNameConf::Device(DeviceConfig::default()))
-            .map_err(|e| anyhow!("Unable to access the TPM: {e}"))?;
+        let mut ctx = self.create_context()?;
         let primary_key = create_primary_key(&mut ctx)?;
         let public = Public::try_from(PublicBuffer::unmarshall(&self.public)?)?;
         let private = tpm_private_unmarshall(&self.private)?;
@@ -156,9 +160,9 @@ impl Tpm2Protector {
 
     /// Returns the prompt, or an error message if the TPM is not usable
     pub fn get_prompt(&self) -> Result<String, String> {
-        let Ok(s) = get_status() else {
-            return Err(String::from("Error connecting to the TPM"));
-        };
+        let s = self.get_tcti_conf()
+            .and_then(|c| get_status(Some(c)))
+            .map_err(|_| String::from("Error connecting to the TPM"))?;
         let retries = s.max_auth_fail - s.lockout_counter;
         if retries == 0 {
             Err(format!("The TPM is locked, wait up to {} seconds before trying again",
@@ -168,6 +172,25 @@ impl Tpm2Protector {
         } else {
             Ok(String::from("Enter TPM2 PIN"))
         }
+    }
+
+    /// Gets (and initializes if necessary) the TCTI conf string
+    fn get_tcti_conf(&self) -> Result<&str> {
+        match self.tcti.get() {
+            Some(s) => Ok(s),
+            None => {
+                let tcti = Config::tpm2_tcti()?;
+                self.tcti.set(tcti.to_string()).unwrap();
+                Ok(tcti)
+            }
+        }
+    }
+
+    /// Creates a new Context
+    fn create_context(&self) -> Result<Context> {
+        let tcti = self.get_tcti_conf()?;
+        Context::new(TctiNameConf::from_str(tcti)?)
+            .map_err(|e| anyhow!("Unable to access the TPM at {tcti}: {e}"))
     }
 }
 
@@ -328,10 +351,13 @@ pub struct TpmStatus {
 }
 
 #[cfg(feature = "tpm2")]
-pub fn get_status() -> Result<TpmStatus> {
+pub fn get_status(tcti_conf: Option<&str>) -> Result<TpmStatus> {
     use PropertyTag::*;
 
-    let tcti = Config::tpm2_tcti()?;
+    let tcti = match tcti_conf {
+        Some(s) => s,
+        _ => Config::tpm2_tcti()?,
+    };
     let mut ctx = Context::new(TctiNameConf::from_str(tcti)?)?;
 
     let perm = ctx.get_tpm_property(Permanent)?.unwrap_or(0);

@@ -38,6 +38,7 @@ pub struct PasswordOpts {
 pub struct Tpm2Opts {
     pub kdf_iter: Option<NonZeroU32>,
     pub name: String,
+    pub tpm2_tcti: Option<String>,
 }
 
 
@@ -47,6 +48,7 @@ pub struct ProtectorOptsBuilder {
     ptype: Option<ProtectorType>,
     kdf_iter: Option<NonZeroU32>,
     name: Option<String>,
+    tpm2_tcti: Option<String>,
 }
 
 impl ProtectorOptsBuilder {
@@ -73,6 +75,12 @@ impl ProtectorOptsBuilder {
         self
     }
 
+    /// Sets the TPM2 TCTI configuration string
+    pub fn with_tpm2_tcti(mut self, tpm2_tcti: Option<String>) -> Self {
+        self.tpm2_tcti = tpm2_tcti;
+        self
+    }
+
     /// Builds the [`ProtectorOpts`].
     ///
     /// # Errors
@@ -85,10 +93,14 @@ impl ProtectorOptsBuilder {
         if name.len() > PROTECTOR_NAME_MAX_LEN {
             bail!("Protector name too long");
         }
+        if self.tpm2_tcti.is_some() && ptype != ProtectorType::Tpm2 {
+            bail!("The TCTI configuration is only for TPM2 protectors");
+        }
         match ptype {
             ProtectorType::Tpm2 => {
                 Ok(ProtectorOpts::Tpm2(Tpm2Opts {
                     kdf_iter: self.kdf_iter,
+                    tpm2_tcti: self.tpm2_tcti,
                     name
                 }))
             },

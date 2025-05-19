@@ -288,7 +288,7 @@ struct StatusArgs {
 
 #[cfg(feature = "tpm2")]
 fn display_tpm_information() -> Result<()> {
-    let Ok(status) = dirlock::protector::tpm2::get_status() else {
+    let Ok(status) = dirlock::protector::tpm2::get_status(None) else {
         println!("TPM not found");
         return Ok(());
     };
@@ -770,7 +770,7 @@ fn cmd_tpm2_test() -> Result<()> {
 fn cmd_tpm2_test() -> Result<()> {
     use dirlock::protector::WrappedPolicyKey;
 
-    match dirlock::protector::tpm2::get_status() {
+    match dirlock::protector::tpm2::get_status(None) {
         Ok(s) if s.in_lockout => bail!("TPM in lockout mode"),
         Ok(_) => (),
         Err(_) => bail!("No TPM found"),
