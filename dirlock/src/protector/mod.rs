@@ -385,6 +385,7 @@ mod tests {
 
     #[test]
     fn test_protectors() -> Result<()> {
+        let tpm = tpm2::tests::Swtpm::new(7982)?;
         for t in PROTECTOR_TYPE_NAMES {
             let ptype = t.1;
 
@@ -397,6 +398,11 @@ mod tests {
                 continue;
             }
 
+            let tcti_conf = match ptype {
+                ProtectorType::Tpm2 => Some(tpm.tcti_conf().to_string()),
+                _ => None
+            };
+
             for i in 1..=5 {
                 // Use a different password in each iteration
                 let mut pass = vec![0u8; 8 + i];
@@ -407,6 +413,7 @@ mod tests {
                     .with_type(Some(ptype))
                     .with_kdf_iter(std::num::NonZeroU32::new((i * 50) as u32))
                     .with_name(format!("test {i}, type {ptype}"))
+                    .with_tpm2_tcti(tcti_conf.clone())
                     .build().unwrap();
 
                 // Generate random keys to wrap
@@ -436,11 +443,8 @@ mod tests {
                            "Unexpected result when unwrapping policy key with protector {}", prot.get_name());
 
                 // Test that invalid passwords (the original password in this case) are also handled correctly.
-                // Don't do it with the TPM2 protector because it can lock us out.
-                if ptype != ProtectorType::Tpm2 {
-                    assert!(prot.unwrap_key(&pass).is_none());
-                    assert!(prot.unwrap_policy_key(&wrapped_polkey, &pass).is_none());
-                }
+                assert!(prot.unwrap_key(&pass).is_none());
+                assert!(prot.unwrap_policy_key(&wrapped_polkey, &pass).is_none());
             }
         }
         Ok(())

@@ -393,3 +393,130 @@ pub fn get_status(tcti_conf: Option<&str>) -> Result<TpmStatus> {
 
     Err(anyhow!("Error getting the status of the TPM"))
 }
+
+#[cfg(test)]
+#[cfg(not(feature = "tpm2"))]
+pub mod tests {
+    use anyhow::Result;
+    pub struct Swtpm {}
+
+    impl Swtpm {
+        pub fn new(_port: u16) -> Result<Self> {
+            Ok(Swtpm{})
+        }
+        pub fn tcti_conf(&self) -> String {
+            String::new()
+        }
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "tpm2")]
+pub mod tests {
+    use base64::prelude::*;
+    use crate::protector::ProtectorData;
+    use super::*;
+
+    // Create the swtpm with the same initial state so the tests are reproducible.
+    const SWTPM_INITIAL_STATE: &str = "\
+        AgEACgAAAAAFIwABAAAFEwADqzZHIwADAAPJ6mQxAAEAAAB4AAAAAQAAAAEAAAABAAAAAQAAAAEA\
+        AAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAAAAAAAAAAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAA\
+        AAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAA\
+        AQAADAAAAADAAAABAAAAAIAAAACAAAAAAQAAAAEAAAABAAAAAQAAAAEAAAABAAAAAQAAAAEAAAJ+\
+        AAAABAAAAAQAAAAYAAAAGAAAABEAAAAAAAAABQAAAAMAAABAAAAAAwAAAAMAAAADAAAABwAAAAEA\
+        AAABAAAKeAAABAAAAAgAAAAEAAAABAAAArLAAAAACAAAABAAAABAAAAAQAAAAAYAAAAMAAAAAQAA\
+        AAgAAACAAAAAQAAAAgAAAQABAAAAAQAAAAEAAAAAAAAEAAAAIAAAAABAAAAABAAAAAEAAAAAAAAA\
+        AQAAAAAAAAABAAAAAQAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAEAAAABAAAAAAAAAAAAAAAA\
+        AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\
+        AAAAAQAAAAQSITRDAAQAABAAEAAQAAAAAAAAAAAAAAAAAEBTpXUIkd8lZVmn3L/lYwbhJSkHZ+1L\
+        aZuLzWYl5aP5eC/LSXIv1QGuMosuBu0rRIirtP6EHM/DQB3aWimUux3sAECGdCEOmCPQ63Qbfcn1\
+        /qRQNKEbSfYHJttZmHVP8nX7B1EMrCyMm4vrMPnqj5JHGxyqER+0R+ySj4JqSEyBc2anAEAd4W69\
+        jBHTFc6FldubFHMqlBKdlJrzH5yJeouFi8mtOluE37uxz0KJqYStD7jdSqlz7WVGhp6eskUcdcZE\
+        OZFvAECVpjGu9OmVNyNYQHUVNC+7uMx7y/M7WzMMpF4ro9Gbm+jb0m0gLtn4KLqzADbgx8gN9ykZ\
+        KfPf3uEHSnIkr5h7AEC8Frt/W1nqDH0A6646+897s3qBGRWqk+Ef2lbE64qmOtIxW4U/9HiNqgbA\
+        Q9yO7Enay9g5Gu9H5VoDzCOqKSXWAECSORpHK/YYTjz4A4Yj/axdWpNsDILsU4jokiwmTncmBD1T\
+        k7V5Ae+P8I2lUBD+ht4/720bQrTdEW0x0Fj11K22AAAAAAAAAAEAAAABAQARAAIXa+YmAAEAAQAQ\
+        AAABAAAAAAAEAAQD////AAsD////AAwD////AA0D////AA4AIAAAAAAAAAAAAAAAAAAAAAAAAAAf\
+        AAACWAAAA+gB//8ADgAAAIAAAAAAAAAAAAAAAA0AAAAAAAAAAAAAAAAgGRAjABY2NgQAAAABAQAl\
+        AAAABAAEA////wALA////wAMA////wANA////wEABgEBAQEAAAACVmV4hwABAAAAAAAAVxUBAAJv\
+        6D6hAAEAAAAAAAAABEdCUkQAMAYb5DqqOGDKEYcSbyGfN/FGgn5KS5vx+qJLX3B3o7YBYKlVaGor\
+        MDy8xuzOK+NINAAEAAAAAAAAAAAAAAAAAAAAAAEAAAEAGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\
+        AAEAAAACU0b+qwABAAACAAAAAAABAAAAAglPIsMAAQAAAAAAApzAAAAAAAAAAAAAAAAAAQAAAQAA\
+        qzZHIw==";
+
+    pub struct Swtpm {
+        dir: tempdir::TempDir,
+        port: u16,
+    }
+
+    impl Swtpm {
+        pub fn new(port: u16) -> Result<Self> {
+            let dir = tempdir::TempDir::new("swtpm")?;
+            let path = dir.path().to_str()
+                .expect("Error creating temporary dir for swtpm");
+            let tpm_state_file = dir.path().join("tpm2-00.permall");
+            let tpm_state = BASE64_STANDARD.decode(SWTPM_INITIAL_STATE)?;
+            std::fs::write(tpm_state_file, tpm_state)?;
+            let status = std::process::Command::new("swtpm")
+                .arg("socket")
+                .arg("--daemon")
+                .arg("--tpm2")
+                .args(["--flags", "startup-clear"])
+                .args(["--tpmstate", &format!("dir={path}")])
+                .args(["--pid", &format!("file={path}/pid")])
+                .args(["--server", &format!("type=tcp,port={port}")])
+                .args(["--ctrl", &format!("type=tcp,port={}", port + 1)])
+                .status()?;
+            assert!(status.success(), "Error starting swtpm");
+            Ok(Swtpm{dir, port})
+        }
+
+        pub fn tcti_conf(&self) -> String {
+            format!("swtpm:host=localhost,port={}", self.port)
+        }
+    }
+
+    impl Drop for Swtpm {
+        fn drop(&mut self) {
+            let pidfile = self.dir.path().join("pid");
+            _ = std::process::Command::new("pkill")
+                .arg("-F")
+                .arg(pidfile)
+                .status()
+                .expect("Error killing swtpm");
+        }
+    }
+
+    #[test]
+    fn test_tpm() -> Result<()> {
+        crate::init();
+
+        let json = r#"
+            {
+              "type": "tpm2",
+              "name": "test",
+              "public": "AC4ACAALAAAAUgAAABAAIJ5/c4jAMSqZJy+WdOmYZEvTHzySYb7q64RjAGB4HnIq",
+              "private": "AJ4AIJaH4Zd1POY4nm3fOSoKcIrumK1UY+G+7rK77lT7P2xCABDygTzPRBEgaAm4DRLgtgD6BiKcV4idSdDI+powZcfHfisIA+WwugPEeNgLBg6AJzOEPQIGeGKiXshl4QyVMorsDTZIzTnXHiVmA3AtT8ZuUqyqjolmUzbITsI82uSL5e4EaHiNBR/Un/38lI48DMtfQMOqcGC0b9JHAQ==",
+              "salt": "neeZ+2/7a0TWr2IgLEvUBOb9mqpyt5CDjzovHpi0sJ4=",
+              "kdf": {
+                "type": "pbkdf2",
+                "iterations": 5
+              }
+            }"#;
+
+        let tpm = Swtpm::new(7976)?;
+        let prot = match serde_json::from_str::<ProtectorData>(json) {
+            Ok(ProtectorData::Tpm2(p)) => p,
+            _ => bail!("Error creating protector from JSON data"),
+        };
+        prot.tcti.set(tpm.tcti_conf()).unwrap();
+        assert!(prot.unwrap_key(b"1234").unwrap().is_some());
+        assert!(prot.unwrap_key(b"wrongpw").unwrap().is_none());
+        let status = get_status(prot.get_tcti_conf().ok())?;
+        // Check that the dictionary attack parameters match the expected values
+        assert_eq!(status.lockout_counter, 1);
+        assert_eq!(status.max_auth_fail, 31);
+        assert_eq!(status.lockout_interval, 600);
+        Ok(())
+    }
+}
