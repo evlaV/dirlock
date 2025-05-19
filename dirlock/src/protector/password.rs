@@ -72,3 +72,35 @@ impl PasswordProtector {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use anyhow::{bail, Result};
+    use crate::protector::ProtectorData;
+
+    #[test]
+    fn test_json_password_protector() -> Result<()> {
+        // This tests that the JSON serialization of a protector works as expected
+        let json = r#"
+            {
+              "type": "password",
+              "name": "test",
+              "wrapped_key": "4Z1w+VcIU69wj4kpu19mU4M7GL47H+TFGhMIstIjbAY=",
+              "iv": "T9OvGtzCRyMEHkENhC4QoA==",
+              "salt": "5UUzonBVMfJ6bZ0to37fwD9P2wM0JhT45L2Jeq9oUPw=",
+              "hmac": "CjrxTlDGNdcfrFLEW2g/tBtoBiEHj82b85KsPvXZiQ4=",
+              "kdf": {
+                "type": "pbkdf2",
+                "iterations": 50
+              }
+            }"#;
+
+        let prot = match serde_json::from_str::<ProtectorData>(json) {
+            Ok(ProtectorData::Password(p)) => p,
+            _ => bail!("Error creating protector from JSON data"),
+        };
+
+        assert!(prot.unwrap_key(b"1234").is_some(), "Failed to unwrap key with password protector");
+        Ok(())
+    }
+}
