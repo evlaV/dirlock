@@ -466,7 +466,8 @@ pub mod tests {
                 .args(["--pid", &format!("file={path}/pid")])
                 .args(["--server", &format!("type=tcp,port={port}")])
                 .args(["--ctrl", &format!("type=tcp,port={}", port + 1)])
-                .status()?;
+                .status()
+                .expect("Failed to run swtpm");
             assert!(status.success(), "Error starting swtpm");
             Ok(Swtpm{dir, port})
         }
