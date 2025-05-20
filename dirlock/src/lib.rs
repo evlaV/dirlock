@@ -96,18 +96,18 @@ impl EncryptedDir {
     /// Get a directory's master encryption key using the password of one of its protectors
     ///
     /// If `protector_id` is `None` try all available protectors.
-    pub fn get_master_key(&self, pass: &[u8], protector_id: Option<&ProtectorId>) -> Option<PolicyKey> {
+    pub fn get_master_key(&self, pass: &[u8], protector_id: Option<&ProtectorId>) -> Result<Option<PolicyKey>> {
         for p in &self.protectors {
             if let Some(id) = protector_id {
                 if *id != p.protector.id {
                     continue;
                 }
             }
-            if let Some(k) = p.protector.unwrap_policy_key(&p.policy_key, pass) {
-                return Some(k);
+            if let Some(k) = p.protector.unwrap_policy_key(&p.policy_key, pass)? {
+                return Ok(Some(k));
             }
         }
-        None
+        Ok(None)
     }
 
     /// Checks if the given password is valid to unlock this directory
@@ -116,8 +116,8 @@ impl EncryptedDir {
     /// also does not care if the directory is locked or unlocked.
     ///
     /// If `protector_id` is `None` try all available protectors.
-    pub fn check_pass(&self, password: &[u8], protector_id: Option<&ProtectorId>) -> bool {
-        self.get_master_key(password, protector_id).is_some()
+    pub fn check_pass(&self, password: &[u8], protector_id: Option<&ProtectorId>) -> Result<bool> {
+        self.get_master_key(password, protector_id).map(|k| k.is_some())
     }
 
     /// Unlocks a directory with the given password
@@ -126,7 +126,7 @@ impl EncryptedDir {
     /// This call also succeeds if the directory is already unlocked
     /// as long as the password is correct.
     pub fn unlock(&self, password: &[u8], protector_id: &ProtectorId) -> Result<bool> {
-        if let Some(master_key) = self.get_master_key(password, Some(protector_id)) {
+        if let Some(master_key) = self.get_master_key(password, Some(protector_id))? {
             if let Err(e) = fscrypt::add_key(&self.path, &master_key) {
                 bail!("Unable to unlock directory with master key: {}", e);
             }
@@ -163,7 +163,7 @@ impl EncryptedDir {
                     continue;
                 }
             }
-            if let Some(protector_key) = p.protector.unwrap_key(pass) {
+            if let Some(protector_key) = p.protector.unwrap_key(pass)? {
                 wrap_and_save_protector_key(&mut p.protector, protector_key, newpass)?;
                 return Ok(true);
             }

@@ -459,7 +459,7 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
     let protector_key = if let Some(id) = args.protector {
         let protector = dirlock::get_protector_by_id(id)?;
         let pass = read_password_for_protector(&protector)?;
-        let Some(protector_key) = protector.unwrap_key(pass.as_bytes()) else {
+        let Some(protector_key) = protector.unwrap_key(pass.as_bytes())? else {
             bail!("Invalid password");
         };
         protector_key
@@ -519,7 +519,7 @@ fn cmd_create_policy(args: &PolicyCreateArgs) -> Result<()> {
     };
     let protector = dirlock::get_protector_by_id(id)?;
     let pass = read_password_for_protector(&protector)?;
-    let Some(protector_key) = protector.unwrap_key(pass.as_bytes()) else {
+    let Some(protector_key) = protector.unwrap_key(pass.as_bytes())? else {
         bail!("Invalid password for protector {id}");
     };
     let policy_key = PolicyKey::new_random();
@@ -597,13 +597,13 @@ fn cmd_policy_add_protector(args: &PolicyAddProtectorArgs) -> Result<()> {
 
     println!("Unlocking new protector {} (\"{}\")", protector.id, protector.get_name());
     let pass = read_password_for_protector(&protector)?;
-    let Some(protector_key) = protector.unwrap_key(pass.as_bytes()) else {
+    let Some(protector_key) = protector.unwrap_key(pass.as_bytes())? else {
         bail!("Invalid password");
     };
 
     println!("Unlocking existing protector {} (\"{}\")", unlock_with.id, unlock_with.get_name());
     let pass = read_password_for_protector(&unlock_with)?;
-    let Some(policy_key) = unlock_with.unwrap_policy_key(wrapped_policy_key, pass.as_bytes()) else {
+    let Some(policy_key) = unlock_with.unwrap_policy_key(wrapped_policy_key, pass.as_bytes())? else {
         bail!("Invalid password");
     };
 
@@ -683,7 +683,7 @@ fn do_change_verify_protector_password(protector_id: Option<ProtectorId>, verify
     };
     let mut protector = dirlock::get_protector_by_id(id)?;
     let pass = read_password_for_protector(&protector)?;
-    let Some(protector_key) = protector.unwrap_key(pass.as_bytes()) else {
+    let Some(protector_key) = protector.unwrap_key(pass.as_bytes())? else {
         bail!("Invalid password");
     };
     if ! verify_only {
@@ -720,7 +720,7 @@ fn cmd_export_master_key(args: &ExportMasterKeyArgs) -> Result<()> {
     eprintln!();
     let pass = read_password_for_protector(protector)?;
 
-    let Some(k) = encrypted_dir.get_master_key(pass.as_bytes(), Some(&protector.id)) else {
+    let Some(k) = encrypted_dir.get_master_key(pass.as_bytes(), Some(&protector.id))? else {
         bail!("Authentication failed");
     };
 
@@ -787,7 +787,7 @@ fn cmd_tpm2_test() -> Result<()> {
     let (protector, protector_key) = dirlock::create_protector(opts, pass.as_bytes(), CreateProtector::CreateOnly)?;
     let wrapped = WrappedPolicyKey::new(policy_key, &protector_key);
     match protector.unwrap_policy_key(&wrapped, pass.as_bytes()) {
-        Some(k) if *k.secret() == raw_key => (),
+        Ok(Some(k)) if *k.secret() == raw_key => (),
         _ => bail!("Failed decrypting data with the TPM"),
     }
 

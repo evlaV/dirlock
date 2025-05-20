@@ -101,9 +101,16 @@ fn do_chauthtok(pamh: Pam, flags: PamFlags) -> Result<(), PamError> {
     let pass = pamlib::get_oldauthtok(&pamh).map(|p| p.to_bytes())?;
 
     // Check that the password is correct
-    if ! encrypted_dir.check_pass(pass, None) {
-        log_notice(&pamh, format!("authentication failure; user={user}"));
-        return Err(PamError::AUTH_ERR);
+    match encrypted_dir.check_pass(pass, None) {
+        Ok(true) => (),
+        Ok(false) => {
+            log_notice(&pamh, format!("authentication failure; user={user}"));
+            return Err(PamError::AUTH_ERR);
+        },
+        Err(e) => {
+            log_notice(&pamh, format!("authentication failure; user={user} error={e}"));
+            return Err(PamError::AUTH_ERR);
+        },
     }
 
     // Get the new pasword

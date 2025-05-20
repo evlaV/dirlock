@@ -165,16 +165,16 @@ impl Protector {
     }
 
     /// Unwraps this protector's [`ProtectorKey`] using a password
-    pub fn unwrap_key(&self, pass: &[u8]) -> Option<ProtectorKey> {
+    pub fn unwrap_key(&self, pass: &[u8]) -> Result<Option<ProtectorKey>> {
         match &self.data {
-            ProtectorData::Password(p) => p.unwrap_key(pass),
-            ProtectorData::Tpm2(p) => p.unwrap_key(pass).unwrap_or(None), // TODO return the error here
+            ProtectorData::Password(p) => Ok(p.unwrap_key(pass)),
+            ProtectorData::Tpm2(p) => p.unwrap_key(pass),
         }
     }
 
     /// Unwraps a [`PolicyKey`] using this protector's key
-    pub fn unwrap_policy_key(&self, policy: &WrappedPolicyKey, pass: &[u8]) -> Option<PolicyKey> {
-        self.unwrap_key(pass).and_then(|k| policy.unwrap_key(&k))
+    pub fn unwrap_policy_key(&self, policy: &WrappedPolicyKey, pass: &[u8]) -> Result<Option<PolicyKey>> {
+        Ok(self.unwrap_key(pass)?.and_then(|k| policy.unwrap_key(&k)))
     }
 
     /// Wraps this protector's [`ProtectorKey`] again using a new password
@@ -426,7 +426,7 @@ mod tests {
                 assert!(ptype == prot.get_type());
 
                 // Unwrap the protector key and compare the results
-                let result = prot.unwrap_key(&pass);
+                let result = prot.unwrap_key(&pass)?;
                 assert!(result.is_some(), "Failed to unwrap key with protector {}", prot.get_name());
                 assert_eq!(protkey.secret(), result.unwrap().secret(),
                            "Unexpected result when unwrapping key with protector {}", prot.get_name());
@@ -437,14 +437,14 @@ mod tests {
                 prot.wrap_key(protkey, &pass2).unwrap();
 
                 // Unwrap the policy key and compare the results
-                let result = prot.unwrap_policy_key(&wrapped_polkey, &pass2);
+                let result = prot.unwrap_policy_key(&wrapped_polkey, &pass2)?;
                 assert!(result.is_some(), "Failed to unwrap policy key with protector {}", prot.get_name());
                 assert_eq!(polkey.secret(), result.unwrap().secret(),
                            "Unexpected result when unwrapping policy key with protector {}", prot.get_name());
 
                 // Test that invalid passwords (the original password in this case) are also handled correctly.
-                assert!(prot.unwrap_key(&pass).is_none());
-                assert!(prot.unwrap_policy_key(&wrapped_polkey, &pass).is_none());
+                assert!(prot.unwrap_key(&pass)?.is_none());
+                assert!(prot.unwrap_policy_key(&wrapped_polkey, &pass)?.is_none());
             }
         }
         Ok(())
