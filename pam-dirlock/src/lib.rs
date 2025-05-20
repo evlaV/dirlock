@@ -157,6 +157,14 @@ impl PamServiceModule for FscryptPam {
         do_authenticate(pamh).err().unwrap_or(PamError::SUCCESS)
     }
 
+    fn open_session(_pamh: Pam, _flags: PamFlags, _args: Vec<String>) -> PamError {
+        PamError::SUCCESS
+    }
+
+    fn close_session(_pamh: Pam, _flags: PamFlags, _args: Vec<String>) -> PamError {
+        PamError::SUCCESS
+    }
+
     fn setcred(_pamh: Pam, _flags: PamFlags, _args: Vec<String>) -> PamError {
         PamError::SUCCESS
     }
