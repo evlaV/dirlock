@@ -23,6 +23,7 @@ password   [success=2 user_unknown=ignore module_unknown=ignore default=die]   p
 password   required                    pam_unix.so          try_first_pass nullok shadow
 password   optional                    pam_permit.so
 
+session    optional                    pam_dirlock.so
 -session   optional                    pam_systemd_home.so
 session    required                    pam_limits.so
 session    required                    pam_unix.so
