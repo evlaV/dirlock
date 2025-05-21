@@ -67,6 +67,7 @@ entries would look like:
 ```
 auth     [success=3 user_unknown=ignore default=die] pam_dirlock.so
 password [success=3 user_unknown=ignore default=die] pam_dirlock.so
+session  optional   pam_dirlock.so
 ```
 
 `pam_dirlock.so` uses the password of the protector(s) to authenticate
