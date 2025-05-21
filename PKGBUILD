@@ -12,6 +12,7 @@ source=("git+ssh://git@gitlab.steamos.cloud/holo/$pkgname.git#commit=$_commit"
         'steamos-enable-dirlock'
         'steamos-encrypt-home'
         'steamos-decrypt-home'
+        'tmpfiles.conf'
         'tpm2-dict-setup.c'
         'aes-0.8.4.tar.gz::https://crates.io/api/v1/crates/aes/0.8.4/download'
         'aho-corasick-1.1.3.tar.gz::https://crates.io/api/v1/crates/aho-corasick/1.1.3/download'
@@ -182,6 +183,7 @@ makedepends=('git'
              'holo-rust-packaging-tools')
 license=('BSD-3-Clause')
 sha256sums=('SKIP'
+            'SKIP'
             'SKIP'
             'SKIP'
             'SKIP'
@@ -406,6 +408,9 @@ package() {
   # systemd service (SteamOS integration)
   install -m644 -D ../dirlock-sddm.service "$pkgdir/usr/lib/systemd/system/dirlock-sddm.service"
   install -m755 -D ../dirlock-sddm-helper "$pkgdir/usr/lib/steamos/dirlock-sddm-helper"
+
+  # tmpfiles.d configuration
+  install -m644 -D ../tmpfiles.conf "$pkgdir/usr/lib/tmpfiles.d/dirlock.conf"
 
   # Debug and helper tools
   install -m755 -D "target/release/fscryptctl" "$pkgdir/usr/lib/dirlock/fscryptctl"
