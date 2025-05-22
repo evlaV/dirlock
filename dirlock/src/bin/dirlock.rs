@@ -25,8 +25,6 @@ use dirlock::{
         ProtectorType,
         opts::{
             PROTECTOR_NAME_MAX_LEN,
-            PasswordOpts,
-            ProtectorOpts,
             ProtectorOptsBuilder,
         },
     },
@@ -753,7 +751,10 @@ fn cmd_import_master_key() -> Result<()> {
         bail!("This key has already been imported");
     }
 
-    let opts = ProtectorOpts::Password(PasswordOpts::default());
+    let opts = ProtectorOptsBuilder::new()
+        .with_name(String::from("Restored key"))
+        .with_type(Some(ProtectorType::Password))
+        .build()?;
     let pass = read_new_password_for_protector(opts.get_type())?;
     let (_, protector_key) = dirlock::create_protector(opts, pass.as_bytes(), CreateProtector::CreateAndSave)?;
     dirlock::wrap_and_save_policy_key(protector_key, master_key)?;

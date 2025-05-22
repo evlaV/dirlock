@@ -27,7 +27,6 @@ impl ProtectorOpts {
 
 
 /// Options for password protectors
-#[derive(Default)]
 pub struct PasswordOpts {
     pub kdf_iter: Option<NonZeroU32>,
     pub name: String,
