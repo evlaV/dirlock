@@ -46,7 +46,7 @@ pub struct Tpm2Opts {
 pub struct ProtectorOptsBuilder {
     ptype: Option<ProtectorType>,
     kdf_iter: Option<NonZeroU32>,
-    name: Option<String>,
+    name: String,
     tpm2_tcti: Option<String>,
 }
 
@@ -64,7 +64,7 @@ impl ProtectorOptsBuilder {
 
     /// Sets the type of the protector
     pub fn with_name(mut self, name: String) -> Self {
-        self.name = Some(name);
+        self.name = name.as_str().trim().to_string();
         self
     }
 
@@ -86,10 +86,10 @@ impl ProtectorOptsBuilder {
     /// Returns an error if some options are missing or invalid
     pub fn build(self) -> Result<ProtectorOpts> {
         let ptype = self.ptype.unwrap_or(ProtectorType::Password);
-        let Some(name) = self.name else {
+        if self.name.is_empty() {
             bail!("Protector name not set");
-        };
-        if name.len() > PROTECTOR_NAME_MAX_LEN {
+        }
+        if self.name.len() > PROTECTOR_NAME_MAX_LEN {
             bail!("Protector name too long");
         }
         if self.tpm2_tcti.is_some() && ptype != ProtectorType::Tpm2 {
@@ -100,13 +100,13 @@ impl ProtectorOptsBuilder {
                 Ok(ProtectorOpts::Tpm2(Tpm2Opts {
                     kdf_iter: self.kdf_iter,
                     tpm2_tcti: self.tpm2_tcti,
-                    name
+                    name: self.name,
                 }))
             },
             ProtectorType::Password => {
                 Ok(ProtectorOpts::Password(PasswordOpts {
                     kdf_iter: self.kdf_iter,
-                    name
+                    name: self.name,
                 }))
             },
         }
