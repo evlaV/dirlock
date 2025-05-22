@@ -52,6 +52,24 @@ impl std::str::FromStr for PolicyKeyId {
     }
 }
 
+impl PolicyKeyId {
+    /// Calculates the fscrypt v2 key ID from an encryption key
+    ///
+    /// The key ID is calculated using unsalted HKDF-SHA512:
+    /// <https://github.com/google/fscrypt/blob/v0.3.5/crypto/crypto.go#L183>
+    ///
+    /// Note that this function does not check that the key has a
+    /// valid length, the kernel might reject it if it's too short or
+    /// too long.
+    pub fn new_from_key(key: &[u8]) -> Self {
+        let info = b"fscrypt\x00\x01";
+        let hkdf = hkdf::Hkdf::<sha2::Sha512>::new(None, key);
+        let mut result = PolicyKeyId::default();
+        hkdf.expand(info, &mut result.0).unwrap();
+        result
+    }
+}
+
 
 /// A raw master encryption key, meant to be added to the kernel for a specific filesystem.
 #[derive(zeroize::ZeroizeOnDrop, Clone)]
@@ -97,15 +115,8 @@ impl PolicyKey {
     }
 
     /// Calculates the fscrypt v2 key ID for this key
-    ///
-    /// The key ID is calculated using unsalted HKDF-SHA512:
-    /// <https://github.com/google/fscrypt/blob/v0.3.5/crypto/crypto.go#L183>
     pub fn get_id(&self) -> PolicyKeyId {
-        let info = b"fscrypt\x00\x01";
-        let hkdf = hkdf::Hkdf::<sha2::Sha512>::new(None, self.secret());
-        let mut result = PolicyKeyId::default();
-        hkdf.expand(info, &mut result.0).unwrap();
-        result
+        PolicyKeyId::new_from_key(self.secret())
     }
 }
 
@@ -210,7 +221,7 @@ pub enum RemoveKeyUsers {
 }
 
 bitflags::bitflags! {
-    /// Flags indicating the result of removing a [`PolicyKey`] from the kernel.
+    /// Flags indicating the result of removing an encryption key from the kernel.
     ///
     /// **Note**: known flags are listed here, but other unknown bits are possible.
     pub struct RemovalStatusFlags: u32 {
@@ -224,7 +235,7 @@ bitflags::bitflags! {
 
 #[derive(TryFromPrimitive, Debug, PartialEq)]
 #[repr(u32)]
-/// Indicates the presence of a [`PolicyKey`] in the kernel (for a given filesystem).
+/// Indicates the presence of an encryption key in the kernel (for a given filesystem).
 pub enum KeyStatus {
     /// The key is absent from the filesystem.
     Absent = FSCRYPT_KEY_STATUS_ABSENT,
@@ -235,7 +246,7 @@ pub enum KeyStatus {
 }
 
 bitflags::bitflags! {
-    /// Flags indicating the status of a [`PolicyKey`] in the kernel (see [get_key_status()]).
+    /// Flags indicating the status of an encryption key in the kernel (see [get_key_status()]).
     ///
     /// **Note**: known flags are listed here, but other unknown bits are possible.
     pub struct KeyStatusFlags: u32 {
@@ -292,15 +303,19 @@ mod ioctl {
     nix::ioctl_readwrite!(fscrypt_get_key_status, b'f', 26, linux::fscrypt_get_key_status_arg);
 }
 
-/// Add a [`PolicyKey`] to the kernel for a given filesystem
-pub fn add_key(dir: &Path, key: &PolicyKey) -> Result<PolicyKeyId> {
+/// Add an encryption key to the kernel for a given filesystem
+pub fn add_key(dir: &Path, key: &[u8]) -> Result<PolicyKeyId> {
+    if key.is_empty() || key.len() > FSCRYPT_MAX_KEY_SIZE {
+        return Err(describe_error(Errno::EINVAL));
+    }
+
     let fd = File::open(get_mountpoint(dir)?)?;
 
     let mut arg : fscrypt_add_key_arg_full = unsafe { mem::zeroed() };
     arg.key_spec.type_ = FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER;
-    arg.raw_size = key.secret().len() as u32;
+    arg.raw_size = key.len() as u32;
     arg.key_id = 0;
-    arg.raw = *key.secret();
+    arg.raw[..key.len()].copy_from_slice(key);
 
     let raw_fd = fd.as_raw_fd();
     let argptr = &raw mut arg as *mut fscrypt_add_key_arg;
@@ -310,7 +325,7 @@ pub fn add_key(dir: &Path, key: &PolicyKey) -> Result<PolicyKeyId> {
     }
 }
 
-/// Remove a [`PolicyKey`] from the kernel for a given filesystem
+/// Remove an encryption key from the kernel for a given filesystem
 pub fn remove_key(dir: &Path, keyid: &PolicyKeyId, user: RemoveKeyUsers) -> Result<RemovalStatusFlags> {
     let fd = File::open(get_mountpoint(dir)?)?;
 
@@ -367,7 +382,7 @@ pub fn set_policy(dir: &Path, keyid: &PolicyKeyId) -> Result<()> {
     }
 }
 
-/// Check if a [`PolicyKey`] is loaded into the kernel for a given filesystem
+/// Check if a key with the given [`PolicyKeyId`] is loaded into the kernel for a given filesystem
 pub fn get_key_status(dir: &Path, keyid: &PolicyKeyId) -> Result<(KeyStatus, KeyStatusFlags)> {
     let fd = File::open(get_mountpoint(dir)?)?;
 
@@ -432,22 +447,15 @@ mod tests {
 
     #[test]
     fn test_add_key() -> Result<()> {
-        let mntpoint = match env::var(MNTPOINT_ENV_VAR) {
-            Ok(x) if x == "skip" => return Ok(()),
-            Ok(x) => std::path::PathBuf::from(&x),
-            _ => bail!("Environment variable '{MNTPOINT_ENV_VAR}' not set"),
-        };
-
-        for _ in 0..5 {
+        fn do_test_key(key: &[u8], mntpoint: &Path) -> Result<()> {
             // Create a temporary directory and check that it's not encrypted
             let workdir = tempdir::TempDir::new_in(&mntpoint, "encrypted")?;
             if let Some(_) = get_policy(workdir.as_ref())? {
                 panic!("Found policy where none was expected")
             };
 
-            // Generate a random key and calculate its expected ID
-            let key = PolicyKey::new_random();
-            let id = key.get_id();
+            // Calculate the expected key ID
+            let id = PolicyKeyId::new_from_key(&key);
 
             // Check that the key is absent from the filesystem
             let (status, _) = get_key_status(&mntpoint, &id)?;
@@ -474,10 +482,27 @@ mod tests {
 
             // Check again that the directory is still encrypted
             match get_policy(workdir.as_ref())? {
-                Some(Policy::V2(x)) if x.keyid == id => (),
+                Some(Policy::V2(x)) if x.keyid == id => Ok(()),
                 _ => panic!("Could not find the expected policy")
-            };
+            }
+        }
+
+        let mntpoint = match env::var(MNTPOINT_ENV_VAR) {
+            Ok(x) if x == "skip" => return Ok(()),
+            Ok(x) => std::path::PathBuf::from(&x),
+            _ => bail!("Environment variable '{MNTPOINT_ENV_VAR}' not set"),
         };
+
+        let key = PolicyKey::new_random();
+        assert_eq!(key.secret().len(), FSCRYPT_MAX_KEY_SIZE);
+        do_test_key(key.secret(), &mntpoint)?;
+
+        // Test also keys of different sizes
+        for i in 0..4 {
+            let mut key = vec![0u8; 32 + 8 * i];
+            OsRng.fill_bytes(&mut key);
+            do_test_key(&key, &mntpoint)?;
+        }
 
         Ok(())
     }
@@ -490,7 +515,7 @@ mod tests {
         let key = PolicyKey::new_random();
         let id = key.get_id();
 
-        assert!(add_key(&mntpoint, &key).is_err());
+        assert!(add_key(&mntpoint, key.secret()).is_err());
         assert!(set_policy(workdir.path(), &id).is_err());
         assert!(get_policy(workdir.path()).is_err());
         assert!(get_key_status(&mntpoint, &id).is_err());

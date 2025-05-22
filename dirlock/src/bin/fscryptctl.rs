@@ -112,7 +112,7 @@ fn cmd_add_key(args: &AddKeyArgs) -> Result<()> {
     let mut stdin = std::io::stdin();
     let key = fscrypt::PolicyKey::new_from_reader(&mut stdin)?;
     ensure!(stdin.read(&mut [0])? == 0, "Too much data when reading key from stdin");
-    let keyid = fscrypt::add_key(&args.mountpoint, &key)?;
+    let keyid = fscrypt::add_key(&args.mountpoint, key.secret())?;
     println!("Added key {} to directory {}", keyid, args.mountpoint.display());
     Ok(())
 }
