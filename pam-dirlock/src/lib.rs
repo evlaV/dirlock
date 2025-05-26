@@ -91,29 +91,29 @@ fn do_chauthtok(pamh: Pam, flags: PamFlags) -> Result<(), PamError> {
     let user = get_user(&pamh)?;
     let mut homedir = get_home_data(user)?;
 
+    // Get the current password
+    let pass = pamlib::get_oldauthtok(&pamh).map(|p| p.to_bytes())?;
+
+    // Check that the current password is correct.
+    // Do it only at the preliminary check step because we'll anyway
+    // have to do it again later with homedir.change_password().
     if flags.bits() & PAM_PRELIM_CHECK != 0 {
-        return Ok(());
+        return match homedir.check_pass(pass, None) {
+            Ok(true) => Ok(()),
+            Ok(false) => {
+                log_notice(&pamh, format!("authentication failure; user={user}"));
+                Err(PamError::AUTH_ERR)
+            },
+            Err(e) => {
+                log_warning(&pamh, format!("authentication failure; user={user} error={e}"));
+                Err(PamError::AUTH_ERR)
+            },
+        };
     }
 
     // If we don't receive PAM_UPDATE_AUTHTOK at this point then something is wrong
     if flags.bits() & PAM_UPDATE_AUTHTOK == 0 {
         return Err(PamError::ABORT);
-    }
-
-    // Get the current password
-    let pass = pamlib::get_oldauthtok(&pamh).map(|p| p.to_bytes())?;
-
-    // Check that the password is correct
-    match homedir.check_pass(pass, None) {
-        Ok(true) => (),
-        Ok(false) => {
-            log_notice(&pamh, format!("authentication failure; user={user}"));
-            return Err(PamError::AUTH_ERR);
-        },
-        Err(e) => {
-            log_warning(&pamh, format!("authentication failure; user={user} error={e}"));
-            return Err(PamError::AUTH_ERR);
-        },
     }
 
     // Get the new pasword
