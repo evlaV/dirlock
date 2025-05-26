@@ -7,7 +7,7 @@
 mod pamlib;
 
 use pamsm::{LogLvl, Pam, PamError, PamFlags, PamLibExt, PamMsgStyle, PamServiceModule, pam_module};
-use dirlock::DirStatus;
+use dirlock::{DirStatus, EncryptedDir};
 use std::ffi::c_int;
 
 const PAM_UPDATE_AUTHTOK : c_int = 0x2000;
@@ -23,25 +23,35 @@ fn log_notice(pamh: &Pam, msg: impl AsRef<str>) {
     let _ = pamh.syslog(LogLvl::NOTICE, msg.as_ref());
 }
 
+/// Get the user name and check that it's an ASCII string
+fn get_user(pamh: &Pam) -> Result<&str, PamError> {
+    match pamh.get_user(None)?.ok_or(PamError::AUTH_ERR)?.to_str() {
+        Ok(s) if s.is_ascii() => Ok(s),
+        _ => Err(PamError::AUTH_ERR),
+    }
+}
+
+/// Get information about the user's home directory.
+///
+/// If it's not encrypted by dirlock then return PAM_USER_UNKNOWN so
+/// other PAM modules can try to handle it.
+fn get_home_data(user: &str) -> Result<EncryptedDir, PamError> {
+    match dirlock::open_home(user) {
+        Ok(Some(DirStatus::Encrypted(d))) => Ok(d),
+        Ok(Some(_)) => Err(PamError::USER_UNKNOWN), // The home directory is not encrypted with dirlock
+        Ok(None)    => Err(PamError::USER_UNKNOWN), // The home directory does not exist
+        Err(_)      => Err(PamError::SERVICE_ERR),
+    }
+}
+
 /// Implementation of pam_sm_authenticate().
 ///
 /// Used for authentication.
 fn do_authenticate(pamh: Pam) -> Result<(), PamError> {
-    // Get the user name and check that it's an ASCII string
-    let user = match pamh.get_user(None)?.ok_or(PamError::AUTH_ERR)?.to_str() {
-        Ok(s) if s.is_ascii() => s,
-        _ => return Err(PamError::AUTH_ERR),
-    };
+    let user = get_user(&pamh)?;
+    let homedir = get_home_data(user)?;
 
-    // Get the data of the user's home directory
-    let encrypted_dir = match dirlock::open_home(user) {
-        Ok(Some(DirStatus::Encrypted(d))) => d,
-        Ok(Some(_)) => return Err(PamError::USER_UNKNOWN), // The home directory is not encrypted by us
-        Ok(None)    => return Err(PamError::USER_UNKNOWN), // The home directory does not exist
-        Err(_)      => return Err(PamError::SERVICE_ERR),
-    };
-
-    for p in &encrypted_dir.protectors {
+    for p in &homedir.protectors {
         let prompt = match p.protector.get_prompt() {
             Ok(p) => format!("{p}: "),
             Err(e) => {
@@ -57,7 +67,7 @@ fn do_authenticate(pamh: Pam) -> Result<(), PamError> {
 
         // Unlock the home directory with the password
         let protid = &p.protector.id;
-        match encrypted_dir.unlock(pass, protid) {
+        match homedir.unlock(pass, protid) {
             Ok(true) => return Ok(()),
             Ok(false) => log_notice(&pamh, format!("authentication failure; user={user} protector={protid}")),
             Err(e) => log_notice(&pamh, format!("authentication failure; user={user} protector={protid} error={e}")),
@@ -74,19 +84,8 @@ fn do_authenticate(pamh: Pam) -> Result<(), PamError> {
 ///
 /// Used for changing passwords (with 'passwd' or similar)
 fn do_chauthtok(pamh: Pam, flags: PamFlags) -> Result<(), PamError> {
-    // Get the user name and check that it's an ASCII string
-    let user = match pamh.get_user(None)?.ok_or(PamError::AUTH_ERR)?.to_str() {
-        Ok(s) if s.is_ascii() => s,
-        _ => return Err(PamError::AUTH_ERR),
-    };
-
-    // Get the data of the user's home directory
-    let mut encrypted_dir = match dirlock::open_home(user) {
-        Ok(Some(DirStatus::Encrypted(d))) => d,
-        Ok(Some(_)) => return Err(PamError::USER_UNKNOWN), // The home directory is not encrypted by us
-        Ok(None)    => return Err(PamError::USER_UNKNOWN), // The home directory does not exist
-        Err(_)      => return Err(PamError::SERVICE_ERR),
-    };
+    let user = get_user(&pamh)?;
+    let mut homedir = get_home_data(user)?;
 
     if flags.bits() & PAM_PRELIM_CHECK != 0 {
         return Ok(());
@@ -101,7 +100,7 @@ fn do_chauthtok(pamh: Pam, flags: PamFlags) -> Result<(), PamError> {
     let pass = pamlib::get_oldauthtok(&pamh).map(|p| p.to_bytes())?;
 
     // Check that the password is correct
-    match encrypted_dir.check_pass(pass, None) {
+    match homedir.check_pass(pass, None) {
         Ok(true) => (),
         Ok(false) => {
             log_notice(&pamh, format!("authentication failure; user={user}"));
@@ -135,7 +134,7 @@ fn do_chauthtok(pamh: Pam, flags: PamFlags) -> Result<(), PamError> {
     }
 
     // Change the password
-    match encrypted_dir.change_password(pass, newpass, None) {
+    match homedir.change_password(pass, newpass, None) {
         Ok(true) => {
             log_notice(&pamh, format!("password changed for {user}"));
             Ok(())
