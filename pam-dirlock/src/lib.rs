@@ -27,6 +27,10 @@ fn log_notice(pamh: &Pam, msg: impl AsRef<str>) {
     let _ = pamh.syslog(LogLvl::NOTICE, msg.as_ref());
 }
 
+fn log_info(pamh: &Pam, msg: impl AsRef<str>) {
+    let _ = pamh.syslog(LogLvl::INFO, msg.as_ref());
+}
+
 /// Get the user name and check that it's an ASCII string
 fn get_user(pamh: &Pam) -> Result<&str, PamError> {
     match pamh.get_user(None)?.ok_or(PamError::AUTH_ERR)?.to_str() {
@@ -154,6 +158,20 @@ fn do_chauthtok(pamh: Pam, flags: PamFlags) -> Result<(), PamError> {
     }
 }
 
+fn do_open_session(pamh: Pam) -> Result<(), PamError> {
+    let user = get_user(&pamh)?;
+    let _homedir = get_home_data(user)?;
+    log_info(&pamh, format!("session opened for user {user}"));
+    Ok(())
+}
+
+fn do_close_session(pamh: Pam) -> Result<(), PamError> {
+    let user = get_user(&pamh)?;
+    let _homedir = get_home_data(user)?;
+    log_info(&pamh, format!("session closed for user {user}"));
+    Ok(())
+}
+
 // This is the glue for the pamsm crate
 struct FscryptPam;
 pam_module!(FscryptPam);
@@ -164,12 +182,22 @@ impl PamServiceModule for FscryptPam {
         do_authenticate(pamh).err().unwrap_or(PamError::SUCCESS)
     }
 
-    fn open_session(_pamh: Pam, _flags: PamFlags, _args: Vec<String>) -> PamError {
-        PamError::SUCCESS
+    fn open_session(pamh: Pam, _flags: PamFlags, _args: Vec<String>) -> PamError {
+        dirlock::init();
+        match do_open_session(pamh) {
+            Ok(()) => PamError::SUCCESS,
+            Err(PamError::USER_UNKNOWN) => PamError::SUCCESS,
+            Err(_) => PamError::SESSION_ERR,
+        }
     }
 
-    fn close_session(_pamh: Pam, _flags: PamFlags, _args: Vec<String>) -> PamError {
-        PamError::SUCCESS
+    fn close_session(pamh: Pam, _flags: PamFlags, _args: Vec<String>) -> PamError {
+        dirlock::init();
+        match do_close_session(pamh) {
+            Ok(()) => PamError::SUCCESS,
+            Err(PamError::USER_UNKNOWN) => PamError::SUCCESS,
+            Err(_) => PamError::SESSION_ERR,
+        }
     }
 
     fn setcred(_pamh: Pam, _flags: PamFlags, _args: Vec<String>) -> PamError {
