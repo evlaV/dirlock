@@ -19,6 +19,10 @@ const PAM_PRELIM_CHECK   : c_int = 0x4000;
 // We cannot use 'default=ignore' because we don't want the unix
 // module to try to authenticate this
 
+fn log_warning(pamh: &Pam, msg: impl AsRef<str>) {
+    let _ = pamh.syslog(LogLvl::WARNING, msg.as_ref());
+}
+
 fn log_notice(pamh: &Pam, msg: impl AsRef<str>) {
     let _ = pamh.syslog(LogLvl::NOTICE, msg.as_ref());
 }
@@ -70,7 +74,7 @@ fn do_authenticate(pamh: Pam) -> Result<(), PamError> {
         match homedir.unlock(pass, protid) {
             Ok(true) => return Ok(()),
             Ok(false) => log_notice(&pamh, format!("authentication failure; user={user} protector={protid}")),
-            Err(e) => log_notice(&pamh, format!("authentication failure; user={user} protector={protid} error={e}")),
+            Err(e) => log_warning(&pamh, format!("authentication failure; user={user} protector={protid} error={e}")),
         }
 
         _ = pamh.conv(Some("Authentication failed"), PamMsgStyle::ERROR_MSG);
@@ -107,7 +111,7 @@ fn do_chauthtok(pamh: Pam, flags: PamFlags) -> Result<(), PamError> {
             return Err(PamError::AUTH_ERR);
         },
         Err(e) => {
-            log_notice(&pamh, format!("authentication failure; user={user} error={e}"));
+            log_warning(&pamh, format!("authentication failure; user={user} error={e}"));
             return Err(PamError::AUTH_ERR);
         },
     }
@@ -136,11 +140,15 @@ fn do_chauthtok(pamh: Pam, flags: PamFlags) -> Result<(), PamError> {
     // Change the password
     match homedir.change_password(pass, newpass, None) {
         Ok(true) => {
-            log_notice(&pamh, format!("password changed for {user}"));
+            log_notice(&pamh, format!("password changed for user {user}"));
             Ok(())
         },
-        _ => {
-            log_notice(&pamh, format!("error changing password for {user}"));
+        Ok(false) => {
+            log_warning(&pamh, format!("password for user {user} changed by another process"));
+            Err(PamError::AUTH_ERR)
+        },
+        Err(e) => {
+            log_warning(&pamh, format!("error changing password; user={user}, error={e}"));
             Err(PamError::AUTH_ERR)
         }
     }
