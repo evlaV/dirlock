@@ -111,14 +111,13 @@ encrypt_home() {
 
     echo -e "** ${CYAN}Initializing encryption for /home/deck${NC}"
     dirlock encrypt --protector-type "$protector" --protector-name "Protector for /home/deck" "$tempdir/enc"
-    echo -en "** ${CYAN}Encrypting /home/deck (this can take a while)${NC}: "
-    cp -a /home/deck "$tempdir/enc/deck"
+    echo -e "** ${CYAN}Encrypting /home/deck (this can take a while)${NC}"
+    rsync -aAXH --open-noatime --info=progress2 /home/deck/ "$tempdir/enc/deck/"
     mv "$tempdir/enc/deck" "$tempdir/deck"
     sync
     exch /home/deck "$tempdir/deck"
     sync
     rm -rf "$tempdir"
-    echo -e "${GREEN}OK${NC}"
 
     echo -en "** ${CYAN}Disabling the old password for the deck user (/etc/shadow)${NC}: "
     usermod -p '*' deck

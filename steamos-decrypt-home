@@ -79,13 +79,12 @@ decrypt_home() {
     tempdir=$(mktemp -d /home/dirlock.tmp.XXXXXX)
     trap "test -d $tempdir && rm -rf $tempdir" INT EXIT
 
-    echo -en "** ${CYAN}Decrypting /home/deck (this can take a while)${NC}: "
-    cp -a /home/deck "$tempdir/deck"
+    echo -e "** ${CYAN}Decrypting /home/deck (this can take a while)${NC}"
+    rsync -aAXH --open-noatime --info=progress2 /home/deck/ "$tempdir/deck/"
     sync
     exch /home/deck "$tempdir/deck"
     sync
     rm -rf "$tempdir"
-    echo -e "${GREEN}OK${NC}"
 
     echo -e "** ${CYAN}Setting a new password for the deck user (/etc/shadow)${NC}"
     passwd deck
