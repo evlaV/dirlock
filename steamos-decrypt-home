@@ -12,6 +12,17 @@ GREEN="\033[0;32m"
 CYAN="\033[0;36m"
 NC="\033[0m"
 
+tempdir="/home/dirlock.tmp"
+
+cleanup() {
+    if [ -d "$tempdir" ]; then
+        echo "Cleaning temporary directory $tempdir, please wait"
+        rm -rf "$tempdir"
+    fi
+}
+
+trap cleanup INT EXIT
+
 if [ "$(id -u)" != 0 ]; then
     echo "This tool needs to be run as root" >&1
     exit 1
@@ -76,10 +87,9 @@ stop_sddm() {
 }
 
 decrypt_home() {
-    tempdir=$(mktemp -d /home/dirlock.tmp.XXXXXX)
-    trap "test -d $tempdir && rm -rf $tempdir" INT EXIT
-
     echo -e "** ${CYAN}Decrypting /home/deck (this can take a while)${NC}"
+    rm -rf "$tempdir"
+    mkdir -p "$tempdir"
     rsync -aAXH --open-noatime --info=progress2 /home/deck/ "$tempdir/deck/"
     sync
     exch /home/deck "$tempdir/deck"
