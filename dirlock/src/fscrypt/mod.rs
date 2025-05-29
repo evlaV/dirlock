@@ -7,10 +7,9 @@
 mod linux;
 use linux::*;
 
-use anyhow::{anyhow, bail, ensure, Result};
+use anyhow::{anyhow, bail, Result};
 use nix::errno::Errno;
 use num_enum::{FromPrimitive, TryFromPrimitive};
-use rand::{RngCore, rngs::OsRng};
 use serde::{Serialize, Deserialize};
 use serde_with::{serde_as, hex::Hex};
 use std::{
@@ -25,7 +24,7 @@ use std::{
 use zeroize::Zeroize;
 
 /// All our keys use the maximum length allowed by fscrypt
-pub const POLICY_KEY_LEN: usize = FSCRYPT_MAX_KEY_SIZE;
+pub use linux::FSCRYPT_MAX_KEY_SIZE as MAX_KEY_SIZE;
 
 /// An 8-byte key descriptor for v1 fscrypt policies
 #[derive(derive_more::Display)]
@@ -70,55 +69,6 @@ impl PolicyKeyId {
     }
 }
 
-
-/// A raw master encryption key, meant to be added to the kernel for a specific filesystem.
-#[derive(zeroize::ZeroizeOnDrop, Clone)]
-pub struct PolicyKey(Box<[u8; POLICY_KEY_LEN]>);
-
-impl From<&[u8; POLICY_KEY_LEN]> for PolicyKey {
-    fn from(src: &[u8; POLICY_KEY_LEN]) -> Self {
-        PolicyKey(Box::new(*src))
-    }
-}
-
-impl Default for PolicyKey {
-    /// Returns a key containing only zeroes.
-    fn default() -> Self {
-        Self(Box::new([0u8; POLICY_KEY_LEN]))
-    }
-}
-
-impl PolicyKey {
-    /// Return a reference to the data
-    pub fn secret(&self) -> &[u8; POLICY_KEY_LEN] {
-        self.0.as_ref()
-    }
-
-    /// Return a mutable reference to the data
-    pub fn secret_mut(&mut self) -> &mut [u8; POLICY_KEY_LEN] {
-        self.0.as_mut()
-    }
-
-    /// Generates a new, random key
-    pub fn new_random() -> Self {
-        let mut key = PolicyKey::default();
-        OsRng.fill_bytes(key.secret_mut());
-        key
-    }
-
-    /// Generates a new key, reading the data from a given source
-    pub fn new_from_reader(r: &mut impl std::io::Read) -> Result<Self> {
-        let mut key = PolicyKey::default();
-        let len = r.read(key.secret_mut())?;
-        ensure!(len == POLICY_KEY_LEN, "Expected {POLICY_KEY_LEN} bytes when reading key, got {len}");
-        Ok(key)
-    }
-
-    /// Calculates the fscrypt v2 key ID for this key
-    pub fn get_id(&self) -> PolicyKeyId {
-        PolicyKeyId::new_from_key(self.secret())
-    }
-}
 
 /// A fscrypt encryption policy
 pub enum Policy {
@@ -282,7 +232,7 @@ struct fscrypt_add_key_arg_full {
     raw_size: u32,
     key_id: u32,
     __reserved: [u32; 8],
-    raw: [u8; POLICY_KEY_LEN]
+    raw: [u8; FSCRYPT_MAX_KEY_SIZE]
 }
 
 impl Drop for fscrypt_add_key_arg_full {
@@ -439,9 +389,8 @@ fn describe_error(err: Errno) -> anyhow::Error {
 
 #[cfg(test)]
 mod tests {
-    use crate::fscrypt::*;
-    use anyhow::{bail, Result};
-    use std::env;
+    use super::*;
+    use rand::{RngCore, rngs::OsRng};
 
     const MNTPOINT_ENV_VAR : &str = "DIRLOCK_TEST_FS";
 
@@ -487,19 +436,15 @@ mod tests {
             }
         }
 
-        let mntpoint = match env::var(MNTPOINT_ENV_VAR) {
+        let mntpoint = match std::env::var(MNTPOINT_ENV_VAR) {
             Ok(x) if x == "skip" => return Ok(()),
             Ok(x) => std::path::PathBuf::from(&x),
             _ => bail!("Environment variable '{MNTPOINT_ENV_VAR}' not set"),
         };
 
-        let key = PolicyKey::new_random();
-        assert_eq!(key.secret().len(), FSCRYPT_MAX_KEY_SIZE);
-        do_test_key(key.secret(), &mntpoint)?;
-
-        // Test also keys of different sizes
-        for i in 0..4 {
-            let mut key = vec![0u8; 32 + 8 * i];
+        // Test keys of different sizes
+        for i in 0..5 {
+            let mut key = vec![0u8; FSCRYPT_MAX_KEY_SIZE - 8 * i];
             OsRng.fill_bytes(&mut key);
             do_test_key(&key, &mntpoint)?;
         }
@@ -512,10 +457,11 @@ mod tests {
         let mntpoint = std::path::Path::new("/tmp");
         let workdir = tempdir::TempDir::new_in(&mntpoint, "encrypted")?;
 
-        let key = PolicyKey::new_random();
-        let id = key.get_id();
+        let mut key = vec![0u8; FSCRYPT_MAX_KEY_SIZE];
+        OsRng.fill_bytes(&mut key);
+        let id = PolicyKeyId::new_from_key(&key);
 
-        assert!(add_key(&mntpoint, key.secret()).is_err());
+        assert!(add_key(&mntpoint, &key).is_err());
         assert!(set_policy(workdir.path(), &id).is_err());
         assert!(get_policy(workdir.path()).is_err());
         assert!(get_key_status(&mntpoint, &id).is_err());

@@ -10,7 +10,7 @@ use serde::{Serialize, Deserialize};
 /// A key derivation function
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
-pub(crate) enum Kdf {
+pub enum Kdf {
     Pbkdf2(Pbkdf2),
 }
 
@@ -35,7 +35,7 @@ impl Kdf {
 ///
 /// This uses HMAC-SHA512 as its pseudorandom function.
 #[derive(Serialize, Deserialize)]
-pub(crate) struct Pbkdf2 {
+pub struct Pbkdf2 {
     iterations: u32,
 }
 

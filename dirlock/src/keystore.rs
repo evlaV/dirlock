@@ -14,7 +14,8 @@ use std::{
     path::{Path, PathBuf},
     sync::OnceLock,
 };
-use crate::protector::{Protector, ProtectorId, ProtectedPolicyKey, WrappedPolicyKey};
+use crate::policy::WrappedPolicyKey;
+use crate::protector::{Protector, ProtectorId, ProtectedPolicyKey};
 use crate::fscrypt::PolicyKeyId;
 use crate::util::SafeFile;
 

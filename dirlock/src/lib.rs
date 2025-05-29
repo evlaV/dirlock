@@ -10,19 +10,23 @@ pub(crate) mod config;
 pub mod convert;
 pub(crate) mod crypto;
 pub mod fscrypt;
-pub mod kdf;
+pub(crate) mod kdf;
 pub mod keystore;
+pub mod policy;
 pub mod protector;
 pub mod util;
 
 use anyhow::{anyhow, bail, Result};
-use fscrypt::{Policy, PolicyKey, PolicyKeyId, RemoveKeyUsers, RemovalStatusFlags};
+use fscrypt::{Policy, PolicyKeyId, RemoveKeyUsers, RemovalStatusFlags};
+use policy::{
+    PolicyKey,
+    WrappedPolicyKey,
+};
 use protector::{
     ProtectedPolicyKey,
     Protector,
     ProtectorId,
     ProtectorKey,
-    WrappedPolicyKey,
     opts::ProtectorOpts
 };
 use std::path::{Path, PathBuf};
@@ -186,7 +190,7 @@ pub fn encrypt_dir(path: &Path, protector_key: ProtectorKey) -> Result<PolicyKey
 
     // Generate a master key and encrypt the directory with it
     // FIXME: Write the key to disk before encrypting the directory
-    let master_key = fscrypt::PolicyKey::new_random();
+    let master_key = PolicyKey::new_random();
     let keyid = fscrypt::add_key(path, master_key.secret())?;
     if let Err(e) = fscrypt::set_policy(path, &keyid) {
         let user = RemoveKeyUsers::CurrentUser;

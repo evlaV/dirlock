@@ -4,15 +4,13 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
+use anyhow::{ensure, Result};
 use rand::{RngCore, rngs::OsRng};
 use serde::{Serialize, Deserialize};
 use serde_with::{serde_as, base64::Base64};
 
 use crate::{
-    fscrypt::{
-        POLICY_KEY_LEN,
-        PolicyKey,
-    },
+    fscrypt,
     protector::{
         ProtectorKey,
     },
@@ -21,6 +19,58 @@ use crate::{
         Hmac,
     },
 };
+
+const POLICY_KEY_LEN: usize = fscrypt::MAX_KEY_SIZE;
+
+/// A raw master encryption key, meant to be added to the kernel for a specific filesystem.
+#[derive(zeroize::ZeroizeOnDrop, Clone)]
+pub struct PolicyKey(Box<[u8; POLICY_KEY_LEN]>);
+
+impl From<&[u8; POLICY_KEY_LEN]> for PolicyKey {
+    fn from(src: &[u8; POLICY_KEY_LEN]) -> Self {
+        PolicyKey(Box::new(*src))
+    }
+}
+
+impl Default for PolicyKey {
+    /// Returns a key containing only zeroes.
+    fn default() -> Self {
+        Self(Box::new([0u8; POLICY_KEY_LEN]))
+    }
+}
+
+impl PolicyKey {
+    /// Return a reference to the data
+    pub fn secret(&self) -> &[u8; POLICY_KEY_LEN] {
+        self.0.as_ref()
+    }
+
+    /// Return a mutable reference to the data
+    pub fn secret_mut(&mut self) -> &mut [u8; POLICY_KEY_LEN] {
+        self.0.as_mut()
+    }
+
+    /// Generates a new, random key
+    pub fn new_random() -> Self {
+        let mut key = PolicyKey::default();
+        OsRng.fill_bytes(key.secret_mut());
+        key
+    }
+
+    /// Generates a new key, reading the data from a given source
+    pub fn new_from_reader(r: &mut impl std::io::Read) -> Result<Self> {
+        let mut key = PolicyKey::default();
+        let len = r.read(key.secret_mut())?;
+        ensure!(len == POLICY_KEY_LEN, "Expected {POLICY_KEY_LEN} bytes when reading key, got {len}");
+        Ok(key)
+    }
+
+    /// Calculates the fscrypt v2 key ID for this key
+    pub fn get_id(&self) -> fscrypt::PolicyKeyId {
+        fscrypt::PolicyKeyId::new_from_key(self.secret())
+    }
+}
+
 
 #[serde_as]
 #[derive(Serialize, Deserialize)]
@@ -36,14 +86,14 @@ impl WrappedPolicyKey {
     pub fn new(mut raw_key: PolicyKey, protector_key: &ProtectorKey) -> Self {
         let mut iv = AesIv::default();
         OsRng.fill_bytes(&mut iv.0);
-        let hmac = protector_key.0.encrypt(&iv, raw_key.secret_mut());
+        let hmac = protector_key.key().encrypt(&iv, raw_key.secret_mut());
         WrappedPolicyKey{ wrapped_key: *raw_key.secret(), iv, hmac }
     }
 
     /// Unwraps a [`PolicyKey`] with a [`ProtectorKey`]
     pub fn unwrap_key(&self, protector_key: &ProtectorKey) -> Option<PolicyKey> {
         let mut raw_key = PolicyKey::from(&self.wrapped_key);
-        if protector_key.0.decrypt(&self.iv, &self.hmac, raw_key.secret_mut()) {
+        if protector_key.key().decrypt(&self.iv, &self.hmac, raw_key.secret_mut()) {
             Some(raw_key)
         } else {
             None
@@ -56,7 +106,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_wrapped_policy_key() -> anyhow::Result<()> {
+    fn test_wrapped_policy_key() -> Result<()> {
         for _ in 0..5 {
             // Generate random keys
             let mut protkey = ProtectorKey::new_random();

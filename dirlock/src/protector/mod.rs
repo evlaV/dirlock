@@ -16,13 +16,14 @@ use crate::crypto::{
     Aes256Key,
     Salt,
 };
-use crate::fscrypt::PolicyKey;
+use crate::policy::{
+    PolicyKey,
+    WrappedPolicyKey,
+};
 
 pub use password::PasswordProtector as PasswordProtector;
 pub use tpm2::Tpm2Protector as Tpm2Protector;
-pub use policy::WrappedPolicyKey as WrappedPolicyKey;
 pub mod password;
-pub mod policy;
 pub mod tpm2;
 pub mod opts;
 
@@ -49,6 +50,11 @@ impl ProtectorKey {
     /// Return a mutable reference to the data
     pub fn secret_mut(&mut self) -> &mut [u8; PROTECTOR_KEY_LEN] {
         self.0.secret_mut()
+    }
+
+    /// Return a reference to the [`Aes256Key`]
+    pub fn key(&self) -> &Aes256Key {
+        &self.0
     }
 
     /// Generates a new, random key

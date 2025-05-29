@@ -10,6 +10,7 @@ use argh::FromArgs;
 use std::path::PathBuf;
 
 use dirlock::fscrypt::{self, PolicyKeyId};
+use dirlock::policy::PolicyKey;
 
 #[derive(FromArgs)]
 /// Disk encryption tool.
@@ -110,7 +111,7 @@ fn cmd_key_status(args: &KeyStatusArgs) -> Result<()> {
 
 fn cmd_add_key(args: &AddKeyArgs) -> Result<()> {
     let mut stdin = std::io::stdin();
-    let key = fscrypt::PolicyKey::new_from_reader(&mut stdin)?;
+    let key = PolicyKey::new_from_reader(&mut stdin)?;
     ensure!(stdin.read(&mut [0])? == 0, "Too much data when reading key from stdin");
     let keyid = fscrypt::add_key(&args.mountpoint, key.secret())?;
     println!("Added key {} to directory {}", keyid, args.mountpoint.display());

@@ -14,11 +14,11 @@ use dirlock::{
     DirStatus,
     EncryptedDir,
     fscrypt::{
-        PolicyKey,
         PolicyKeyId,
         self,
     },
     keystore,
+    policy::PolicyKey,
     protector::{
         Protector,
         ProtectorId,
@@ -769,7 +769,7 @@ fn cmd_tpm2_test() -> Result<()> {
 
 #[cfg(feature = "tpm2")]
 fn cmd_tpm2_test() -> Result<()> {
-    use dirlock::protector::WrappedPolicyKey;
+    use dirlock::policy::WrappedPolicyKey;
 
     match dirlock::protector::tpm2::get_status(None) {
         Ok(s) if s.in_lockout => bail!("TPM in lockout mode"),
