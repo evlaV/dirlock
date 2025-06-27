@@ -27,6 +27,14 @@ impl From<&[u8; 32]> for Aes256Key {
     }
 }
 
+impl TryFrom<&[u8]> for Aes256Key {
+    type Error = std::array::TryFromSliceError;
+    fn try_from(src: &[u8]) -> Result<Self, Self::Error> {
+        let k : &[u8; 32] = src.try_into()?;
+        Ok(Aes256Key::from(k))
+    }
+}
+
 impl Aes256Key {
     /// Return a reference to the data
     pub fn secret(&self) -> &[u8; 32] {

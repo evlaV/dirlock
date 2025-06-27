@@ -26,6 +26,15 @@ pub fn dir_is_empty(dir: &Path) -> Result<bool> {
 
 /// Prompt the user for a new protector password (with confirmation) and return it
 pub fn read_new_password_for_protector(ptype: ProtectorType) -> Result<Zeroizing<String>> {
+    // For FIDO2 protectors we need the existing PIN of the token, not a new one
+    if ptype == ProtectorType::Fido2 {
+        crate::protector::fido2::check_device_available()?;
+        let name = ptype.credential_name();
+        eprint!("Enter the {name}: ");
+        let pin = Zeroizing::new(rpassword::read_password()?);
+        return Ok(pin);
+    }
+
     let name = ptype.credential_name();
     eprint!("Enter a new {name}: ");
     let pass = Zeroizing::new(rpassword::read_password()?);

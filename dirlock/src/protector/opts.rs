@@ -12,6 +12,7 @@ pub const PROTECTOR_NAME_MAX_LEN: usize = 128;
 
 /// Available options for protectors
 pub enum ProtectorOpts {
+    Fido2(Fido2Opts),
     Tpm2(Tpm2Opts),
     Password(PasswordOpts),
 }
@@ -19,6 +20,7 @@ pub enum ProtectorOpts {
 impl ProtectorOpts {
     pub fn get_type(&self) -> ProtectorType {
         match self {
+            ProtectorOpts::Fido2(_) => ProtectorType::Fido2,
             ProtectorOpts::Tpm2(_) => ProtectorType::Tpm2,
             ProtectorOpts::Password(_) => ProtectorType::Password,
         }
@@ -40,6 +42,11 @@ pub struct Tpm2Opts {
     pub tpm2_tcti: Option<String>,
 }
 
+
+/// Options for FIDO2 protectors
+pub struct Fido2Opts {
+    pub name: String,
+}
 
 /// A builder for [`ProtectorOpts`]
 #[derive(Default)]
@@ -95,6 +102,9 @@ impl ProtectorOptsBuilder {
         if self.tpm2_tcti.is_some() && ptype != ProtectorType::Tpm2 {
             bail!("The TCTI configuration is only for TPM2 protectors");
         }
+        if self.kdf_iter.is_some() && ptype == ProtectorType::Fido2 {
+            bail!("FIDO2 protectors don't support KDF options");
+        }
         match ptype {
             ProtectorType::Tpm2 => {
                 Ok(ProtectorOpts::Tpm2(Tpm2Opts {
@@ -106,6 +116,11 @@ impl ProtectorOptsBuilder {
             ProtectorType::Password => {
                 Ok(ProtectorOpts::Password(PasswordOpts {
                     kdf_iter: self.kdf_iter,
+                    name: self.name,
+                }))
+            },
+            ProtectorType::Fido2 => {
+                Ok(ProtectorOpts::Fido2(Fido2Opts {
                     name: self.name,
                 }))
             },

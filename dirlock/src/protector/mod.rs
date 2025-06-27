@@ -21,8 +21,10 @@ use crate::policy::{
     WrappedPolicyKey,
 };
 
+pub use fido2::Fido2Protector as Fido2Protector;
 pub use password::PasswordProtector as PasswordProtector;
 pub use tpm2::Tpm2Protector as Tpm2Protector;
+pub mod fido2;
 pub mod password;
 pub mod tpm2;
 pub mod opts;
@@ -103,11 +105,13 @@ pub struct ProtectedPolicyKey {
 // cases where the user didn't select a specific one (notably PAM).
 #[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum ProtectorType {
+    Fido2,
     Tpm2,
     Password,
 }
 
 const PROTECTOR_TYPE_NAMES: &[(&str, ProtectorType, &str)] = &[
+    ("fido2", ProtectorType::Fido2, "FIDO2 PIN"),
     ("password", ProtectorType::Password, "password"),
     ("tpm2", ProtectorType::Tpm2, "TPM2 PIN"),
 ];
@@ -154,6 +158,8 @@ pub struct Protector {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub(crate) enum ProtectorData {
+    /// The key is wrapped by a FIDO2 token.
+    Fido2(Fido2Protector),
     /// The key is wrapped with a password.
     Password(PasswordProtector),
     /// The key is wrapped by the TPM.
@@ -166,6 +172,7 @@ impl Protector {
         let data = match opts {
             ProtectorOpts::Password(pw_opts) => ProtectorData::Password(PasswordProtector::new(pw_opts,raw_key, pass)),
             ProtectorOpts::Tpm2(tpm2_opts) => ProtectorData::Tpm2(Tpm2Protector::new(tpm2_opts, raw_key, pass)?),
+            ProtectorOpts::Fido2(fido2_opts) => ProtectorData::Fido2(Fido2Protector::new(fido2_opts, raw_key, pass)?),
         };
         Ok(Protector { id, data })
     }
@@ -175,6 +182,7 @@ impl Protector {
         match &self.data {
             ProtectorData::Password(p) => Ok(p.unwrap_key(pass)),
             ProtectorData::Tpm2(p) => p.unwrap_key(pass),
+            ProtectorData::Fido2(p) => p.unwrap_key(pass),
         }
     }
 
@@ -191,6 +199,7 @@ impl Protector {
         match self.data {
             ProtectorData::Password(ref mut p) => p.wrap_key(key, pass),
             ProtectorData::Tpm2(ref mut p) => p.wrap_key(key, pass)?,
+            ProtectorData::Fido2(_) => bail!("Cannot change the PIN of the FIDO2 token"),
         }
         Ok(())
     }
@@ -200,6 +209,7 @@ impl Protector {
         match &self.data {
             ProtectorData::Password(p) => &p.name,
             ProtectorData::Tpm2(p) => &p.name,
+            ProtectorData::Fido2(p) => &p.name,
         }
     }
 
@@ -208,6 +218,7 @@ impl Protector {
         match self.data {
             ProtectorData::Password(_) => ProtectorType::Password,
             ProtectorData::Tpm2(_) => ProtectorType::Tpm2,
+            ProtectorData::Fido2(_) => ProtectorType::Fido2,
         }
     }
 
@@ -219,6 +230,7 @@ impl Protector {
         match &self.data {
             ProtectorData::Password(_) => Ok(String::from("Enter password")),
             ProtectorData::Tpm2(p) => p.get_prompt(),
+            ProtectorData::Fido2(p) => p.get_prompt(),
         }
     }
 }
@@ -401,6 +413,11 @@ mod tests {
             assert_eq!(ptype.credential_name(), t.2);
 
             if ptype == ProtectorType::Tpm2 && cfg!(not(feature = "tpm2")) {
+                continue;
+            }
+
+            // We don't have tests for Fido2 protectors yet
+            if ptype == ProtectorType::Fido2 {
                 continue;
             }
 

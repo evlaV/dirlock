@@ -30,6 +30,9 @@ walkdir = "2.5.0"
 tempdir = "0.3.7"
 tss-esapi = { version = "7.6.0", optional = true }
 tss-esapi-sys = { version = "0.5.0", optional = true }
+fido2-rs = { version = "0.3.0", optional = true }
+libfido2-sys = { version = "0.4.0", optional = true }
 
 [features]
 tpm2 = ["dep:tss-esapi", "dep:tss-esapi-sys"]
+fido2 = ["dep:fido2-rs", "dep:libfido2-sys"]
