@@ -458,7 +458,7 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
         let protector = dirlock::get_protector_by_id(id)?;
         let pass = read_password_for_protector(&protector)?;
         let Some(protector_key) = protector.unwrap_key(pass.as_bytes())? else {
-            bail!("Invalid password");
+            bail!("Invalid {}", protector.get_type().credential_name());
         };
         protector_key
     } else {
@@ -518,7 +518,7 @@ fn cmd_create_policy(args: &PolicyCreateArgs) -> Result<()> {
     let protector = dirlock::get_protector_by_id(id)?;
     let pass = read_password_for_protector(&protector)?;
     let Some(protector_key) = protector.unwrap_key(pass.as_bytes())? else {
-        bail!("Invalid password for protector {id}");
+        bail!("Invalid {} for protector {id}", protector.get_type().credential_name());
     };
     let policy_key = PolicyKey::new_random();
     let policy_id = policy_key.get_id();
@@ -596,13 +596,13 @@ fn cmd_policy_add_protector(args: &PolicyAddProtectorArgs) -> Result<()> {
     println!("Unlocking new protector {} (\"{}\")", protector.id, protector.get_name());
     let pass = read_password_for_protector(&protector)?;
     let Some(protector_key) = protector.unwrap_key(pass.as_bytes())? else {
-        bail!("Invalid password");
+        bail!("Invalid {}", protector.get_type().credential_name());
     };
 
     println!("Unlocking existing protector {} (\"{}\")", unlock_with.id, unlock_with.get_name());
     let pass = read_password_for_protector(&unlock_with)?;
     let Some(policy_key) = unlock_with.unwrap_policy_key(wrapped_policy_key, pass.as_bytes())? else {
-        bail!("Invalid password");
+        bail!("Invalid {}", unlock_with.get_type().credential_name());
     };
 
     dirlock::wrap_and_save_policy_key(protector_key, policy_key)?;
@@ -682,7 +682,7 @@ fn do_change_verify_protector_password(protector_id: Option<ProtectorId>, verify
     let mut protector = dirlock::get_protector_by_id(id)?;
     let pass = read_password_for_protector(&protector)?;
     let Some(protector_key) = protector.unwrap_key(pass.as_bytes())? else {
-        bail!("Invalid password");
+        bail!("Invalid {}", protector.get_type().credential_name());
     };
     if ! verify_only {
         let npass = read_new_password_for_protector(protector.get_type())?;
