@@ -221,6 +221,9 @@ struct ProtectorCreateArgs {
     /// iterations for the key derivation function (default: auto)
     #[argh(option)]
     kdf_iter: Option<NonZeroU32>,
+    /// whether to require a PIN / password (default: true)
+    #[argh(option)]
+    use_pin: Option<bool>,
 }
 
 #[derive(FromArgs)]
@@ -642,6 +645,7 @@ fn cmd_create_protector(args: &ProtectorCreateArgs) -> Result<()> {
     let opts = ProtectorOptsBuilder::new()
         .with_type(Some(args.type_))
         .with_kdf_iter(args.kdf_iter)
+        .with_use_pin(args.use_pin)
         .with_name(args.name.clone())
         .build()?;
 

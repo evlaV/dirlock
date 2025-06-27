@@ -233,6 +233,15 @@ impl Protector {
             ProtectorData::Fido2(p) => p.get_prompt(),
         }
     }
+
+    /// Returns whether the protector needs a PIN / password to unlock its key
+    pub fn needs_password(&self) -> bool {
+        match &self.data {
+            ProtectorData::Password(_) => true,
+            ProtectorData::Tpm2(_) => true,
+            ProtectorData::Fido2(p) => p.pin,
+        }
+    }
 }
 
 impl cmp::Ord for Protector {

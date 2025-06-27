@@ -60,7 +60,7 @@ pub struct Fido2Protector {
     credential: Vec<u8>,
     salt: Salt,
     rp: String,
-    pin: bool,
+    pub(super) pin: bool,
     // We don't have a 'up' setting because hmac-secret always requires it
     #[serde_as(as = "Base64")]
     wrapped_key: [u8; PROTECTOR_KEY_LEN],
@@ -125,12 +125,12 @@ impl Fido2Protector {
             credential: Vec::from(cred.id()),
             salt,
             rp: String::from(RELYING_PARTY_ID),
-            pin: true, // TODO: make this configurable
+            pin: opts.use_pin.unwrap_or(true),
             ..Default::default()
         };
 
         // The encryption key is the result of the hmac-secret operation
-        let Some(enc_key) = prot.hmac_secret(&dev, Some(pin))? else {
+        let Some(enc_key) = prot.hmac_secret(&dev, prot.pin.then_some(pin))? else {
             bail!("Error getting secret from the FIDO2 token");
         };
 
@@ -186,6 +186,7 @@ impl Fido2Protector {
         req.set_allow_credential(&self.credential)?;
         req.set_extensions(Extensions::HMAC_SECRET)?;
         req.set_hmac_salt(&self.salt.0)?;
+        assert_eq!(self.pin, pin.is_some());
 
         if std::io::stdout().is_terminal() {
             println!("Confirm presence on the FIDO2 token to continue");

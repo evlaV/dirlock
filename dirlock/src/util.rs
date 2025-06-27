@@ -48,6 +48,9 @@ pub fn read_new_password_for_protector(ptype: ProtectorType) -> Result<Zeroizing
 
 /// Prompt the user for a password for a specific protector and return it
 pub fn read_password_for_protector(prot: &Protector) -> Result<Zeroizing<String>> {
+    if ! prot.needs_password() {
+        return Ok(Zeroizing::new(String::from("")));
+    }
     let prompt = prot.get_prompt().map_err(|e| anyhow!("{e}"))?;
     eprint!("{prompt}: ");
     let pass = Zeroizing::new(rpassword::read_password()?);

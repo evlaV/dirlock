@@ -46,6 +46,7 @@ pub struct Tpm2Opts {
 /// Options for FIDO2 protectors
 pub struct Fido2Opts {
     pub name: String,
+    pub use_pin: Option<bool>,
 }
 
 /// A builder for [`ProtectorOpts`]
@@ -55,6 +56,7 @@ pub struct ProtectorOptsBuilder {
     kdf_iter: Option<NonZeroU32>,
     name: String,
     tpm2_tcti: Option<String>,
+    use_pin: Option<bool>,
 }
 
 impl ProtectorOptsBuilder {
@@ -87,6 +89,12 @@ impl ProtectorOptsBuilder {
         self
     }
 
+    /// Sets whether to require a PIN to unlock the protector
+    pub fn with_use_pin(mut self, use_pin: Option<bool>) -> Self {
+        self.use_pin = use_pin;
+        self
+    }
+
     /// Builds the [`ProtectorOpts`].
     ///
     /// # Errors
@@ -101,6 +109,9 @@ impl ProtectorOptsBuilder {
         }
         if self.tpm2_tcti.is_some() && ptype != ProtectorType::Tpm2 {
             bail!("The TCTI configuration is only for TPM2 protectors");
+        }
+        if self.use_pin.is_some() && ptype != ProtectorType::Fido2 {
+            bail!("The 'use PIN' setting is only for FIDO2 protectors");
         }
         if self.kdf_iter.is_some() && ptype == ProtectorType::Fido2 {
             bail!("FIDO2 protectors don't support KDF options");
@@ -122,6 +133,7 @@ impl ProtectorOptsBuilder {
             ProtectorType::Fido2 => {
                 Ok(ProtectorOpts::Fido2(Fido2Opts {
                     name: self.name,
+                    use_pin: self.use_pin,
                 }))
             },
         }
