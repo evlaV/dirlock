@@ -97,7 +97,7 @@ fn do_authenticate(pamh: Pam) -> Result<(), PamError> {
         }
 
         let prompt = match p.protector.get_prompt() {
-            Ok(p) => format!("{p}: "),
+            Ok(p) => p,
             Err(e) => {
                 _ = pamh.conv(Some(&e), PamMsgStyle::ERROR_MSG);
                 continue;
@@ -107,9 +107,14 @@ fn do_authenticate(pamh: Pam) -> Result<(), PamError> {
         available_protectors = true;
 
         // Get the password
-        let pass = pamh.conv(Some(&prompt), PamMsgStyle::PROMPT_ECHO_OFF)?
-            .map(|p| p.to_bytes())
-            .ok_or(PamError::AUTH_ERR)?;
+        let pass = if p.protector.needs_password() {
+            pamh.conv(Some(&format!("{prompt}: ")), PamMsgStyle::PROMPT_ECHO_OFF)?
+                .map(|p| p.to_bytes())
+                .ok_or(PamError::AUTH_ERR)?
+        } else {
+            _ = pamh.conv(Some(&prompt), PamMsgStyle::TEXT_INFO);
+            b""
+        };
 
         // Check if the password can unlock the home directory (but don't actually unlock it)
         let protid = &p.protector.id;

@@ -133,6 +133,10 @@ impl Fido2Protector {
             ..Default::default()
         };
 
+        if std::io::stdout().is_terminal() {
+            println!("Confirm presence on the FIDO2 token to continue");
+        }
+
         // The encryption key is the result of the hmac-secret operation
         let Some(enc_key) = prot.hmac_secret(&dev, prot.pin.then_some(pin))? else {
             bail!("Error getting secret from the FIDO2 token");
@@ -182,7 +186,11 @@ impl Fido2Protector {
     /// Returns the prompt, or an error message if the FIDO2 token is not available or usable
     pub fn get_prompt(&self) -> Result<String, String> {
         match get_fido2_device(Some(&self.credential)) {
-            Ok(_) => Ok(String::from("Enter FIDO2 PIN")),
+            Ok(_) => if self.pin {
+                Ok(String::from("Enter FIDO2 PIN and confirm presence on the token"))
+            } else {
+                Ok(String::from("Confirm presence on the FIDO2 token"))
+            },
             Err(e) => Err(e.to_string()),
         }
     }
@@ -196,10 +204,6 @@ impl Fido2Protector {
         req.set_extensions(Extensions::HMAC_SECRET)?;
         req.set_hmac_salt(&self.salt.0)?;
         assert_eq!(self.pin, pin.is_some());
-
-        if std::io::stdout().is_terminal() {
-            println!("Confirm presence on the FIDO2 token to continue");
-        }
 
         match dev.get_assertion(req, pin) {
             Ok(assertions) => {
