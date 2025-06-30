@@ -234,6 +234,15 @@ impl Protector {
         }
     }
 
+    /// Returns whether the protector can change its PIN / password
+    pub fn can_change_password(&self) -> bool {
+        match &self.data {
+            ProtectorData::Password(_) => true,
+            ProtectorData::Tpm2(_) => true,
+            ProtectorData::Fido2(_) => false,
+        }
+    }
+
     /// Returns whether the protector needs a PIN / password to unlock its key
     pub fn needs_password(&self) -> bool {
         match &self.data {

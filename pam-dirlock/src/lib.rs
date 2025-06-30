@@ -148,24 +148,36 @@ fn do_chauthtok(pamh: Pam, flags: PamFlags) -> Result<(), PamError> {
     let user = get_user(&pamh)?;
     let mut homedir = get_home_data(user)?;
 
+    // Get only the protectors that are available and can be updated
+    let prots : Vec<_> = homedir.protectors.iter_mut().filter(|p| {
+        p.protector.can_change_password() && p.protector.is_available()
+    }).collect();
+
+    if prots.is_empty() {
+        let _ = pamh.conv(Some("No available protectors."), PamMsgStyle::ERROR_MSG);
+        log_notice(&pamh, format!("cannot change password; no available protectors; user={user}"));
+        return Err(PamError::AUTH_ERR);
+    }
+
     // Get the current password
     let pass = pamlib::get_oldauthtok(&pamh).map(|p| p.to_bytes())?;
 
     // Check that the current password is correct.
     // Do it only at the preliminary check step because we'll anyway
-    // have to do it again later with homedir.change_password().
+    // have to do it again later when we actually change the password.
     if flags.bits() & PAM_PRELIM_CHECK != 0 {
-        return match homedir.check_pass(pass, None) {
-            Ok(true) => Ok(()),
-            Ok(false) => {
-                log_notice(&pamh, format!("authentication failure; user={user}"));
-                Err(PamError::AUTH_ERR)
-            },
-            Err(e) => {
-                log_warning(&pamh, format!("authentication failure; user={user} error={e}"));
-                Err(PamError::AUTH_ERR)
-            },
-        };
+        for p in prots {
+            match p.protector.unwrap_key(pass) {
+                Ok(None) => (),
+                Ok(Some(_)) => return Ok(()),
+                Err(e) => {
+                    log_warning(&pamh, format!("authentication failure; user={user} error={e}"));
+                    return Err(PamError::AUTH_ERR);
+                },
+            }
+        }
+        log_notice(&pamh, format!("authentication failure; user={user}"));
+        return Err(PamError::AUTH_ERR);
     }
 
     // If we don't receive PAM_UPDATE_AUTHTOK at this point then something is wrong
@@ -195,20 +207,23 @@ fn do_chauthtok(pamh: Pam, flags: PamFlags) -> Result<(), PamError> {
     }
 
     // Change the password
-    match homedir.change_password(pass, newpass, None) {
-        Ok(true) => {
-            log_notice(&pamh, format!("password changed for user {user}"));
-            Ok(())
-        },
-        Ok(false) => {
-            log_warning(&pamh, format!("password for user {user} changed by another process"));
-            Err(PamError::AUTH_ERR)
-        },
-        Err(e) => {
-            log_warning(&pamh, format!("error changing password; user={user}, error={e}"));
-            Err(PamError::AUTH_ERR)
+    for p in prots {
+        match dirlock::update_protector_password(&mut p.protector, pass, newpass) {
+            Ok(false) => (),
+            Ok(true) => {
+                let protid = &p.protector.id;
+                log_notice(&pamh, format!("password changed for user {user}, protector={protid}"));
+                return Ok(());
+            },
+            Err(e) => {
+                log_warning(&pamh, format!("error changing password; user={user}, error={e}"));
+                return Err(PamError::AUTH_ERR);
+            },
         }
     }
+
+    log_warning(&pamh, format!("password for user {user} changed by another process"));
+    Err(PamError::AUTH_ERR)
 }
 
 fn do_open_session(pamh: Pam) -> Result<(), PamError> {

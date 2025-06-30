@@ -159,24 +159,6 @@ impl EncryptedDir {
             .find_map(|p| if &p.protector.id == id { Some(&p.protector) } else { None })
             .ok_or_else(|| anyhow!("No protector found with that ID in the directory"))
     }
-
-    /// Changes the password of a protector used to lock this directory
-    ///
-    /// If `protector_id` is `None`, change the first protector with a matching password.
-    pub fn change_password(&mut self, pass: &[u8], newpass: &[u8], protector_id: Option<&ProtectorId>) -> Result<bool> {
-        for p in &mut self.protectors {
-            if let Some(id) = protector_id {
-                if *id != p.protector.id {
-                    continue;
-                }
-            }
-            if let Some(protector_key) = p.protector.unwrap_key(pass)? {
-                wrap_and_save_protector_key(&mut p.protector, protector_key, newpass)?;
-                return Ok(true);
-            }
-        }
-        Ok(false)
-    }
 }
 
 
@@ -232,6 +214,16 @@ pub fn create_protector(opts: ProtectorOpts, pass: &[u8], create: CreateProtecto
         keystore::save_protector(&protector, keystore::SaveProtector::AddNew)?;
     }
     Ok((protector, protector_key))
+}
+
+/// Change the password of `protector` from `pass` to `newpass` and save it to disk
+pub fn update_protector_password(protector: &mut Protector, pass: &[u8], newpass: &[u8]) -> Result<bool> {
+    if let Some(protector_key) = protector.unwrap_key(pass)? {
+        wrap_and_save_protector_key(protector, protector_key, newpass)?;
+        Ok(true)
+    } else {
+        Ok(false)
+    }
 }
 
 /// Wrap `policy_key` using `protector_key` and store the result on disk
