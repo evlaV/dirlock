@@ -400,7 +400,7 @@ fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
 
     for p in &prots {
         if let Err(e) = p.get_prompt() {
-            println!("{e}");
+            println!("Cannot use protector {}: {e}", p.id);
             continue;
         }
         if prots.len() > 1 {

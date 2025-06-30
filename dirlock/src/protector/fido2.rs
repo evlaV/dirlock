@@ -79,6 +79,10 @@ impl Fido2Protector {
         bail!("FIDO2 support is disabled");
     }
 
+    pub fn is_available(&self) -> bool {
+        false
+    }
+
     pub fn get_prompt(&self) -> Result<String, String> {
         Err(String::from("FIDO2 support is disabled"))
     }
@@ -170,6 +174,11 @@ impl Fido2Protector {
         }
     }
 
+    /// Returns whether the protector is available to be used
+    pub fn is_available(&self) -> bool {
+        get_fido2_device(Some(&self.credential)).is_ok()
+    }
+
     /// Returns the prompt, or an error message if the FIDO2 token is not available or usable
     pub fn get_prompt(&self) -> Result<String, String> {
         match get_fido2_device(Some(&self.credential)) {
@@ -220,7 +229,7 @@ pub fn check_device_available() -> Result<()> {
 
 /// Finds the FIDO2 token with the provided credential (if set)
 #[cfg(feature = "fido2")]
-fn get_fido2_device(cred: Option<&[u8]>) -> Result<Device> {
+pub(super) fn get_fido2_device(cred: Option<&[u8]>) -> Result<Device> {
     let devices = DeviceList::list_devices(16);
 
     if devices.len() == 0 {

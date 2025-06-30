@@ -89,7 +89,13 @@ fn do_authenticate(pamh: Pam) -> Result<(), PamError> {
     let user = get_user(&pamh)?;
     let homedir = get_home_data(user)?;
 
+    let mut available_protectors = false;
+
     for p in &homedir.protectors {
+        if ! p.protector.is_available() {
+            continue;
+        }
+
         let prompt = match p.protector.get_prompt() {
             Ok(p) => format!("{p}: "),
             Err(e) => {
@@ -97,6 +103,8 @@ fn do_authenticate(pamh: Pam) -> Result<(), PamError> {
                 continue;
             },
         };
+
+        available_protectors = true;
 
         // Get the password
         let pass = pamh.conv(Some(&prompt), PamMsgStyle::PROMPT_ECHO_OFF)?
@@ -118,6 +126,10 @@ fn do_authenticate(pamh: Pam) -> Result<(), PamError> {
         }
 
         _ = pamh.conv(Some("Authentication failed"), PamMsgStyle::ERROR_MSG);
+    }
+
+    if !available_protectors {
+        _ = pamh.conv(Some("Cannot authenticate: no available protectors"), PamMsgStyle::ERROR_MSG);
     }
 
     Err(PamError::AUTH_ERR)

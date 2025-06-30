@@ -107,6 +107,9 @@ impl EncryptedDir {
                     continue;
                 }
             }
+            if ! p.protector.is_available() {
+                continue;
+            }
             if let Some(k) = p.protector.unwrap_policy_key(&p.policy_key, pass)? {
                 return Ok(Some(k));
             }
