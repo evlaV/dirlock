@@ -98,21 +98,10 @@ pub fn open_home(user: &str) -> Result<Option<DirStatus>> {
 
 impl EncryptedDir {
     /// Get a directory's master encryption key using the password of one of its protectors
-    ///
-    /// If `protector_id` is `None` try all available protectors.
-    pub fn get_master_key(&self, pass: &[u8], protector_id: Option<&ProtectorId>) -> Result<Option<PolicyKey>> {
-        for p in &self.protectors {
-            if let Some(id) = protector_id {
-                if *id != p.protector.id {
-                    continue;
-                }
-            }
-            if ! p.protector.is_available() {
-                continue;
-            }
-            if let Some(k) = p.protector.unwrap_policy_key(&p.policy_key, pass)? {
-                return Ok(Some(k));
-            }
+    pub fn get_master_key(&self, pass: &[u8], protector_id: &ProtectorId) -> Result<Option<PolicyKey>> {
+        let p = self.get_protected_policy_key(protector_id)?;
+        if let Some(k) = p.protector.unwrap_policy_key(&p.policy_key, pass)? {
+            return Ok(Some(k));
         }
         Ok(None)
     }
@@ -123,8 +112,9 @@ impl EncryptedDir {
     /// This call also succeeds if the directory is already unlocked
     /// as long as the password is correct.
     pub fn unlock(&self, password: &[u8], protector_id: &ProtectorId) -> Result<bool> {
-        if let Some(master_key) = self.get_master_key(password, Some(protector_id))? {
-            if let Err(e) = fscrypt::add_key(&self.path, master_key.secret()) {
+        let p = self.get_protected_policy_key(protector_id)?;
+        if let Some(k) = p.protector.unwrap_policy_key(&p.policy_key, password)? {
+            if let Err(e) = fscrypt::add_key(&self.path, k.secret()) {
                 bail!("Unable to unlock directory with master key: {}", e);
             }
             return Ok(true)
@@ -145,8 +135,13 @@ impl EncryptedDir {
 
     /// Finds a protector using its ID
     pub fn get_protector_by_id(&self, id: &ProtectorId) -> Result<&Protector> {
+        self.get_protected_policy_key(id).map(|p| &p.protector)
+    }
+
+    /// Finds a protected policy key using its ID. This is an internal helper function
+    fn get_protected_policy_key(&self, id: &ProtectorId) -> Result<&ProtectedPolicyKey> {
         self.protectors.iter()
-            .find_map(|p| if &p.protector.id == id { Some(&p.protector) } else { None })
+            .find(|p| &p.protector.id == id)
             .ok_or_else(|| anyhow!("No protector found with that ID in the directory"))
     }
 }

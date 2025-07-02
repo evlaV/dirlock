@@ -722,7 +722,7 @@ fn cmd_export_master_key(args: &ExportMasterKeyArgs) -> Result<()> {
     eprintln!();
     let pass = read_password_for_protector(protector)?;
 
-    let Some(k) = encrypted_dir.get_master_key(pass.as_bytes(), Some(&protector.id))? else {
+    let Some(k) = encrypted_dir.get_master_key(pass.as_bytes(), &protector.id)? else {
         bail!("Authentication failed");
     };
 
