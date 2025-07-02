@@ -609,7 +609,7 @@ fn cmd_policy_add_protector(args: &PolicyAddProtectorArgs) -> Result<()> {
     };
 
     dirlock::wrap_and_save_policy_key(protector_key, policy_key)?;
-    println!("Protector {} added to policy {policy_id}", unlock_with.id);
+    println!("Protector {} added to policy {policy_id}", protector.id);
 
     Ok(())
 }
