@@ -117,16 +117,6 @@ impl EncryptedDir {
         Ok(None)
     }
 
-    /// Checks if the given password is valid to unlock this directory
-    ///
-    /// This call only checks the password and nothing else, and it
-    /// also does not care if the directory is locked or unlocked.
-    ///
-    /// If `protector_id` is `None` try all available protectors.
-    pub fn check_pass(&self, password: &[u8], protector_id: Option<&ProtectorId>) -> Result<bool> {
-        self.get_master_key(password, protector_id).map(|k| k.is_some())
-    }
-
     /// Unlocks a directory with the given password
     ///
     /// Returns true on success, false if the password is incorrect.

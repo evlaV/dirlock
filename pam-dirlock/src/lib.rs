@@ -118,15 +118,15 @@ fn do_authenticate(pamh: Pam) -> Result<(), PamError> {
 
         // Check if the password can unlock the home directory (but don't actually unlock it)
         let protid = &p.protector.id;
-        match homedir.check_pass(pass, Some(protid)) {
-            Ok(true) => {
+        match p.protector.unwrap_policy_key(&p.policy_key, pass) {
+            Ok(Some(_)) => {
                 // Store the protector id and the password in the PAM session
                 // in order to unlock the home directory in pam_open_session().
                 let authtok_data = AuthData::new(protid, pass);
                 unsafe { pamh.send_data(AuthData::PAM_NAME, authtok_data)? };
                 return Ok(());
             },
-            Ok(false) => log_notice(&pamh, format!("authentication failure; user={user} protector={protid}")),
+            Ok(None) => log_notice(&pamh, format!("authentication failure; user={user} protector={protid}")),
             Err(e) => log_warning(&pamh, format!("authentication failure; user={user} protector={protid} error={e}")),
         }
 
