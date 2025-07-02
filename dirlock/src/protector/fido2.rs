@@ -212,8 +212,8 @@ impl Fido2Protector {
                     // The CTAP standard specifies that hmac-secret uses HMAC-SHA-256
                     // so the result should always be 32 bytes long.
                     // https://fidoalliance.org/specs/fido-v2.2-ps-20250228/fido-client-to-authenticator-protocol-v2.2-ps-20250228.html
-                    if hmac_secret.len() == 32 {
-                        return Ok(Some(Aes256Key::try_from(hmac_secret).unwrap()))
+                    if let Ok(key) = Aes256Key::try_from(hmac_secret) {
+                        return Ok(Some(key));
                     }
                 }
                 bail!("No valid secret received from FIDO2 token");
