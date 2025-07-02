@@ -7,9 +7,8 @@
 mod pamlib;
 
 use pamsm::{LogLvl, Pam, PamError, PamFlags, PamLibExt, PamMsgStyle, PamServiceModule, pam_module};
-use dirlock::{DirStatus, EncryptedDir, protector::ProtectorId};
+use dirlock::{DirStatus, EncryptedDir, protector::ProtectorKey};
 use std::ffi::c_int;
-use zeroize::Zeroizing;
 
 const PAM_UPDATE_AUTHTOK : c_int = 0x2000;
 const PAM_PRELIM_CHECK   : c_int = 0x4000;
@@ -21,25 +20,20 @@ const PAM_PRELIM_CHECK   : c_int = 0x4000;
 // module to try to authenticate this
 
 /// Authentication data to store in the PAM context.
-/// This contains a protector and a password to unlock the user's home
-/// directory.
+/// This contains the protector key to unlock the user's home directory.
 #[derive(Clone)]
-struct AuthData(ProtectorId, Zeroizing<Vec<u8>>);
+struct AuthData(ProtectorKey);
 
 impl AuthData {
     /// Name for the Pam::send_data() function
     const PAM_NAME: &str = "dirlock_authdata";
 
-    fn new(protid: &ProtectorId, pass: &[u8]) -> Self {
-        AuthData(*protid, Zeroizing::new(Vec::from(pass)))
+    fn new(protkey: ProtectorKey) -> Self {
+        AuthData(protkey)
     }
 
-    fn protector_id(&self) -> &ProtectorId {
+    fn protector_key(&self) -> &ProtectorKey {
         &self.0
-    }
-
-    fn pass(&self) -> &[u8] {
-        &self.1
     }
 }
 
@@ -118,11 +112,11 @@ fn do_authenticate(pamh: Pam) -> Result<(), PamError> {
 
         // Check if the password can unlock the home directory (but don't actually unlock it)
         let protid = &p.protector.id;
-        match p.protector.unwrap_policy_key(&p.policy_key, pass) {
-            Ok(Some(_)) => {
-                // Store the protector id and the password in the PAM session
-                // in order to unlock the home directory in pam_open_session().
-                let authtok_data = AuthData::new(protid, pass);
+        match p.protector.unwrap_key(pass) {
+            Ok(Some(protkey)) => {
+                // Store the protector key in the PAM session in order
+                // to unlock the home directory in pam_open_session().
+                let authtok_data = AuthData::new(protkey);
                 unsafe { pamh.send_data(AuthData::PAM_NAME, authtok_data)? };
                 return Ok(());
             },
@@ -234,18 +228,18 @@ fn do_open_session(pamh: Pam) -> Result<(), PamError> {
         log_info(&pamh, format!("session opened for user {user}"));
         return Ok(());
     }
-    // Otherwise we need to unlock it using the password stored in the session
+    // Otherwise we need to unlock it using the protector key stored in the session
     let Ok(data) : Result<AuthData, _> = (unsafe { pamh.retrieve_data(AuthData::PAM_NAME) }) else {
         log_warning(&pamh, format!("error retrieving auth token from session for user {user}"));
         return Err(PamError::SESSION_ERR);
     };
-    match homedir.unlock(data.pass(), data.protector_id()) {
+    match homedir.unlock_with_protkey(data.protector_key()) {
         Ok(true) => {
             log_info(&pamh, format!("session opened for user {user}; home unlocked"));
             Ok(())
         },
         Ok(false) => {
-            log_warning(&pamh, format!("error unlocking home for user {user}; did another process change the password?"));
+            log_warning(&pamh, format!("error unlocking home; user={user}, error=invalid protector key!"));
             Err(PamError::SESSION_ERR)
         },
         Err(e) => {

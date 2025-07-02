@@ -117,7 +117,21 @@ impl EncryptedDir {
             if let Err(e) = fscrypt::add_key(&self.path, k.secret()) {
                 bail!("Unable to unlock directory with master key: {}", e);
             }
-            return Ok(true)
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
+
+    /// Unlocks a directory using the protector key directly
+    pub fn unlock_with_protkey(&self, protector_key: &ProtectorKey) -> Result<bool> {
+        let protector_id = protector_key.get_id();
+        let p = self.get_protected_policy_key(&protector_id)?;
+        if let Some(k) = p.policy_key.unwrap_key(protector_key) {
+            if let Err(e) = fscrypt::add_key(&self.path, k.secret()) {
+                bail!("Unable to unlock directory with master key: {}", e);
+            }
+            return Ok(true);
         }
 
         Ok(false)
