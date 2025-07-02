@@ -17,7 +17,7 @@ design of protectors and policies.
   parameters.
 - Policies are stored safely on disk using a **protector**, which
   encrypts the policy key using one of several available mechanisms,
-  currently a password or a TPM module.
+  currently a password, a TPM module or a FIDO2 token.
 - A policy can be be protected by any number of protectors, and a
   protector can be used in any number of policies.
 - A protector can be modified at any time (for example by changing its
