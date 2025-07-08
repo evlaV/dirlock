@@ -256,7 +256,7 @@ impl Protector {
     pub fn is_available(&self) -> bool {
         match &self.data {
             ProtectorData::Password(_) => true,
-            ProtectorData::Tpm2(_) => true,
+            ProtectorData::Tpm2(_) => cfg!(feature = "tpm2"),
             ProtectorData::Fido2(p) => p.is_available(),
         }
     }
