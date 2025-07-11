@@ -172,22 +172,35 @@ pub fn encrypt_dir(path: &Path, protector_key: ProtectorKey) -> Result<PolicyKey
         bail!("Cannot encrypt a non-empty directory");
     }
 
-    // Generate a master key and encrypt the directory with it
-    // FIXME: Write the key to disk before encrypting the directory
+    // Generate a master key and wrap it with the protector
     let master_key = PolicyKey::new_random();
-    let keyid = fscrypt::add_key(path, master_key.secret())?;
-    if let Err(e) = fscrypt::set_policy(path, &keyid) {
+    let wrapped_policy_key = WrappedPolicyKey::new(master_key.clone(), &protector_key);
+
+    // Save the (protector-wrapped) new master key to disk
+    let keyid = master_key.get_id();
+    let protector_id = protector_key.get_id();
+    keystore::add_protector_to_policy(&keyid, protector_id, wrapped_policy_key)?;
+
+    // Add the key to the kernel and encrypt the directory
+    let result = fscrypt::add_key(path, master_key.secret())
+        .and_then(|id| {
+            if id == keyid {
+                fscrypt::set_policy(path, &id)
+            } else {
+                // This should never happen, it means that the kernel and
+                // PolicyKey::get_id() use a different algorithm.
+                Err(anyhow!("fscrypt::add_key() returned an unexpected ID!!"))
+            }
+        });
+
+    // If this failed then remove the key from the kernel and from disk
+    if let Err(e) = result {
         let user = RemoveKeyUsers::CurrentUser;
         let _ = fscrypt::remove_key(path, &keyid, user);
+        let _ = keystore::remove_policy(&keyid);
         bail!("Failed to encrypt directory: {e}");
     }
 
-    // Wrap the master key with the protector key
-    let protector_id = protector_key.get_id();
-    let wrapped_policy_key = WrappedPolicyKey::new(master_key, &protector_key);
-
-    // Store the new wrapped policy key
-    keystore::add_protector_to_policy(&keyid, protector_id, wrapped_policy_key)?;
     Ok(keyid)
 }
 
