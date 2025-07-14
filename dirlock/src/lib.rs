@@ -182,7 +182,7 @@ pub fn encrypt_dir(path: &Path, protector_key: ProtectorKey) -> Result<PolicyKey
     keystore::add_protector_to_policy(&keyid, protector_id, wrapped_policy_key)?;
 
     // Add the key to the kernel and encrypt the directory
-    let result = fscrypt::add_key(path, master_key.secret())
+    fscrypt::add_key(path, master_key.secret())
         .and_then(|id| {
             if id == keyid {
                 fscrypt::set_policy(path, &id)
@@ -191,15 +191,13 @@ pub fn encrypt_dir(path: &Path, protector_key: ProtectorKey) -> Result<PolicyKey
                 // PolicyKey::get_id() use a different algorithm.
                 Err(anyhow!("fscrypt::add_key() returned an unexpected ID!!"))
             }
-        });
-
-    // If this failed then remove the key from the kernel and from disk
-    if let Err(e) = result {
-        let user = RemoveKeyUsers::CurrentUser;
-        let _ = fscrypt::remove_key(path, &keyid, user);
-        let _ = keystore::remove_policy(&keyid);
-        bail!("Failed to encrypt directory: {e}");
-    }
+        })
+        .map_err(|e| {
+            let user = RemoveKeyUsers::CurrentUser;
+            let _ = fscrypt::remove_key(path, &keyid, user);
+            let _ = keystore::remove_policy(&keyid);
+            anyhow!("Failed to encrypt directory: {e}")
+        })?;
 
     Ok(keyid)
 }
