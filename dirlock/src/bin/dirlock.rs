@@ -457,6 +457,7 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
         bail!("The directory is not empty. Use --force to override");
     }
 
+    let protector_is_new = args.protector.is_none();
     let protector_key = if let Some(id) = args.protector {
         let protector = dirlock::get_protector_by_id(id)?;
         let pass = read_password_for_protector(&protector)?;
@@ -483,16 +484,27 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
         protector_key
     };
 
+    let protector_id = protector_key.get_id();
     let keyid = if args.force && !empty_dir {
         println!("\nEncrypting the contents of {}, this can take a while", args.dir.display());
-        let k = dirlock::convert::convert_dir(&args.dir, protector_key)?;
+        let k = dirlock::convert::convert_dir(&args.dir, protector_key)
+            .inspect_err(|_| {
+                if protector_is_new {
+                    let _ = keystore::remove_protector_if_unused(&protector_id);
+                }
+            })?;
         println!("\nThe directory is now encrypted. If this was a home directory\n\
                   and you plan to log in using PAM you need to use the encryption\n\
                   password from now on. The old password in /etc/shadow is no longer\n\
                   used and you can disable it with usermod -p '*' USERNAME\n");
         k
     } else {
-        dirlock::encrypt_dir(&args.dir, protector_key)?
+        dirlock::encrypt_dir(&args.dir, protector_key)
+            .inspect_err(|_| {
+                if protector_is_new {
+                    let _ = keystore::remove_protector_if_unused(&protector_id);
+                }
+            })?
     };
     println!("Directory encrypted with new policy id {}", keyid);
 
