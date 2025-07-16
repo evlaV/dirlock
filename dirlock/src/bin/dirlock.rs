@@ -6,9 +6,10 @@
 
 use anyhow::{bail, Result};
 use argh::FromArgs;
+use get_sys_info::Platform;
 use std::io::{self, Write};
 use std::num::NonZeroU32;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use dirlock::{
     CreateProtector,
     DirStatus,
@@ -30,6 +31,7 @@ use dirlock::{
     },
     util::{
         dir_is_empty,
+        fs_supports_encryption,
         read_password_for_protector,
         read_new_password_for_protector,
     },
@@ -512,15 +514,41 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
 }
 
 fn cmd_list_policies() -> Result<()> {
+    let policies : Vec<_> = dirlock::keystore::policy_key_ids()?;
+
     println!("Policy                              Protectors");
     println!("----------------------------------------------------");
-    for id in keystore::policy_key_ids()? {
-        let prots = keystore::load_policy_map(&id)?
+    for id in &policies {
+        let prots = keystore::load_policy_map(id)?
             .keys()
             .map(|prot_id| prot_id.to_string())
             .collect::<Vec<String>>()
             .join(", ");
         println!("{id}    {prots}");
+    }
+
+    // List of mounted filesystems that support fscrypt
+    let fs : Vec<_> = get_sys_info::System::new().mounts()?.into_iter()
+        .filter_map(|m| fs_supports_encryption(&m.fs_type).then_some(m.fs_mounted_on))
+        .collect();
+
+    // Check what policies are unlocked in each filesystem
+    let mut unlocked_policies = false;
+    for id in &policies {
+        let unlocked = fs.iter()
+            .filter(|path| {
+                fscrypt::get_key_status(Path::new(path), id)
+                    .map(|(s, _)| s == fscrypt::KeyStatus::Present)
+                    .unwrap_or(false)
+            });
+        for mnt in unlocked {
+            if ! unlocked_policies {
+                println!("\nUnlocked policies");
+                println!("-----------------");
+                unlocked_policies = true;
+            }
+            println!("{id} {mnt}");
+        }
     }
     Ok(())
 }

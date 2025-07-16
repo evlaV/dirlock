@@ -59,6 +59,11 @@ pub fn read_password_for_protector(prot: &Protector) -> Result<Zeroizing<String>
     Ok(pass)
 }
 
+/// Return true if a filesystem has fscrypt support
+pub fn fs_supports_encryption(fstype: &str) -> bool {
+    matches!(fstype, "ext4" | "f2fs" | "ubifs" | "ceph")
+}
+
 /// Helper to safely write the new version of a file to disk.
 ///
 /// This creates a temporary file on the same directory and all write
