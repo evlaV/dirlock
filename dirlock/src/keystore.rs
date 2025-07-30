@@ -185,6 +185,9 @@ pub fn remove_protector_if_unused(protector_id: &ProtectorId) -> Result<bool> {
     }
 
     let filename = keystore_dirs().protectors.join(protector_id.to_string());
+    if ! filename.exists() {
+        bail!("Protector {protector_id} not found");
+    }
     Ok(fs::remove_file(&filename).and(Ok(true))?)
 }
 
