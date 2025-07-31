@@ -8,6 +8,9 @@ use anyhow::{bail, Result};
 use serde::{Serialize, Deserialize};
 use serde_with::{serde_as, base64::Base64};
 
+#[cfg(doc)]
+use crate::protector::Protector;
+
 #[cfg(feature = "fido2")]
 use {
     anyhow::anyhow,
