@@ -528,9 +528,17 @@ fn cmd_list_policies() -> Result<()> {
     }
 
     // List of mounted filesystems that support fscrypt
-    let fs : Vec<_> = get_sys_info::System::new().mounts()?.into_iter()
-        .filter_map(|m| fs_supports_encryption(&m.fs_type).then_some(m.fs_mounted_on))
-        .collect();
+    let fs : Vec<_> = {
+        let mut mounts = get_sys_info::System::new().mounts()?;
+        // Use only one mount by source device in order to avoid
+        // duplicate entries due to bind mounts.
+        mounts.sort_by(|a, b| a.fs_mounted_from.cmp(&b.fs_mounted_from));
+        mounts.dedup_by(|a, b| a.fs_mounted_from == b.fs_mounted_from);
+
+        mounts.into_iter()
+            .filter_map(|m| fs_supports_encryption(&m.fs_type).then_some(m.fs_mounted_on))
+        .collect()
+    };
 
     // Check what policies are unlocked in each filesystem
     let mut unlocked_policies = false;
