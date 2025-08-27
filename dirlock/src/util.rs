@@ -7,6 +7,7 @@
 use anyhow::{anyhow, bail, Result};
 use std::fs::File;
 use std::os::fd::FromRawFd;
+use std::os::unix::fs::{self, MetadataExt};
 use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
 
@@ -97,6 +98,16 @@ impl SafeFile {
         };
         let (fd, temp_path) = nix::unistd::mkstemp(&template)?;
         let file = unsafe { File::from_raw_fd(fd) };
+        // If the target file already exists then keep the ownership and mode
+        if let Ok(oldmd) = std::fs::metadata(path) {
+            let newmd = file.metadata()?;
+            if oldmd.uid() != newmd.uid() || oldmd.gid() != newmd.gid() {
+                fs::fchown(&file, Some(oldmd.uid()), Some(oldmd.gid()))?;
+            }
+            if oldmd.permissions() != newmd.permissions() {
+                file.set_permissions(oldmd.permissions())?;
+            }
+        }
         let final_path = PathBuf::from(path);
         let committed = false;
         Ok(SafeFile { temp_path, final_path, file, committed })
