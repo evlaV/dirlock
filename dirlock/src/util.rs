@@ -144,3 +144,76 @@ impl Drop for SafeFile {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use anyhow::Result;
+    use std::io::Write;
+    use std::fs::{self, Permissions};
+    use std::os::unix::{self, fs::MetadataExt, fs::PermissionsExt};
+    use super::SafeFile;
+
+    #[test]
+    fn test_safefile() -> Result<()> {
+        let tmpdir = tempdir::TempDir::new("safefile")?;
+
+        // Create a SafeFile but don't commit it
+        let path = tmpdir.path().join("test1");
+        fs::write(&path, b"old")?;
+
+        let mut file = SafeFile::create(&path)?;
+        file.write(b"new")?;
+        drop(file);
+
+        assert_eq!(fs::read(path)?, b"old");
+
+        // Check that the ownership is kept
+        let path = tmpdir.path().join("test2");
+        fs::write(&path, b"old")?;
+        unix::fs::chown(&path, Some(1), Some(2))
+            .expect("chown() failed. Run as root or with fakeroot");
+        let oldmd = fs::metadata(&path)?;
+
+        let mut file = SafeFile::create(&path)?;
+        file.write(b"new")?;
+        file.commit()?;
+        let newmd = fs::metadata(&path)?;
+
+        assert_eq!(fs::read(path)?, b"new");
+        assert_eq!(oldmd.permissions(), newmd.permissions());
+        assert_eq!(oldmd.uid(), newmd.uid());
+        assert_eq!(oldmd.gid(), newmd.gid());
+
+        // Check that the mode is kept
+        let path = tmpdir.path().join("test3");
+        fs::write(&path, b"old")?;
+        fs::set_permissions(&path, Permissions::from_mode(0o751))?;
+
+        let mut file = SafeFile::create(&path)?;
+        file.write(b"new")?;
+        file.commit()?;
+
+        assert_eq!(fs::read(path)?, b"new");
+        assert_eq!(oldmd.permissions(), newmd.permissions());
+        assert_eq!(oldmd.uid(), newmd.uid());
+        assert_eq!(oldmd.gid(), newmd.gid());
+
+        // Check that both ownership and mode are kept
+        let path = tmpdir.path().join("test4");
+        fs::write(&path, b"old")?;
+        unix::fs::chown(&path, Some(1), Some(2))
+            .expect("chown() failed. Run as root or with fakeroot");
+        fs::set_permissions(&path, Permissions::from_mode(0o751))?;
+
+        let mut file = SafeFile::create(&path)?;
+        file.write(b"new")?;
+        file.commit()?;
+
+        assert_eq!(fs::read(path)?, b"new");
+        assert_eq!(oldmd.permissions(), newmd.permissions());
+        assert_eq!(oldmd.uid(), newmd.uid());
+        assert_eq!(oldmd.gid(), newmd.gid());
+
+        Ok(())
+    }
+}
