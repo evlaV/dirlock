@@ -14,10 +14,16 @@ use std::{
     path::{Path, PathBuf},
     sync::OnceLock,
 };
-use crate::policy::WrappedPolicyKey;
-use crate::protector::{Protector, ProtectorId, ProtectedPolicyKey};
-use crate::fscrypt::PolicyKeyId;
-use crate::util::SafeFile;
+use crate::{
+    ProtectedPolicyKey,
+    fscrypt::PolicyKeyId,
+    policy::WrappedPolicyKey,
+    protector::{
+        Protector,
+        ProtectorId,
+    },
+    util::SafeFile,
+};
 
 // If this variable is set use this keystore dir instead of the default one
 const KEYSTORE_DIR_ENV_VAR : &str = "DIRLOCK_KEYSTORE";

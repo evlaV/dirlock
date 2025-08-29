@@ -23,7 +23,6 @@ use policy::{
     WrappedPolicyKey,
 };
 use protector::{
-    ProtectedPolicyKey,
     Protector,
     ProtectorId,
     ProtectorKey,
@@ -49,6 +48,12 @@ impl std::fmt::Display for DirStatus {
         };
         write!(f, "{}", msg)
     }
+}
+
+/// A wrapped [`PolicyKey`] together with a [`Protector`] that can unwrap it
+pub struct ProtectedPolicyKey {
+    pub protector: Protector,
+    pub policy_key: WrappedPolicyKey,
 }
 
 /// Encryption data (policy, key status) of a given directory

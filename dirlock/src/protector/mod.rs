@@ -93,13 +93,6 @@ impl std::str::FromStr for ProtectorId {
 }
 
 
-/// A wrapped [`PolicyKey`] together with a [`Protector`] that can unwrap it
-pub struct ProtectedPolicyKey {
-    pub protector: Protector,
-    pub policy_key: WrappedPolicyKey,
-}
-
-
 /// An enum of the existing protector types
 // The order is used to decide which protector to use first in the
 // cases where the user didn't select a specific one (notably PAM).
