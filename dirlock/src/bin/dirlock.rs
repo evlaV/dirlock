@@ -562,11 +562,11 @@ fn cmd_list_policies() -> Result<()> {
             });
         for mnt in unlocked {
             if ! unlocked_policies {
-                println!("\nUnlocked policies");
-                println!("-----------------");
+                println!("\nUnlocked policies                   Mount point");
+                println!("-----------------------------------------------");
                 unlocked_policies = true;
             }
-            println!("{id} {mnt}");
+            println!("{id}    {mnt}");
         }
     }
     Ok(())
