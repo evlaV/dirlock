@@ -5,6 +5,7 @@
  */
 
 use anyhow::{anyhow, bail, Result};
+use std::io::ErrorKind;
 use std::fs::File;
 use std::os::fd::FromRawFd;
 use std::os::unix::fs::{self, MetadataExt};
@@ -20,7 +21,7 @@ pub(crate) fn get_homedir(user: &str) -> Result<Option<PathBuf>> {
 }
 
 /// Check if a directory is empty
-pub fn dir_is_empty(dir: &Path) -> Result<bool> {
+pub fn dir_is_empty(dir: &Path) -> std::io::Result<bool> {
     let empty = std::fs::read_dir(dir)?.next().is_none();
     Ok(empty)
 }
@@ -86,7 +87,7 @@ impl SafeFile {
     ///
     /// This works on a temporary file, the actual file at `path` is
     /// only updated when calling commit().
-    pub fn create(path: &Path) -> Result<Self> {
+    pub fn create(path: &Path) -> std::io::Result<Self> {
         let template = match (path.parent(), path.file_name()) {
             (Some(dirname), Some(filename)) => {
                 let mut name = std::ffi::OsString::from(".#");
@@ -94,7 +95,10 @@ impl SafeFile {
                 name.push(".XXXXXX");
                 dirname.join(name)
             },
-            _ => bail!("Invalid path {}", path.display()),
+            _ => {
+                let msg = format!("Invalid path {}", path.display());
+                return Err(std::io::Error::new(ErrorKind::InvalidInput, msg));
+            },
         };
         let (fd, temp_path) = nix::unistd::mkstemp(&template)?;
         let file = unsafe { File::from_raw_fd(fd) };
