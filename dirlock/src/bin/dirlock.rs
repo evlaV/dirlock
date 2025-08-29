@@ -519,12 +519,18 @@ fn cmd_list_policies() -> Result<()> {
     println!("Policy                              Protectors");
     println!("----------------------------------------------------");
     for id in &policies {
-        let prots = keystore::load_policy_map(id)?
-            .keys()
-            .map(|prot_id| prot_id.to_string())
-            .collect::<Vec<String>>()
-            .join(", ");
-        println!("{id}    {prots}");
+        match keystore::load_policy_map(id) {
+            Ok(map) => {
+                let prots = map.keys()
+                    .map(|prot_id| prot_id.to_string())
+                    .collect::<Vec<String>>()
+                    .join(", ");
+                println!("{id}    {prots}");
+            }
+            Err(e) => {
+                println!("{id}    [error: {}]", e.kind());
+            }
+        }
     }
 
     // List of mounted filesystems that support fscrypt

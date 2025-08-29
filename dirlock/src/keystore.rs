@@ -127,20 +127,15 @@ pub fn save_protector(prot: &Protector, save: SaveProtector) -> Result<()> {
 }
 
 /// Load a policy map from disk
-pub fn load_policy_map(id: &PolicyKeyId) -> Result<PolicyMap> {
+pub fn load_policy_map(id: &PolicyKeyId) -> std::io::Result<PolicyMap> {
     let dir = &keystore_dirs().policies;
     let policy_file = dir.join(id.to_string());
     if !dir.exists() || !policy_file.exists() {
         return Ok(HashMap::new());
     }
 
-    let policy = match fs::OpenOptions::new().read(true).open(policy_file) {
-        Ok(f) => serde_json::from_reader(f)
-            .map_err(|e| anyhow!("Error reading data for policy {id}: {e}"))?,
-        Err(e) => bail!("Error opening policy {id}: {e}"),
-    };
-
-    Ok(policy)
+    serde_json::from_reader(fs::File::open(policy_file)?)
+        .map_err(|e| std::io::Error::new(ErrorKind::InvalidData, e))
 }
 
 /// Save a policy map to disk
