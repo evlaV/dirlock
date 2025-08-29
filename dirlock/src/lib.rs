@@ -56,6 +56,12 @@ pub struct ProtectedPolicyKey {
     pub policy_key: WrappedPolicyKey,
 }
 
+/// A [`ProtectorId`] that could not be loaded from disk
+pub struct UnusableProtector {
+    pub id: ProtectorId,
+    pub err: std::io::Error,
+}
+
 /// Encryption data (policy, key status) of a given directory
 pub struct EncryptedDir {
     pub path: PathBuf,
@@ -63,6 +69,7 @@ pub struct EncryptedDir {
     pub key_status: fscrypt::KeyStatus,
     pub key_flags: fscrypt::KeyStatusFlags,
     pub protectors: Vec<ProtectedPolicyKey>,
+    pub unusable: Vec<UnusableProtector>,
 }
 
 /// Gets the encryption status of a directory.
@@ -78,7 +85,7 @@ pub fn open_dir(path: &Path) -> Result<DirStatus> {
         None    => return Ok(DirStatus::Unencrypted),
     };
 
-    let protectors = keystore::get_protectors_for_policy(&policy.keyid)?;
+    let (protectors, unusable) = keystore::get_protectors_for_policy(&policy.keyid)?;
     if protectors.is_empty() {
         return Ok(DirStatus::KeyMissing);
     };
@@ -86,7 +93,7 @@ pub fn open_dir(path: &Path) -> Result<DirStatus> {
     let (key_status, key_flags) = fscrypt::get_key_status(path, &policy.keyid)
         .map_err(|e| anyhow!("Failed to get key status: {e}"))?;
 
-    Ok(DirStatus::Encrypted(EncryptedDir { path: path.into(), policy, key_status, key_flags, protectors }))
+    Ok(DirStatus::Encrypted(EncryptedDir { path: path.into(), policy, key_status, key_flags, protectors, unusable }))
 }
 
 /// Convenience function to call `open_dir` on a user's home directory
@@ -208,11 +215,8 @@ pub fn encrypt_dir(path: &Path, protector_key: ProtectorKey) -> Result<PolicyKey
 }
 
 /// Get an existing protector
-pub fn get_protector_by_id(id: ProtectorId) -> Result<Protector> {
-    let Some(prot) = keystore::load_protector(id)? else {
-        bail!("Protector not found");
-    };
-    Ok(prot)
+pub fn get_protector_by_id(id: ProtectorId) -> std::io::Result<Protector> {
+    keystore::load_protector(id)
 }
 
 /// Whether to save a protector when creating it

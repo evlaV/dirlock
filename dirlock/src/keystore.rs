@@ -16,6 +16,7 @@ use std::{
 };
 use crate::{
     ProtectedPolicyKey,
+    UnusableProtector,
     fscrypt::PolicyKeyId,
     policy::WrappedPolicyKey,
     protector::{
@@ -89,20 +90,16 @@ pub fn protector_ids() -> std::io::Result<Vec<ProtectorId>> {
 type PolicyMap = HashMap<ProtectorId, WrappedPolicyKey>;
 
 /// Load a protector from disk
-pub fn load_protector(id: ProtectorId) -> Result<Option<Protector>> {
+pub(crate) fn load_protector(id: ProtectorId) -> std::io::Result<Protector> {
     let dir = &keystore_dirs().protectors;
     let protector_file = dir.join(id.to_string());
     if !dir.exists() || !protector_file.exists() {
-        return Ok(None);
+        return Err(std::io::Error::new(ErrorKind::NotFound, "protector not found"));
     }
 
-    let data = match fs::OpenOptions::new().read(true).open(protector_file) {
-        Ok(f) => serde_json::from_reader(f)
-            .map_err(|e| anyhow!("Error reading data for protector {id}: {e}"))?,
-        Err(e) => bail!("Error opening protector {id}: {e}"),
-    };
-
-    Ok(Some(Protector { id, data }))
+    serde_json::from_reader(fs::File::open(protector_file)?)
+        .map(|data| Protector { id, data })
+        .map_err(|e| std::io::Error::new(ErrorKind::InvalidData, e))
 }
 
 /// Whether to overwrite an existing protector
@@ -193,19 +190,23 @@ pub fn remove_protector_if_unused(protector_id: &ProtectorId) -> Result<bool> {
 }
 
 /// Get all protectors that can be used to unlock the policy key identified by `id`
-pub fn get_protectors_for_policy(id: &PolicyKeyId) -> Result<Vec<ProtectedPolicyKey>> {
-    let mut result = vec![];
+pub fn get_protectors_for_policy(id: &PolicyKeyId) -> std::io::Result<(Vec<ProtectedPolicyKey>, Vec<UnusableProtector>)> {
+    let mut prots = vec![];
+    let mut unusable = vec![];
     let policies = load_policy_map(id)?;
     for (protector_id, policy_key) in policies {
-        // TODO if this fails it means that there's a policy
-        // wrapped with a protector but the protector is
-        // missing. We should report this.
-        if let Some(protector) = load_protector(protector_id)? {
-            result.push(ProtectedPolicyKey{ protector, policy_key });
+        match load_protector(protector_id) {
+            Ok(protector) => {
+                prots.push(ProtectedPolicyKey{ protector, policy_key });
+            },
+            Err(err) => {
+                unusable.push(UnusableProtector{ id: protector_id, err });
+            },
         }
     }
-    result.sort_unstable_by(|a, b| a.protector.cmp(&b.protector));
-    Ok(result)
+    prots.sort_unstable_by(|a, b| a.protector.cmp(&b.protector));
+    unusable.sort_unstable_by(|a, b| a.id.cmp(&b.id));
+    Ok((prots, unusable))
 }
 
 /// Remove an encryption policy permanently from disk

@@ -7,7 +7,7 @@
 use anyhow::{bail, Result};
 use argh::FromArgs;
 use get_sys_info::Platform;
-use std::io::{self, Write};
+use std::io::{self, ErrorKind, Write};
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use dirlock::{
@@ -318,30 +318,35 @@ fn display_tpm_information() -> Result<()> {
     Ok(())
 }
 
-fn do_display_protector_list(list: Vec<&Protector>) {
+fn display_protector_list() -> Result<()> {
     println!("{:16}    {:8}    Name", "Protector", "Type");
     println!("--------------------------------------");
-    for prot in list {
-        println!("{:16}    {:8}    {}", prot.id,
-                 prot.get_type().to_string(),
-                 prot.get_name());
-    }
-}
-
-fn display_protector_list() -> Result<()> {
-    let mut list = vec![];
     for id in keystore::protector_ids()? {
-        if let Some(prot) = keystore::load_protector(id)? {
-            list.push(prot);
+        match dirlock::get_protector_by_id(id) {
+            Ok(prot) => {
+                println!("{:16}    {:8}    {}", prot.id,
+                         prot.get_type().to_string(),
+                         prot.get_name());
+            },
+            Err(e) => {
+                println!("{:16}    [error: {}]", id, e.kind());
+            }
         }
     }
-    do_display_protector_list(list.iter().collect());
     Ok(())
 }
 
 fn display_protectors_from_dir(dir: &EncryptedDir) {
-    let list = dir.protectors.iter().map(|p| &p.protector).collect();
-    do_display_protector_list(list);
+    println!("{:16}    {:8}    Name", "Protector", "Type");
+    println!("--------------------------------------");
+    for i in &dir.protectors {
+        println!("{:16}    {:8}    {}", i.protector.id,
+                 i.protector.get_type().to_string(),
+                 i.protector.get_name());
+    }
+    for i in &dir.unusable {
+        println!("{:16}    [error: {}]", i.id, i.err.kind());
+    }
 }
 
 fn get_dir_protector<'a>(dir: &'a EncryptedDir, prot: &Option<ProtectorId>) -> Result<&'a Protector> {
@@ -805,8 +810,12 @@ fn cmd_import_master_key() -> Result<()> {
     }
     let keyid = master_key.get_id();
 
-    if ! keystore::get_protectors_for_policy(&keyid)?.is_empty() {
-        bail!("This key has already been imported");
+    // Stop if there is already a protector available for this key
+    // (unless the protector file is missing).
+    let (protectors, unusable) = keystore::get_protectors_for_policy(&keyid)?;
+    if ! protectors.is_empty() ||
+        unusable.iter().any(|p| p.err.kind() != ErrorKind::NotFound) {
+        bail!("This key has already been imported (policy {keyid})");
     }
 
     let opts = ProtectorOptsBuilder::new()
