@@ -86,7 +86,7 @@ fn do_verify_protector_password(
     protector_id: &str,
 ) -> anyhow::Result<bool> {
     ProtectorId::from_str(protector_id)
-        .and_then(dirlock::get_protector_by_id)
+        .and_then(|id| dirlock::get_protector_by_id(id).map_err(|e| e.into()))
         .and_then(|prot| prot.unwrap_key(pass.as_bytes()))
         .map(|key| key.is_some())
 }
@@ -102,7 +102,7 @@ fn do_change_protector_password(
     }
 
     let mut prot = ProtectorId::from_str(protector_id)
-        .and_then(dirlock::get_protector_by_id)?;
+        .and_then(|id| dirlock::get_protector_by_id(id).map_err(|e| e.into()))?;
 
     prot.unwrap_key(pass.as_bytes())
         .and_then(|k| k.ok_or_else(|| anyhow!("Invalid password")))
@@ -203,8 +203,8 @@ fn do_get_protectors() -> anyhow::Result<Vec<DbusProtectorData>> {
 
     let mut prots = vec![];
     for id in prot_ids {
-        match keystore::load_protector(id) {
-            Ok(Some(prot)) => prots.push(prot),
+        match dirlock::get_protector_by_id(id) {
+            Ok(prot) => prots.push(prot),
             _ => bail!("Error reading protector {id}"),
         }
     }
@@ -222,9 +222,9 @@ fn do_add_protector_to_policy(
 ) -> anyhow::Result<()> {
     let policy_id = PolicyKeyId::from_str(policy)?;
     let protector = ProtectorId::from_str(protector)
-        .and_then(dirlock::get_protector_by_id)?;
+        .and_then(|id| dirlock::get_protector_by_id(id).map_err(|e| e.into()))?;
     let unlock_with = ProtectorId::from_str(unlock_with)
-        .and_then(dirlock::get_protector_by_id)?;
+        .and_then(|id| dirlock::get_protector_by_id(id).map_err(|e| e.into()))?;
 
     let policy_map = keystore::load_policy_map(&policy_id)?;
     let Some(wrapped_policy_key) = policy_map.get(&unlock_with.id) else {
