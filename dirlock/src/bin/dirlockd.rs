@@ -252,9 +252,6 @@ fn do_remove_protector_from_policy(
     let policy_id = PolicyKeyId::from_str(policy)?;
     let protector_id = ProtectorId::from_str(protector)?;
     let policy_map = keystore::load_policy_map(&policy_id)?;
-    if policy_map.is_empty() {
-        bail!("Policy {policy_id} not found");
-    }
     if ! policy_map.contains_key(&protector_id) {
         bail!("Protector {} is not used in this policy", protector_id);
     }

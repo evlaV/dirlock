@@ -594,9 +594,7 @@ fn cmd_remove_policy(args: &PolicyRemoveArgs) -> Result<()> {
         println!("You must specify the ID of the policy.");
         return cmd_list_policies();
     };
-    if keystore::load_policy_map(id)?.is_empty() {
-        bail!("Encryption policy {id} not found");
-    }
+    let _ = keystore::load_policy_map(id)?;
     if ! args.force {
         print!("You are about to delete all data from the encryption\n\
                 policy {id}\n\
@@ -636,9 +634,6 @@ fn cmd_policy_add_protector(args: &PolicyAddProtectorArgs) -> Result<()> {
     };
 
     let policy_map = keystore::load_policy_map(policy_id)?;
-    if policy_map.is_empty() {
-        bail!("Policy {policy_id} not found");
-    }
     if policy_map.contains_key(&protector.id) {
         bail!("Policy {policy_id} is already protected with protector {}", protector.id);
     }
@@ -684,9 +679,6 @@ fn cmd_policy_remove_protector(args: &PolicyRemoveProtectorArgs) -> Result<()> {
     };
 
     let policy_map = keystore::load_policy_map(policy_id)?;
-    if policy_map.is_empty() {
-        bail!("Policy {policy_id} not found");
-    }
     if ! policy_map.contains_key(&protector.id) {
         bail!("Protector {} is not used in this policy", protector.id);
     }

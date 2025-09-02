@@ -134,11 +134,26 @@ pub fn load_policy_map(id: &PolicyKeyId) -> std::io::Result<PolicyMap> {
     let dir = &keystore_dirs().policies;
     let policy_file = dir.join(id.to_string());
     if !dir.exists() || !policy_file.exists() {
-        return Ok(HashMap::new());
+        return Err(std::io::Error::new(ErrorKind::NotFound, "policy not found"));
     }
 
     serde_json::from_reader(fs::File::open(policy_file)?)
         .map_err(|e| std::io::Error::new(ErrorKind::InvalidData, e))
+        .and_then(|map: PolicyMap| {
+            if map.is_empty() {
+                Err(std::io::Error::new(ErrorKind::InvalidData, "policy contains no data"))
+            } else {
+                Ok(map)
+            }
+        })
+}
+
+/// Load a policy map from disk, or return an empty one if the file is missing
+fn load_or_create_policy_map(id: &PolicyKeyId) -> std::io::Result<PolicyMap> {
+    match load_policy_map(id) {
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(HashMap::new()),
+        x => x,
+    }
 }
 
 /// Save a policy map to disk
@@ -147,6 +162,10 @@ fn save_policy_map(id: &PolicyKeyId, policy_map: &PolicyMap) -> Result<()> {
     fs::create_dir_all(path)
         .map_err(|e| anyhow!("Failed to create {}: {e}", path.display()))?;
     let filename = path.join(id.to_string());
+    if policy_map.is_empty() {
+        return std::fs::remove_file(filename)
+            .map_err(|e| anyhow!("Failed to remove policy key {id}: {e}"));
+    }
     let mut file = SafeFile::create(&filename)
         .map_err(|e| anyhow!("Failed to store policy key {id}: {e}"))?;
     serde_json::to_writer_pretty(&mut file, policy_map)?;
@@ -177,7 +196,7 @@ pub fn remove_protector_from_policy(policy_id: &PolicyKeyId, protector_id: &Prot
 /// Removes a protector if it's not being used in any policy
 pub fn remove_protector_if_unused(protector_id: &ProtectorId) -> Result<bool> {
     for policy_id in policy_key_ids()? {
-        if load_policy_map(&policy_id)?.contains_key(protector_id) {
+        if load_or_create_policy_map(&policy_id)?.contains_key(protector_id) {
             return Ok(false);
         }
     }
@@ -193,7 +212,7 @@ pub fn remove_protector_if_unused(protector_id: &ProtectorId) -> Result<bool> {
 pub fn get_protectors_for_policy(id: &PolicyKeyId) -> std::io::Result<(Vec<ProtectedPolicyKey>, Vec<UnusableProtector>)> {
     let mut prots = vec![];
     let mut unusable = vec![];
-    let policies = load_policy_map(id)?;
+    let policies = load_or_create_policy_map(id)?;
     for (protector_id, policy_key) in policies {
         match load_protector(protector_id) {
             Ok(protector) => {
