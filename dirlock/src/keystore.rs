@@ -238,3 +238,56 @@ pub fn remove_policy(id: &PolicyKeyId) -> std::io::Result<()> {
     fs::remove_file(policy_file)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use anyhow::Result;
+    use std::str::FromStr;
+    use super::*;
+
+    fn test_init() -> Result<tempdir::TempDir> {
+        let tmpdir = tempdir::TempDir::new("keystore")?;
+        unsafe {
+            std::env::set_var("DIRLOCK_KEYSTORE", tmpdir.path());
+        }
+        Ok(tmpdir)
+    }
+
+    #[test]
+    fn test_empty_keystore() -> Result<()> {
+        let tmpdir = test_init()?;
+        let poldir = tmpdir.path().join("policies");
+        let protdir = tmpdir.path().join("protectors");
+
+        // Check the paths
+        assert_eq!(poldir, keystore_dirs().policies);
+        assert_eq!(protdir, keystore_dirs().protectors);
+
+        // Check that the dirs are empty
+        assert!(policy_key_ids()?.is_empty());
+        assert!(protector_ids()?.is_empty());
+
+        // Try loading a nonexistent protector
+        let protid = ProtectorId::from_str("0000000000000000")?;
+        let Err(err) = load_protector(protid) else {
+            bail!("Found unexpected protector");
+        };
+        assert_eq!(err.kind(), ErrorKind::NotFound);
+
+        // Try loading a nonexistent policy
+        let polid = PolicyKeyId::from_str("00000000000000000000000000000000")?;
+        let Err(err) = load_policy_map(&polid) else {
+            bail!("Found unexpected policy");
+        };
+        assert_eq!(err.kind(), ErrorKind::NotFound);
+        assert!(load_or_create_policy_map(&polid)?.is_empty());
+
+        // Try removing a nonexistent policy
+        let Err(err) = remove_policy(&polid) else {
+            bail!("Expected error removing nonexistent policy");
+        };
+        assert_eq!(err.kind(), ErrorKind::NotFound);
+
+        Ok(())
+    }
+}
