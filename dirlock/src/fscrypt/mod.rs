@@ -398,22 +398,22 @@ mod tests {
     fn test_add_key() -> Result<()> {
         fn do_test_key(key: &[u8], mntpoint: &Path) -> Result<()> {
             // Create a temporary directory and check that it's not encrypted
-            let workdir = tempdir::TempDir::new_in(&mntpoint, "encrypted")?;
-            if let Some(_) = get_policy(workdir.as_ref())? {
+            let workdir = tempdir::TempDir::new_in(mntpoint, "encrypted")?;
+            if get_policy(workdir.as_ref())?.is_some() {
                 panic!("Found policy where none was expected")
             };
 
             // Calculate the expected key ID
-            let id = PolicyKeyId::new_from_key(&key);
+            let id = PolicyKeyId::new_from_key(key);
 
             // Check that the key is absent from the filesystem
-            let (status, _) = get_key_status(&mntpoint, &id)?;
+            let (status, _) = get_key_status(mntpoint, &id)?;
             assert_eq!(status, KeyStatus::Absent);
 
             // Add the key to the filesystem, check the ID and its presence
-            let new_id = add_key(&mntpoint, &key)?;
+            let new_id = add_key(mntpoint, key)?;
             assert!(new_id == id);
-            let (status, flags) = get_key_status(&mntpoint, &id)?;
+            let (status, flags) = get_key_status(mntpoint, &id)?;
             assert_eq!(status, KeyStatus::Present);
             assert!(flags.contains(KeyStatusFlags::AddedBySelf));
 
@@ -425,8 +425,8 @@ mod tests {
             };
 
             // Remove the key from the filesystem and check that it's absent
-            remove_key(&mntpoint, &id, RemoveKeyUsers::CurrentUser)?;
-            let (status, _) = get_key_status(&mntpoint, &id)?;
+            remove_key(mntpoint, &id, RemoveKeyUsers::CurrentUser)?;
+            let (status, _) = get_key_status(mntpoint, &id)?;
             assert_eq!(status, KeyStatus::Absent);
 
             // Check again that the directory is still encrypted
@@ -455,17 +455,17 @@ mod tests {
     #[test]
     fn test_no_encryption_supported() -> Result<()> {
         let mntpoint = std::path::Path::new("/tmp");
-        let workdir = tempdir::TempDir::new_in(&mntpoint, "encrypted")?;
+        let workdir = tempdir::TempDir::new_in(mntpoint, "encrypted")?;
 
         let mut key = vec![0u8; FSCRYPT_MAX_KEY_SIZE];
         OsRng.fill_bytes(&mut key);
         let id = PolicyKeyId::new_from_key(&key);
 
-        assert!(add_key(&mntpoint, &key).is_err());
+        assert!(add_key(mntpoint, &key).is_err());
         assert!(set_policy(workdir.path(), &id).is_err());
         assert!(get_policy(workdir.path()).is_err());
-        assert!(get_key_status(&mntpoint, &id).is_err());
-        assert!(remove_key(&mntpoint, &id, RemoveKeyUsers::CurrentUser).is_err());
+        assert!(get_key_status(mntpoint, &id).is_err());
+        assert!(remove_key(mntpoint, &id, RemoveKeyUsers::CurrentUser).is_err());
 
         Ok(())
     }

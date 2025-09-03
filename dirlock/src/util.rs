@@ -166,7 +166,7 @@ mod tests {
         fs::write(&path, b"old")?;
 
         let mut file = SafeFile::create(&path)?;
-        file.write(b"new")?;
+        _ = file.write(b"new")?;
         drop(file);
 
         assert_eq!(fs::read(path)?, b"old");
@@ -179,7 +179,7 @@ mod tests {
         let oldmd = fs::metadata(&path)?;
 
         let mut file = SafeFile::create(&path)?;
-        file.write(b"new")?;
+        _ = file.write(b"new")?;
         file.commit()?;
         let newmd = fs::metadata(&path)?;
 
@@ -194,7 +194,7 @@ mod tests {
         fs::set_permissions(&path, Permissions::from_mode(0o751))?;
 
         let mut file = SafeFile::create(&path)?;
-        file.write(b"new")?;
+        _ = file.write(b"new")?;
         file.commit()?;
 
         assert_eq!(fs::read(path)?, b"new");
@@ -210,7 +210,7 @@ mod tests {
         fs::set_permissions(&path, Permissions::from_mode(0o751))?;
 
         let mut file = SafeFile::create(&path)?;
-        file.write(b"new")?;
+        _ = file.write(b"new")?;
         file.commit()?;
 
         assert_eq!(fs::read(path)?, b"new");

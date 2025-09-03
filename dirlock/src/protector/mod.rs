@@ -364,7 +364,8 @@ mod tests {
         T: for <'a> serde::de::Deserialize<'a>
     {
         let json_str = format!("\"{}\"", s);
-        serde_json::from_str::<T>(&json_str).expect(&format!("Error decoding {s}"))
+        serde_json::from_str::<T>(&json_str)
+            .unwrap_or_else(|_| panic!("Error decoding {s}"))
     }
 
     #[test]
