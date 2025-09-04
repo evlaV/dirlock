@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use std::{
     collections::HashMap,
     ffi::OsStr,
@@ -18,10 +18,7 @@ use crate::{
     ProtectedPolicyKey,
     UnusableProtector,
     fscrypt::PolicyKeyId,
-    policy::{
-        PolicyData,
-        WrappedPolicyKey,
-    },
+    policy::PolicyData,
     protector::{
         Protector,
         ProtectorId,
@@ -142,7 +139,7 @@ pub(crate) fn load_policy_data(id: &PolicyKeyId) -> std::io::Result<PolicyData> 
             if keys.is_empty() {
                 Err(std::io::Error::new(ErrorKind::InvalidData, "policy contains no data"))
             } else {
-                Ok(PolicyData { keys })
+                Ok(PolicyData::from_existing(id.clone(), keys))
             }
         })
 }
@@ -150,46 +147,38 @@ pub(crate) fn load_policy_data(id: &PolicyKeyId) -> std::io::Result<PolicyData> 
 /// Load a policy from disk, or return an empty one if the file is missing
 fn load_or_create_policy_data(id: &PolicyKeyId) -> std::io::Result<PolicyData> {
     match load_policy_data(id) {
-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(Default::default()),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(PolicyData::new(id.clone())),
         x => x,
     }
 }
 
 /// Save a policy to disk
-fn save_policy_data(id: &PolicyKeyId, policy: &PolicyData) -> Result<()> {
+pub(crate) fn save_policy_data(policy: &mut PolicyData) -> Result<()> {
+    let id = &policy.id;
     let path = &keystore_dirs().policies;
     fs::create_dir_all(path)
-        .map_err(|e| anyhow!("Failed to create {}: {e}", path.display()))?;
+        .context(format!("Failed to create {}", path.display()))?;
     let filename = path.join(id.to_string());
+    match (filename.exists(), policy.is_new) {
+        (true, true) => bail!("Trying to overwrite existing data from policy {id}"),
+        (false, false) => bail!("Trying to update nonexistent policy {id}"),
+        _ => (),
+    }
     if policy.keys.is_empty() {
-        return std::fs::remove_file(filename)
-            .map_err(|e| anyhow!("Failed to remove policy key {id}: {e}"));
+        if filename.exists() {
+            return std::fs::remove_file(filename)
+                .inspect(|_| policy.is_new = true)
+                .context(format!("Failed to remove data from policy {id}"));
+        }
+        bail!("Trying to remove nonexistent policy {id}");
     }
     let mut file = SafeFile::create(&filename)
-        .map_err(|e| anyhow!("Failed to store policy key {id}: {e}"))?;
+        .context(format!("Failed to store data from policy {id}"))?;
     serde_json::to_writer_pretty(&mut file, &policy.keys)?;
     file.write_all(b"\n")?;
     file.commit()?;
+    policy.is_new = false;
     Ok(())
-}
-
-/// Add a wrapped policy key to the key store
-pub fn add_protector_to_policy(policy_id: &PolicyKeyId, protector_id: ProtectorId, key: WrappedPolicyKey) -> Result<()> {
-    let mut policy = load_policy_data(policy_id)?;
-    if policy.keys.contains_key(&protector_id) {
-        bail!("Trying to add a duplicate protector for a policy");
-    };
-    policy.keys.insert(protector_id, key);
-    save_policy_data(policy_id, &policy)
-}
-
-/// Remove a protected policy key from the key store
-pub fn remove_protector_from_policy(policy_id: &PolicyKeyId, protector_id: &ProtectorId) -> Result<bool> {
-    let mut policy = load_policy_data(policy_id)?;
-    if policy.keys.remove(protector_id).is_none() {
-        return Ok(false);
-    };
-    save_policy_data(policy_id, &policy).and(Ok(true))
 }
 
 /// Removes a protector if it's not being used in any policy
@@ -228,7 +217,7 @@ pub fn get_protectors_for_policy(id: &PolicyKeyId) -> std::io::Result<(Vec<Prote
 }
 
 /// Remove an encryption policy permanently from disk
-pub fn remove_policy(id: &PolicyKeyId) -> std::io::Result<()> {
+pub(crate) fn remove_policy(id: &PolicyKeyId) -> std::io::Result<()> {
     let dir = &keystore_dirs().policies;
     let policy_file = dir.join(id.to_string());
     if !dir.exists() || !policy_file.exists() {

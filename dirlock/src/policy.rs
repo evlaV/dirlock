@@ -4,14 +4,20 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
-use anyhow::{ensure, Result};
+use anyhow::{bail, ensure, Result};
 use rand::{RngCore, rngs::OsRng};
 use serde::{Serialize, Deserialize};
 use serde_with::{serde_as, base64::Base64};
-use std::collections::HashMap;
+use std::collections::{
+    HashMap,
+    hash_map::Entry,
+};
 
 use crate::{
-    fscrypt,
+    fscrypt::{
+        self,
+        PolicyKeyId,
+    },
     protector::{
         ProtectorId,
         ProtectorKey,
@@ -68,17 +74,50 @@ impl PolicyKey {
     }
 
     /// Calculates the fscrypt v2 key ID for this key
-    pub fn get_id(&self) -> fscrypt::PolicyKeyId {
-        fscrypt::PolicyKeyId::new_from_key(self.secret())
+    pub fn get_id(&self) -> PolicyKeyId {
+        PolicyKeyId::new_from_key(self.secret())
     }
 }
 
 
-#[derive(Default)]
 /// Policy data as stored on disk. It contains several instances of
-/// the same fscrypt policy key wrapped with different protectors.
+/// the same fscrypt [`PolicyKey`] wrapped with different protectors.
 pub struct PolicyData {
+    pub id: PolicyKeyId,
     pub keys: HashMap<ProtectorId, WrappedPolicyKey>,
+    pub(crate) is_new: bool,
+}
+
+impl PolicyData {
+    /// Creates a new, empty [`PolicyData`] object.
+    pub fn new(id: PolicyKeyId) -> Self {
+        PolicyData { id, keys: Default::default(), is_new: true }
+    }
+
+    /// Creates a [`PolicyData`] object from existing data (loaded from disk).
+    pub fn from_existing(id: PolicyKeyId, keys: HashMap<ProtectorId, WrappedPolicyKey>) -> Self {
+        PolicyData { id, keys, is_new: false }
+    }
+
+    /// Adds a new a [`PolicyKey`] to the policy, wrapping it with a [`ProtectorKey`].
+    /// Fails if there's already a key with that protector.
+    pub fn add_protector(&mut self, protector_key: &ProtectorKey, policy_key: PolicyKey) -> Result<()> {
+        let wrapped_key = WrappedPolicyKey::new(policy_key, protector_key);
+        let protector_id = protector_key.get_id();
+        match self.keys.entry(protector_id) {
+            Entry::Vacant(e) => _ = e.insert(wrapped_key),
+            Entry::Occupied(e) => bail!("Policy {} already protected with protector {}", self.id, e.key()),
+        }
+        Ok(())
+    }
+
+    /// Removes the key wrapped with the given [`ProtectorId`].
+    pub fn remove_protector(&mut self, id: &ProtectorId) -> Result<()> {
+        if self.keys.remove(id).is_none() {
+            bail!("Protector {id} is not used in policy {}", self.id);
+        }
+        Ok(())
+    }
 }
 
 

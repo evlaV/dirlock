@@ -11,7 +11,7 @@ use std::io::{self, ErrorKind, Write};
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use dirlock::{
-    CreateProtector,
+    CreateOpts,
     DirStatus,
     EncryptedDir,
     fscrypt::{
@@ -487,7 +487,7 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
             .with_name(name)
             .build()?;
         let pass = read_new_password_for_protector(opts.get_type())?;
-        let (_, protector_key) = dirlock::create_protector(opts, pass.as_bytes(), CreateProtector::CreateAndSave)?;
+        let (_, protector_key) = dirlock::create_protector(opts, pass.as_bytes(), CreateOpts::CreateAndSave)?;
         protector_key
     };
 
@@ -582,10 +582,8 @@ fn cmd_create_policy(args: &PolicyCreateArgs) -> Result<()> {
     let Some(protector_key) = protector.unwrap_key(pass.as_bytes())? else {
         bail!("Invalid {} for protector {id}", protector.get_type().credential_name());
     };
-    let policy_key = PolicyKey::new_random();
-    let policy_id = policy_key.get_id();
-    dirlock::wrap_and_save_policy_key(protector_key, policy_key)?;
-    println!("Created encryption policy {policy_id}");
+    let policy = dirlock::create_policy_data(protector_key, None, CreateOpts::CreateAndSave)?;
+    println!("Created encryption policy {}", policy.id);
     Ok(())
 }
 
@@ -618,7 +616,7 @@ fn cmd_remove_policy(args: &PolicyRemoveArgs) -> Result<()> {
             }
         }
     }
-    keystore::remove_policy(id)?;
+    dirlock::remove_policy_data(id)?;
     println!("Encryption policy {id} removed successfully");
     Ok(())
 }
@@ -633,7 +631,7 @@ fn cmd_policy_add_protector(args: &PolicyAddProtectorArgs) -> Result<()> {
         bail!("You must specify the ID of the protector to add.");
     };
 
-    let policy = dirlock::get_policy_by_id(policy_id)?;
+    let mut policy = dirlock::get_policy_by_id(policy_id)?;
     if policy.keys.contains_key(&protector.id) {
         bail!("Policy {policy_id} is already protected with protector {}", protector.id);
     }
@@ -662,7 +660,8 @@ fn cmd_policy_add_protector(args: &PolicyAddProtectorArgs) -> Result<()> {
         bail!("Invalid {}", unlock_with.get_type().credential_name());
     };
 
-    dirlock::wrap_and_save_policy_key(protector_key, policy_key)?;
+    policy.add_protector(&protector_key, policy_key)?;
+    dirlock::save_policy_data(&mut policy)?;
     println!("Protector {} added to policy {policy_id}", protector.id);
 
     Ok(())
@@ -678,7 +677,7 @@ fn cmd_policy_remove_protector(args: &PolicyRemoveProtectorArgs) -> Result<()> {
         bail!("You must specify the ID of the protector to remove.");
     };
 
-    let policy = dirlock::get_policy_by_id(policy_id)?;
+    let mut policy = dirlock::get_policy_by_id(policy_id)?;
     if ! policy.keys.contains_key(&protector.id) {
         bail!("Protector {} is not used in this policy", protector.id);
     }
@@ -686,7 +685,8 @@ fn cmd_policy_remove_protector(args: &PolicyRemoveProtectorArgs) -> Result<()> {
         bail!("Cannot remove the last protector. Use the 'policy remove' command instead.");
     }
 
-    keystore::remove_protector_from_policy(policy_id, &protector.id)?;
+    policy.remove_protector(&protector.id)?;
+    dirlock::save_policy_data(&mut policy)?;
     println!("Protector {} remove from policy {policy_id}", protector.id);
 
     Ok(())
@@ -701,7 +701,7 @@ fn cmd_create_protector(args: &ProtectorCreateArgs) -> Result<()> {
         .build()?;
 
     let pass = read_new_password_for_protector(opts.get_type())?;
-    let (protector, _) = dirlock::create_protector(opts, pass.as_bytes(), CreateProtector::CreateAndSave)?;
+    let (protector, _) = dirlock::create_protector(opts, pass.as_bytes(), CreateOpts::CreateAndSave)?;
 
     println!("Created protector {}", protector.id);
 
@@ -815,8 +815,8 @@ fn cmd_import_master_key() -> Result<()> {
         .with_type(Some(ProtectorType::Password))
         .build()?;
     let pass = read_new_password_for_protector(opts.get_type())?;
-    let (_, protector_key) = dirlock::create_protector(opts, pass.as_bytes(), CreateProtector::CreateAndSave)?;
-    dirlock::wrap_and_save_policy_key(protector_key, master_key)?;
+    let (_, protector_key) = dirlock::create_protector(opts, pass.as_bytes(), CreateOpts::CreateAndSave)?;
+    let _  = dirlock::create_policy_data(protector_key, Some(master_key), CreateOpts::CreateAndSave)?;
     println!("Imported key for policy {keyid}");
     Ok(())
 }
@@ -844,7 +844,7 @@ fn cmd_tpm2_test() -> Result<()> {
         .with_name(String::from(pass))
         .with_type(Some(ProtectorType::Tpm2))
         .build()?;
-    let (protector, protector_key) = dirlock::create_protector(opts, pass.as_bytes(), CreateProtector::CreateOnly)?;
+    let (protector, protector_key) = dirlock::create_protector(opts, pass.as_bytes(), CreateOpts::CreateOnly)?;
     let wrapped = WrappedPolicyKey::new(policy_key, &protector_key);
     match protector.unwrap_policy_key(&wrapped, pass.as_bytes()) {
         Ok(Some(k)) if *k.secret() == raw_key => (),

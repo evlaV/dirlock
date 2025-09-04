@@ -179,7 +179,7 @@ fn do_create_protector(
         .with_name(name.to_string())
         .build()
         .and_then(|opts| {
-            let create = dirlock::CreateProtector::CreateAndSave;
+            let create = dirlock::CreateOpts::CreateAndSave;
             dirlock::create_protector(opts, pass.as_bytes(), create)
         })
         .map_err(|e| anyhow!("Error creating protector: {e}"))?;
@@ -226,7 +226,7 @@ fn do_add_protector_to_policy(
     let unlock_with = ProtectorId::from_str(unlock_with)
         .and_then(|id| dirlock::get_protector_by_id(id).map_err(|e| e.into()))?;
 
-    let policy = dirlock::get_policy_by_id(&policy_id)?;
+    let mut policy = dirlock::get_policy_by_id(&policy_id)?;
     let Some(wrapped_policy_key) = policy.keys.get(&unlock_with.id) else {
         bail!("Policy {policy_id} cannot be unlocked with protector {}", unlock_with.id);
     };
@@ -239,7 +239,8 @@ fn do_add_protector_to_policy(
         bail!("Invalid {} for protector {}", unlock_with.get_type().credential_name(), unlock_with.id);
     };
 
-    dirlock::wrap_and_save_policy_key(protector_key, policy_key)?;
+    policy.add_protector(&protector_key, policy_key)?;
+    dirlock::save_policy_data(&mut policy)?;
 
     Ok(())
 }
@@ -251,14 +252,15 @@ fn do_remove_protector_from_policy(
 ) -> anyhow::Result<()> {
     let policy_id = PolicyKeyId::from_str(policy)?;
     let protector_id = ProtectorId::from_str(protector)?;
-    let policy = dirlock::get_policy_by_id(&policy_id)?;
+    let mut policy = dirlock::get_policy_by_id(&policy_id)?;
     if ! policy.keys.contains_key(&protector_id) {
         bail!("Protector {} is not used in this policy", protector_id);
     }
     if policy.keys.len() == 1 {
         bail!("Cannot remove the last protector");
     }
-    keystore::remove_protector_from_policy(&policy_id, &protector_id)?;
+    policy.remove_protector(&protector_id)?;
+    dirlock::save_policy_data(&mut policy)?;
 
     Ok(())
 }
