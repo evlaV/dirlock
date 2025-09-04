@@ -8,10 +8,12 @@ use anyhow::{ensure, Result};
 use rand::{RngCore, rngs::OsRng};
 use serde::{Serialize, Deserialize};
 use serde_with::{serde_as, base64::Base64};
+use std::collections::HashMap;
 
 use crate::{
     fscrypt,
     protector::{
+        ProtectorId,
         ProtectorKey,
     },
     crypto::{
@@ -72,8 +74,17 @@ impl PolicyKey {
 }
 
 
+#[derive(Default)]
+/// Policy data as stored on disk. It contains several instances of
+/// the same fscrypt policy key wrapped with different protectors.
+pub struct PolicyData {
+    pub keys: HashMap<ProtectorId, WrappedPolicyKey>,
+}
+
+
 #[serde_as]
 #[derive(Serialize, Deserialize)]
+/// A [`PolicyKey`] wrapped with an AES key.
 pub struct WrappedPolicyKey {
     #[serde_as(as = "Base64")]
     wrapped_key: [u8; POLICY_KEY_LEN],

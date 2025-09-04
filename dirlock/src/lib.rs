@@ -19,6 +19,7 @@ pub mod util;
 use anyhow::{anyhow, bail, Result};
 use fscrypt::{Policy, PolicyKeyId, RemoveKeyUsers, RemovalStatusFlags};
 use policy::{
+    PolicyData,
     PolicyKey,
     WrappedPolicyKey,
 };
@@ -217,6 +218,11 @@ pub fn encrypt_dir(path: &Path, protector_key: ProtectorKey) -> Result<PolicyKey
 /// Get an existing protector
 pub fn get_protector_by_id(id: ProtectorId) -> std::io::Result<Protector> {
     keystore::load_protector(id)
+}
+
+/// Get an existing policy
+pub fn get_policy_by_id(id: &PolicyKeyId) -> std::io::Result<PolicyData> {
+    keystore::load_policy_data(id)
 }
 
 /// Whether to save a protector when creating it

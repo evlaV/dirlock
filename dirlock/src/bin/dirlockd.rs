@@ -226,8 +226,8 @@ fn do_add_protector_to_policy(
     let unlock_with = ProtectorId::from_str(unlock_with)
         .and_then(|id| dirlock::get_protector_by_id(id).map_err(|e| e.into()))?;
 
-    let policy_map = keystore::load_policy_map(&policy_id)?;
-    let Some(wrapped_policy_key) = policy_map.get(&unlock_with.id) else {
+    let policy = dirlock::get_policy_by_id(&policy_id)?;
+    let Some(wrapped_policy_key) = policy.keys.get(&unlock_with.id) else {
         bail!("Policy {policy_id} cannot be unlocked with protector {}", unlock_with.id);
     };
 
@@ -251,11 +251,11 @@ fn do_remove_protector_from_policy(
 ) -> anyhow::Result<()> {
     let policy_id = PolicyKeyId::from_str(policy)?;
     let protector_id = ProtectorId::from_str(protector)?;
-    let policy_map = keystore::load_policy_map(&policy_id)?;
-    if ! policy_map.contains_key(&protector_id) {
+    let policy = dirlock::get_policy_by_id(&policy_id)?;
+    if ! policy.keys.contains_key(&protector_id) {
         bail!("Protector {} is not used in this policy", protector_id);
     }
-    if policy_map.len() == 1 {
+    if policy.keys.len() == 1 {
         bail!("Cannot remove the last protector");
     }
     keystore::remove_protector_from_policy(&policy_id, &protector_id)?;

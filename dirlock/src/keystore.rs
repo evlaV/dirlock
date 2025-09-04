@@ -18,7 +18,10 @@ use crate::{
     ProtectedPolicyKey,
     UnusableProtector,
     fscrypt::PolicyKeyId,
-    policy::WrappedPolicyKey,
+    policy::{
+        PolicyData,
+        WrappedPolicyKey,
+    },
     protector::{
         Protector,
         ProtectorId,
@@ -85,10 +88,6 @@ pub fn protector_ids() -> std::io::Result<Vec<ProtectorId>> {
     }
 }
 
-/// This contains several instances of the same fscrypt policy key
-/// wrapped with different protectors
-type PolicyMap = HashMap<ProtectorId, WrappedPolicyKey>;
-
 /// Load a protector from disk
 pub(crate) fn load_protector(id: ProtectorId) -> std::io::Result<Protector> {
     let dir = &keystore_dirs().protectors;
@@ -129,8 +128,8 @@ pub fn save_protector(prot: &Protector, save: SaveProtector) -> Result<()> {
     Ok(())
 }
 
-/// Load a policy map from disk
-pub fn load_policy_map(id: &PolicyKeyId) -> std::io::Result<PolicyMap> {
+/// Load a policy from disk
+pub(crate) fn load_policy_data(id: &PolicyKeyId) -> std::io::Result<PolicyData> {
     let dir = &keystore_dirs().policies;
     let policy_file = dir.join(id.to_string());
     if !dir.exists() || !policy_file.exists() {
@@ -139,36 +138,36 @@ pub fn load_policy_map(id: &PolicyKeyId) -> std::io::Result<PolicyMap> {
 
     serde_json::from_reader(fs::File::open(policy_file)?)
         .map_err(|e| std::io::Error::new(ErrorKind::InvalidData, e))
-        .and_then(|map: PolicyMap| {
-            if map.is_empty() {
+        .and_then(|keys: HashMap<_,_>| {
+            if keys.is_empty() {
                 Err(std::io::Error::new(ErrorKind::InvalidData, "policy contains no data"))
             } else {
-                Ok(map)
+                Ok(PolicyData { keys })
             }
         })
 }
 
-/// Load a policy map from disk, or return an empty one if the file is missing
-fn load_or_create_policy_map(id: &PolicyKeyId) -> std::io::Result<PolicyMap> {
-    match load_policy_map(id) {
-        Err(e) if e.kind() == ErrorKind::NotFound => Ok(HashMap::new()),
+/// Load a policy from disk, or return an empty one if the file is missing
+fn load_or_create_policy_data(id: &PolicyKeyId) -> std::io::Result<PolicyData> {
+    match load_policy_data(id) {
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(Default::default()),
         x => x,
     }
 }
 
-/// Save a policy map to disk
-fn save_policy_map(id: &PolicyKeyId, policy_map: &PolicyMap) -> Result<()> {
+/// Save a policy to disk
+fn save_policy_data(id: &PolicyKeyId, policy: &PolicyData) -> Result<()> {
     let path = &keystore_dirs().policies;
     fs::create_dir_all(path)
         .map_err(|e| anyhow!("Failed to create {}: {e}", path.display()))?;
     let filename = path.join(id.to_string());
-    if policy_map.is_empty() {
+    if policy.keys.is_empty() {
         return std::fs::remove_file(filename)
             .map_err(|e| anyhow!("Failed to remove policy key {id}: {e}"));
     }
     let mut file = SafeFile::create(&filename)
         .map_err(|e| anyhow!("Failed to store policy key {id}: {e}"))?;
-    serde_json::to_writer_pretty(&mut file, policy_map)?;
+    serde_json::to_writer_pretty(&mut file, &policy.keys)?;
     file.write_all(b"\n")?;
     file.commit()?;
     Ok(())
@@ -176,27 +175,27 @@ fn save_policy_map(id: &PolicyKeyId, policy_map: &PolicyMap) -> Result<()> {
 
 /// Add a wrapped policy key to the key store
 pub fn add_protector_to_policy(policy_id: &PolicyKeyId, protector_id: ProtectorId, key: WrappedPolicyKey) -> Result<()> {
-    let mut policy_map = load_policy_map(policy_id)?;
-    if policy_map.contains_key(&protector_id) {
+    let mut policy = load_policy_data(policy_id)?;
+    if policy.keys.contains_key(&protector_id) {
         bail!("Trying to add a duplicate protector for a policy");
     };
-    policy_map.insert(protector_id, key);
-    save_policy_map(policy_id, &policy_map)
+    policy.keys.insert(protector_id, key);
+    save_policy_data(policy_id, &policy)
 }
 
 /// Remove a protected policy key from the key store
 pub fn remove_protector_from_policy(policy_id: &PolicyKeyId, protector_id: &ProtectorId) -> Result<bool> {
-    let mut policy_map = load_policy_map(policy_id)?;
-    if policy_map.remove(protector_id).is_none() {
+    let mut policy = load_policy_data(policy_id)?;
+    if policy.keys.remove(protector_id).is_none() {
         return Ok(false);
     };
-    save_policy_map(policy_id, &policy_map).and(Ok(true))
+    save_policy_data(policy_id, &policy).and(Ok(true))
 }
 
 /// Removes a protector if it's not being used in any policy
 pub fn remove_protector_if_unused(protector_id: &ProtectorId) -> Result<bool> {
     for policy_id in policy_key_ids()? {
-        if load_or_create_policy_map(&policy_id)?.contains_key(protector_id) {
+        if load_or_create_policy_data(&policy_id)?.keys.contains_key(protector_id) {
             return Ok(false);
         }
     }
@@ -212,8 +211,8 @@ pub fn remove_protector_if_unused(protector_id: &ProtectorId) -> Result<bool> {
 pub fn get_protectors_for_policy(id: &PolicyKeyId) -> std::io::Result<(Vec<ProtectedPolicyKey>, Vec<UnusableProtector>)> {
     let mut prots = vec![];
     let mut unusable = vec![];
-    let policies = load_or_create_policy_map(id)?;
-    for (protector_id, policy_key) in policies {
+    let policy = load_or_create_policy_data(id)?;
+    for (protector_id, policy_key) in policy.keys {
         match load_protector(protector_id) {
             Ok(protector) => {
                 prots.push(ProtectedPolicyKey{ protector, policy_key });
@@ -276,11 +275,11 @@ mod tests {
 
         // Try loading a nonexistent policy
         let polid = PolicyKeyId::from_str("00000000000000000000000000000000")?;
-        let Err(err) = load_policy_map(&polid) else {
+        let Err(err) = load_policy_data(&polid) else {
             bail!("Found unexpected policy");
         };
         assert_eq!(err.kind(), ErrorKind::NotFound);
-        assert!(load_or_create_policy_map(&polid)?.is_empty());
+        assert!(load_or_create_policy_data(&polid)?.keys.is_empty());
 
         // Try removing a nonexistent policy
         let Err(err) = remove_policy(&polid) else {

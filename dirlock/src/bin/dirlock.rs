@@ -524,9 +524,9 @@ fn cmd_list_policies() -> Result<()> {
     println!("Policy                              Protectors");
     println!("----------------------------------------------------");
     for id in &policies {
-        match keystore::load_policy_map(id) {
-            Ok(map) => {
-                let prots = map.keys()
+        match dirlock::get_policy_by_id(id) {
+            Ok(p) => {
+                let prots = p.keys.keys()
                     .map(|prot_id| prot_id.to_string())
                     .collect::<Vec<String>>()
                     .join(", ");
@@ -594,7 +594,7 @@ fn cmd_remove_policy(args: &PolicyRemoveArgs) -> Result<()> {
         println!("You must specify the ID of the policy.");
         return cmd_list_policies();
     };
-    let _ = keystore::load_policy_map(id)?;
+    let _ = dirlock::get_policy_by_id(id)?;
     if ! args.force {
         print!("You are about to delete all data from the encryption\n\
                 policy {id}\n\
@@ -633,20 +633,20 @@ fn cmd_policy_add_protector(args: &PolicyAddProtectorArgs) -> Result<()> {
         bail!("You must specify the ID of the protector to add.");
     };
 
-    let policy_map = keystore::load_policy_map(policy_id)?;
-    if policy_map.contains_key(&protector.id) {
+    let policy = dirlock::get_policy_by_id(policy_id)?;
+    if policy.keys.contains_key(&protector.id) {
         bail!("Policy {policy_id} is already protected with protector {}", protector.id);
     }
 
     let unlock_with = if let Some(id) = args.unlock_with {
         dirlock::get_protector_by_id(id)?
-    } else if policy_map.len() == 1 {
-        let id = policy_map.keys().next().unwrap();
+    } else if policy.keys.len() == 1 {
+        let id = policy.keys.keys().next().unwrap();
         dirlock::get_protector_by_id(*id)?
     } else {
         bail!("You must specify the ID of the protector to unlock this policy.");
     };
-    let Some(wrapped_policy_key) = policy_map.get(&unlock_with.id) else {
+    let Some(wrapped_policy_key) = policy.keys.get(&unlock_with.id) else {
         bail!("Policy {policy_id} cannot be unlocked with protector {}", unlock_with.id);
     };
 
@@ -678,11 +678,11 @@ fn cmd_policy_remove_protector(args: &PolicyRemoveProtectorArgs) -> Result<()> {
         bail!("You must specify the ID of the protector to remove.");
     };
 
-    let policy_map = keystore::load_policy_map(policy_id)?;
-    if ! policy_map.contains_key(&protector.id) {
+    let policy = dirlock::get_policy_by_id(policy_id)?;
+    if ! policy.keys.contains_key(&protector.id) {
         bail!("Protector {} is not used in this policy", protector.id);
     }
-    if policy_map.len() == 1 {
+    if policy.keys.len() == 1 {
         bail!("Cannot remove the last protector. Use the 'policy remove' command instead.");
     }
 
@@ -720,7 +720,7 @@ fn cmd_remove_protector(args: &ProtectorRemoveArgs) -> Result<()> {
     } else {
         eprintln!("Cannot remove protector {id_str}, used by the following policies:");
         for policy_id in keystore::policy_key_ids()? {
-            if keystore::load_policy_map(&policy_id)?.contains_key(&protector.id) {
+            if dirlock::get_policy_by_id(&policy_id)?.keys.contains_key(&protector.id) {
                 println!("{policy_id}");
             }
         }
