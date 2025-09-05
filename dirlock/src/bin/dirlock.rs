@@ -321,8 +321,9 @@ fn display_tpm_information() -> Result<()> {
 fn display_protector_list() -> Result<()> {
     println!("{:16}    {:8}    Name", "Protector", "Type");
     println!("--------------------------------------");
-    for id in keystore::protector_ids()? {
-        match dirlock::get_protector_by_id(id) {
+    let ks = keystore();
+    for id in ks.protector_ids()? {
+        match ks.load_protector(id) {
             Ok(prot) => {
                 println!("{:16}    {:8}    {}", prot.id,
                          prot.get_type().to_string(),
@@ -365,7 +366,7 @@ fn get_dir_protector<'a>(dir: &'a EncryptedDir, prot: &Option<ProtectorId>) -> R
 }
 
 fn cmd_lock(args: &LockArgs) -> Result<()> {
-    let encrypted_dir = match dirlock::open_dir(&args.dir)? {
+    let encrypted_dir = match dirlock::open_dir(&args.dir, keystore())? {
         DirStatus::Encrypted(d) if d.key_status == fscrypt::KeyStatus::Absent =>
             bail!("The directory {} is already locked", args.dir.display()),
         DirStatus::Encrypted(d) => d,
@@ -391,7 +392,7 @@ fn cmd_lock(args: &LockArgs) -> Result<()> {
 }
 
 fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
-    let encrypted_dir = match dirlock::open_dir(&args.dir)? {
+    let encrypted_dir = match dirlock::open_dir(&args.dir, keystore())? {
         DirStatus::Encrypted(d) if d.key_status == fscrypt::KeyStatus::Present =>
             bail!("The directory {} is already unlocked", args.dir.display()),
         DirStatus::Encrypted(d) => d,
@@ -425,7 +426,7 @@ fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
 }
 
 fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
-    let encrypted_dir = match dirlock::open_dir(&args.dir)? {
+    let encrypted_dir = match dirlock::open_dir(&args.dir, keystore())? {
         DirStatus::Encrypted(d) => d,
         x => bail!("{}", x),
     };
@@ -435,7 +436,8 @@ fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
 }
 
 fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
-    match dirlock::open_dir(&args.dir)? {
+    let ks = keystore();
+    match dirlock::open_dir(&args.dir, ks)? {
         DirStatus::Unencrypted => (),
         x => bail!("{}", x),
     };
@@ -466,7 +468,7 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
 
     let protector_is_new = args.protector.is_none();
     let protector_key = if let Some(id) = args.protector {
-        let protector = dirlock::get_protector_by_id(id)?;
+        let protector = ks.load_protector(id)?;
         let pass = read_password_for_protector(&protector)?;
         let Some(protector_key) = protector.unwrap_key(pass.as_bytes())? else {
             bail!("Invalid {}", protector.get_type().credential_name());
@@ -487,17 +489,17 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
             .with_name(name)
             .build()?;
         let pass = read_new_password_for_protector(opts.get_type())?;
-        let (_, protector_key) = dirlock::create_protector(opts, pass.as_bytes(), CreateOpts::CreateAndSave)?;
+        let (_, protector_key) = dirlock::create_protector(opts, pass.as_bytes(), CreateOpts::CreateAndSave, ks)?;
         protector_key
     };
 
     let protector_id = protector_key.get_id();
     let keyid = if args.force && !empty_dir {
         println!("\nEncrypting the contents of {}, this can take a while", args.dir.display());
-        let k = dirlock::convert::convert_dir(&args.dir, protector_key)
+        let k = dirlock::convert::convert_dir(&args.dir, protector_key, ks)
             .inspect_err(|_| {
                 if protector_is_new {
-                    let _ = keystore::remove_protector_if_unused(&protector_id);
+                    let _ = ks.remove_protector_if_unused(&protector_id);
                 }
             })?;
         println!("\nThe directory is now encrypted. If this was a home directory\n\
@@ -506,10 +508,10 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
                   used and you can disable it with usermod -p '*' USERNAME\n");
         k
     } else {
-        dirlock::encrypt_dir(&args.dir, protector_key)
+        dirlock::encrypt_dir(&args.dir, protector_key, ks)
             .inspect_err(|_| {
                 if protector_is_new {
-                    let _ = keystore::remove_protector_if_unused(&protector_id);
+                    let _ = ks.remove_protector_if_unused(&protector_id);
                 }
             })?
     };
@@ -519,12 +521,13 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
 }
 
 fn cmd_list_policies() -> Result<()> {
-    let policies : Vec<_> = dirlock::keystore::policy_key_ids()?;
+    let ks = keystore();
+    let policies : Vec<_> = ks.policy_key_ids()?;
 
     println!("Policy                              Protectors");
     println!("----------------------------------------------------");
     for id in &policies {
-        match dirlock::get_policy_by_id(id) {
+        match ks.load_policy_data(id) {
             Ok(p) => {
                 let prots = p.keys.keys()
                     .map(|prot_id| prot_id.to_string())
@@ -577,12 +580,13 @@ fn cmd_create_policy(args: &PolicyCreateArgs) -> Result<()> {
         println!("You must specify the ID of the protector.");
         return display_protector_list()
     };
-    let protector = dirlock::get_protector_by_id(id)?;
+    let ks = keystore();
+    let protector = ks.load_protector(id)?;
     let pass = read_password_for_protector(&protector)?;
     let Some(protector_key) = protector.unwrap_key(pass.as_bytes())? else {
         bail!("Invalid {} for protector {id}", protector.get_type().credential_name());
     };
-    let policy = dirlock::create_policy_data(protector_key, None, CreateOpts::CreateAndSave)?;
+    let policy = dirlock::create_policy_data(protector_key, None, CreateOpts::CreateAndSave, ks)?;
     println!("Created encryption policy {}", policy.id);
     Ok(())
 }
@@ -592,7 +596,8 @@ fn cmd_remove_policy(args: &PolicyRemoveArgs) -> Result<()> {
         println!("You must specify the ID of the policy.");
         return cmd_list_policies();
     };
-    let _ = dirlock::get_policy_by_id(id)?;
+    let ks = keystore();
+    let _ = ks.load_policy_data(id)?;
     if ! args.force {
         print!("You are about to delete all data from the encryption\n\
                 policy {id}\n\
@@ -616,7 +621,7 @@ fn cmd_remove_policy(args: &PolicyRemoveArgs) -> Result<()> {
             }
         }
     }
-    dirlock::remove_policy_data(id)?;
+    ks.remove_policy(id)?;
     println!("Encryption policy {id} removed successfully");
     Ok(())
 }
@@ -625,22 +630,23 @@ fn cmd_policy_add_protector(args: &PolicyAddProtectorArgs) -> Result<()> {
     let Some(policy_id) = &args.policy else {
         bail!("You must specify the ID of the encryption policy.");
     };
+    let ks = keystore();
     let protector = if let Some(id) = &args.protector {
-        dirlock::get_protector_by_id(*id)?
+        ks.load_protector(*id)?
     } else {
         bail!("You must specify the ID of the protector to add.");
     };
 
-    let mut policy = dirlock::get_policy_by_id(policy_id)?;
+    let mut policy = ks.load_policy_data(policy_id)?;
     if policy.keys.contains_key(&protector.id) {
         bail!("Policy {policy_id} is already protected with protector {}", protector.id);
     }
 
     let unlock_with = if let Some(id) = args.unlock_with {
-        dirlock::get_protector_by_id(id)?
+        ks.load_protector(id)?
     } else if policy.keys.len() == 1 {
         let id = policy.keys.keys().next().unwrap();
-        dirlock::get_protector_by_id(*id)?
+        ks.load_protector(*id)?
     } else {
         bail!("You must specify the ID of the protector to unlock this policy.");
     };
@@ -661,7 +667,7 @@ fn cmd_policy_add_protector(args: &PolicyAddProtectorArgs) -> Result<()> {
     };
 
     policy.add_protector(&protector_key, policy_key)?;
-    dirlock::save_policy_data(&mut policy)?;
+    ks.save_policy_data(&mut policy)?;
     println!("Protector {} added to policy {policy_id}", protector.id);
 
     Ok(())
@@ -671,13 +677,14 @@ fn cmd_policy_remove_protector(args: &PolicyRemoveProtectorArgs) -> Result<()> {
     let Some(policy_id) = &args.policy else {
         bail!("You must specify the ID of the encryption policy.");
     };
+    let ks = keystore();
     let protector = if let Some(id) = args.protector {
-        dirlock::get_protector_by_id(id)?
+        ks.load_protector(id)?
     } else {
         bail!("You must specify the ID of the protector to remove.");
     };
 
-    let mut policy = dirlock::get_policy_by_id(policy_id)?;
+    let mut policy = ks.load_policy_data(policy_id)?;
     if ! policy.keys.contains_key(&protector.id) {
         bail!("Protector {} is not used in this policy", protector.id);
     }
@@ -686,7 +693,7 @@ fn cmd_policy_remove_protector(args: &PolicyRemoveProtectorArgs) -> Result<()> {
     }
 
     policy.remove_protector(&protector.id)?;
-    dirlock::save_policy_data(&mut policy)?;
+    ks.save_policy_data(&mut policy)?;
     println!("Protector {} remove from policy {policy_id}", protector.id);
 
     Ok(())
@@ -701,7 +708,8 @@ fn cmd_create_protector(args: &ProtectorCreateArgs) -> Result<()> {
         .build()?;
 
     let pass = read_new_password_for_protector(opts.get_type())?;
-    let (protector, _) = dirlock::create_protector(opts, pass.as_bytes(), CreateOpts::CreateAndSave)?;
+    let ks = keystore();
+    let (protector, _) = dirlock::create_protector(opts, pass.as_bytes(), CreateOpts::CreateAndSave, ks)?;
 
     println!("Created protector {}", protector.id);
 
@@ -714,13 +722,14 @@ fn cmd_remove_protector(args: &ProtectorRemoveArgs) -> Result<()> {
         return display_protector_list()
     };
     let id_str = id.to_string();
-    let protector = dirlock::get_protector_by_id(id)?;
-    if keystore::remove_protector_if_unused(&protector.id)? {
+    let ks = keystore();
+    let protector = ks.load_protector(id)?;
+    if ks.remove_protector_if_unused(&protector.id)? {
         println!("Protector {id_str} removed");
     } else {
         eprintln!("Cannot remove protector {id_str}, used by the following policies:");
-        for policy_id in keystore::policy_key_ids()? {
-            if dirlock::get_policy_by_id(&policy_id)?.keys.contains_key(&protector.id) {
+        for policy_id in ks.policy_key_ids()? {
+            if ks.load_policy_data(&policy_id)?.keys.contains_key(&protector.id) {
                 println!("{policy_id}");
             }
         }
@@ -734,7 +743,8 @@ fn do_change_verify_protector_password(protector_id: Option<ProtectorId>, verify
         println!("You must specify the ID of the protector.");
         return display_protector_list()
     };
-    let mut protector = dirlock::get_protector_by_id(id)?;
+    let ks = keystore();
+    let mut protector = ks.load_protector(id)?;
     let pass = read_password_for_protector(&protector)?;
     let Some(protector_key) = protector.unwrap_key(pass.as_bytes())? else {
         bail!("Invalid {}", protector.get_type().credential_name());
@@ -744,7 +754,7 @@ fn do_change_verify_protector_password(protector_id: Option<ProtectorId>, verify
         if pass == npass {
             bail!("The old and new passwords are identical");
         }
-        dirlock::wrap_and_save_protector_key(&mut protector, protector_key, npass.as_bytes())?;
+        dirlock::wrap_and_save_protector_key(&mut protector, protector_key, npass.as_bytes(), ks)?;
     }
     Ok(())
 }
@@ -759,7 +769,7 @@ fn cmd_change_protector_pass(args: &ProtectorChangePassArgs) -> Result<()> {
 
 fn cmd_export_master_key(args: &ExportMasterKeyArgs) -> Result<()> {
     use base64::prelude::*;
-    let encrypted_dir = match dirlock::open_dir(&args.dir)? {
+    let encrypted_dir = match dirlock::open_dir(&args.dir, keystore())? {
         DirStatus::Encrypted(d) => d,
         x => bail!("{x}"),
     };
@@ -804,7 +814,8 @@ fn cmd_import_master_key() -> Result<()> {
 
     // Stop if there is already a protector available for this key
     // (unless the protector file is missing).
-    let (protectors, unusable) = keystore::get_protectors_for_policy(&keyid)?;
+    let ks = keystore();
+    let (protectors, unusable) = ks.get_protectors_for_policy(&keyid)?;
     if ! protectors.is_empty() ||
         unusable.iter().any(|p| p.err.kind() != ErrorKind::NotFound) {
         bail!("This key has already been imported (policy {keyid})");
@@ -815,8 +826,8 @@ fn cmd_import_master_key() -> Result<()> {
         .with_type(Some(ProtectorType::Password))
         .build()?;
     let pass = read_new_password_for_protector(opts.get_type())?;
-    let (_, protector_key) = dirlock::create_protector(opts, pass.as_bytes(), CreateOpts::CreateAndSave)?;
-    let _  = dirlock::create_policy_data(protector_key, Some(master_key), CreateOpts::CreateAndSave)?;
+    let (_, protector_key) = dirlock::create_protector(opts, pass.as_bytes(), CreateOpts::CreateAndSave, ks)?;
+    let _  = dirlock::create_policy_data(protector_key, Some(master_key), CreateOpts::CreateAndSave, ks)?;
     println!("Imported key for policy {keyid}");
     Ok(())
 }
@@ -844,7 +855,8 @@ fn cmd_tpm2_test() -> Result<()> {
         .with_name(String::from(pass))
         .with_type(Some(ProtectorType::Tpm2))
         .build()?;
-    let (protector, protector_key) = dirlock::create_protector(opts, pass.as_bytes(), CreateOpts::CreateOnly)?;
+    let (protector, protector_key) =
+        dirlock::create_protector(opts, pass.as_bytes(), CreateOpts::CreateOnly, keystore())?;
     let wrapped = WrappedPolicyKey::new(policy_key, &protector_key);
     match protector.unwrap_policy_key(&wrapped, pass.as_bytes()) {
         Ok(Some(k)) if *k.secret() == raw_key => (),
@@ -873,8 +885,9 @@ fn cmd_status(args: &StatusArgs) -> Result<()> {
         return Ok(());
     };
 
+    let ks = keystore();
     if args.brief {
-        let s = match dirlock::open_dir(dir)? {
+        let s = match dirlock::open_dir(dir, ks)? {
             DirStatus::Unencrypted => "unencrypted",
             DirStatus::Unsupported => "unsupported",
             DirStatus::KeyMissing => "key-missing",
@@ -888,7 +901,7 @@ fn cmd_status(args: &StatusArgs) -> Result<()> {
         return Ok(());
     }
 
-    let encrypted_dir = match dirlock::open_dir(dir)? {
+    let encrypted_dir = match dirlock::open_dir(dir, ks)? {
         DirStatus::Encrypted(d) => d,
         x => {
             println!("{x}");

@@ -9,12 +9,13 @@ pub mod convert;
 pub(crate) mod crypto;
 pub mod fscrypt;
 pub(crate) mod kdf;
-pub mod keystore;
+mod keystore;
 pub mod policy;
 pub mod protector;
 pub mod util;
 
 use anyhow::{anyhow, bail, Result};
+use keystore::Keystore;
 use fscrypt::{Policy, PolicyKeyId, RemoveKeyUsers, RemovalStatusFlags};
 use policy::{
     PolicyData,
@@ -76,7 +77,7 @@ pub struct EncryptedDir {
 /// If [`DirStatus::Encrypted`] is returned it implies that:
 /// 1. The directory is encrypted with a supported fscrypt policy (v2).
 /// 2. The keystore contains a protector for that policy.
-pub fn open_dir(path: &Path) -> Result<DirStatus> {
+pub fn open_dir(path: &Path, ks: &Keystore) -> Result<DirStatus> {
     let policy = match fscrypt::get_policy(path).
         map_err(|e| anyhow!("Failed to get encryption policy: {e}"))? {
         Some(Policy::V2(p)) => p,
@@ -84,7 +85,7 @@ pub fn open_dir(path: &Path) -> Result<DirStatus> {
         None    => return Ok(DirStatus::Unencrypted),
     };
 
-    let (protectors, unusable) = keystore::get_protectors_for_policy(&policy.keyid)?;
+    let (protectors, unusable) = ks.get_protectors_for_policy(&policy.keyid)?;
     if protectors.is_empty() {
         return Ok(DirStatus::KeyMissing);
     };
@@ -98,9 +99,9 @@ pub fn open_dir(path: &Path) -> Result<DirStatus> {
 /// Convenience function to call `open_dir` on a user's home directory
 ///
 /// Returns None if the user does not exist.
-pub fn open_home(user: &str) -> Result<Option<DirStatus>> {
+pub fn open_home(user: &str, ks: &Keystore) -> Result<Option<DirStatus>> {
     if let Some(dir) = util::get_homedir(user)? {
-        let dir = open_dir(&dir)?;
+        let dir = open_dir(&dir, ks)?;
         Ok(Some(dir))
     } else {
         Ok(None)
@@ -173,8 +174,8 @@ impl EncryptedDir {
 
 
 /// Encrypts a directory
-pub fn encrypt_dir(path: &Path, protector_key: ProtectorKey) -> Result<PolicyKeyId> {
-    match open_dir(path)? {
+pub fn encrypt_dir(path: &Path, protector_key: ProtectorKey, ks: &Keystore) -> Result<PolicyKeyId> {
+    match open_dir(path, ks)? {
         DirStatus::Unencrypted => (),
         x => bail!("{}", x),
     };
@@ -186,7 +187,7 @@ pub fn encrypt_dir(path: &Path, protector_key: ProtectorKey) -> Result<PolicyKey
     // Generate a master key
     let master_key = PolicyKey::new_random();
     let policy = create_policy_data(protector_key, Some(master_key.clone()),
-                                    CreateOpts::CreateAndSave)?;
+                                    CreateOpts::CreateAndSave, ks)?;
 
     // Add the key to the kernel and encrypt the directory
     fscrypt::add_key(path, master_key.secret())
@@ -202,21 +203,11 @@ pub fn encrypt_dir(path: &Path, protector_key: ProtectorKey) -> Result<PolicyKey
         .map_err(|e| {
             let user = RemoveKeyUsers::CurrentUser;
             let _ = fscrypt::remove_key(path, &policy.id, user);
-            let _ = remove_policy_data(&policy.id);
+            let _ = ks.remove_policy(&policy.id);
             anyhow!("Failed to encrypt directory: {e}")
         })?;
 
     Ok(policy.id)
-}
-
-/// Get an existing protector
-pub fn get_protector_by_id(id: ProtectorId) -> std::io::Result<Protector> {
-    keystore::load_protector(id)
-}
-
-/// Get an existing policy
-pub fn get_policy_by_id(id: &PolicyKeyId) -> std::io::Result<PolicyData> {
-    keystore::load_policy_data(id)
 }
 
 /// Whether to save a protector or policy when creating it
@@ -226,19 +217,21 @@ pub enum CreateOpts {
 }
 
 /// Create a new protector (without saving it to disk)
-pub fn create_protector(opts: ProtectorOpts, pass: &[u8], create: CreateOpts) -> Result<(Protector, ProtectorKey)> {
+pub fn create_protector(opts: ProtectorOpts, pass: &[u8],
+                        create: CreateOpts, ks: &Keystore) -> Result<(Protector, ProtectorKey)> {
     let protector_key = ProtectorKey::new_random();
     let mut protector = Protector::new(opts, protector_key.clone(), pass)?;
     if matches!(create, CreateOpts::CreateAndSave) {
-        keystore::save_protector(&mut protector)?;
+        ks.save_protector(&mut protector)?;
     }
     Ok((protector, protector_key))
 }
 
 /// Change the password of `protector` from `pass` to `newpass` and save it to disk
-pub fn update_protector_password(protector: &mut Protector, pass: &[u8], newpass: &[u8]) -> Result<bool> {
+pub fn update_protector_password(protector: &mut Protector, pass: &[u8],
+                                 newpass: &[u8], ks: &Keystore) -> Result<bool> {
     if let Some(protector_key) = protector.unwrap_key(pass)? {
-        wrap_and_save_protector_key(protector, protector_key, newpass)?;
+        wrap_and_save_protector_key(protector, protector_key, newpass, ks)?;
         Ok(true)
     } else {
         Ok(false)
@@ -246,32 +239,27 @@ pub fn update_protector_password(protector: &mut Protector, pass: &[u8], newpass
 }
 
 /// Update `protector` (wrapping its key again with a new password) and save it to disk
-pub fn wrap_and_save_protector_key(protector: &mut Protector, key: ProtectorKey, newpass: &[u8]) -> Result<()> {
+pub fn wrap_and_save_protector_key(protector: &mut Protector, key: ProtectorKey,
+                                   newpass: &[u8], ks: &Keystore) -> Result<()> {
     protector.wrap_key(key, newpass)?;
-    keystore::save_protector(protector)
+    ks.save_protector(protector)
 }
 
 /// Create a new policy with the given key (or a random one if not provided).
 pub fn create_policy_data(protector_key: ProtectorKey, policy_key: Option<PolicyKey>,
-                          create: CreateOpts) -> Result<PolicyData> {
+                          create: CreateOpts, ks: &Keystore) -> Result<PolicyData> {
     let master_key = policy_key.unwrap_or_else(PolicyKey::new_random);
     let mut policy = PolicyData::new(master_key.get_id());
     policy.add_protector(&protector_key, master_key).unwrap(); // This must always succeed
     if matches!(create, CreateOpts::CreateAndSave) {
-        save_policy_data(&mut policy)?;
+        ks.save_policy_data(&mut policy)?;
     }
     Ok(policy)
 }
 
-/// Saves the policy data to disk.
-pub fn save_policy_data(policy: &mut PolicyData) -> Result<()> {
-    keystore::save_policy_data(policy)
-}
-
-/// Removes the policy data permanently from disk.
-pub fn remove_policy_data(id: &PolicyKeyId) -> Result<()> {
-    keystore::remove_policy(id)?;
-    Ok(())
+/// Get the default [`Keystore`]
+pub fn keystore() -> &'static keystore::Keystore {
+    Keystore::default()
 }
 
 /// Initialize the dirlock library

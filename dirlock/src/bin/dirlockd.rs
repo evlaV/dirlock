@@ -45,7 +45,7 @@ fn get_dbus_protector_data(p: &Protector) -> DbusProtectorData {
 
 /// Lock a directory
 fn do_lock_dir(dir: &Path) -> anyhow::Result<()> {
-    let encrypted_dir = match dirlock::open_dir(dir) {
+    let encrypted_dir = match dirlock::open_dir(dir, keystore()) {
         Ok(DirStatus::Encrypted(d)) if d.key_status == fscrypt::KeyStatus::Absent =>
             Err(anyhow!("Already locked")),
         Ok(DirStatus::Encrypted(d)) => Ok(d),
@@ -65,7 +65,7 @@ fn do_unlock_dir(
 ) -> anyhow::Result<()> {
     let protector_id = ProtectorId::from_str(protector_id)?;
 
-    let encrypted_dir = match dirlock::open_dir(dir) {
+    let encrypted_dir = match dirlock::open_dir(dir, keystore()) {
         Ok(DirStatus::Encrypted(d)) if d.key_status == fscrypt::KeyStatus::Present =>
             Err(anyhow!("Already unlocked")),
         Ok(DirStatus::Encrypted(d)) => Ok(d),
@@ -86,7 +86,7 @@ fn do_verify_protector_password(
     protector_id: &str,
 ) -> anyhow::Result<bool> {
     ProtectorId::from_str(protector_id)
-        .and_then(|id| dirlock::get_protector_by_id(id).map_err(|e| e.into()))
+        .and_then(|id| keystore().load_protector(id).map_err(|e| e.into()))
         .and_then(|prot| prot.unwrap_key(pass.as_bytes()))
         .map(|key| key.is_some())
 }
@@ -101,12 +101,14 @@ fn do_change_protector_password(
         bail!("The old and new passwords are identical");
     }
 
+    let ks = keystore();
+
     let mut prot = ProtectorId::from_str(protector_id)
-        .and_then(|id| dirlock::get_protector_by_id(id).map_err(|e| e.into()))?;
+        .and_then(|id| ks.load_protector(id).map_err(|e| e.into()))?;
 
     prot.unwrap_key(pass.as_bytes())
         .and_then(|k| k.ok_or_else(|| anyhow!("Invalid password")))
-        .and_then(|key| dirlock::wrap_and_save_protector_key(&mut prot, key, newpass.as_bytes()))
+        .and_then(|key| dirlock::wrap_and_save_protector_key(&mut prot, key, newpass.as_bytes(), ks))
 }
 
 /// Get the encryption status of a directory
@@ -116,7 +118,7 @@ fn do_get_dir_status(
     use dirlock::DirStatus::*;
     use dirlock::fscrypt::KeyStatus::*;
 
-    let dir_status = dirlock::open_dir(dir)?;
+    let dir_status = dirlock::open_dir(dir, keystore())?;
 
     // TODO detect when the filesystem does not support encryption
     let status = match &dir_status {
@@ -148,10 +150,11 @@ fn do_encrypt_dir(
     pass: &str,
     protector_id: &str,
 ) -> anyhow::Result<String> {
+    let ks = keystore();
     let protector_id = ProtectorId::from_str(protector_id)?;
-    let protector = dirlock::get_protector_by_id(protector_id)?;
+    let protector = ks.load_protector(protector_id)?;
 
-    match dirlock::open_dir(dir)? {
+    match dirlock::open_dir(dir, ks)? {
         DirStatus::Unencrypted => (),
         x => bail!("{x}"),
     }
@@ -161,7 +164,7 @@ fn do_encrypt_dir(
         None => bail!("Authentication failed"),
     };
 
-    let keyid = dirlock::encrypt_dir(dir, key)?;
+    let keyid = dirlock::encrypt_dir(dir, key, ks)?;
     Ok(keyid.to_string())
 }
 
@@ -180,7 +183,7 @@ fn do_create_protector(
         .build()
         .and_then(|opts| {
             let create = dirlock::CreateOpts::CreateAndSave;
-            dirlock::create_protector(opts, pass.as_bytes(), create)
+            dirlock::create_protector(opts, pass.as_bytes(), create, keystore())
         })
         .map_err(|e| anyhow!("Error creating protector: {e}"))?;
 
@@ -190,7 +193,7 @@ fn do_create_protector(
 /// Remove a protector. It must be unused.
 fn do_remove_protector(protector_id: &str) -> anyhow::Result<()> {
     let id = ProtectorId::from_str(protector_id)?;
-    if ! keystore::remove_protector_if_unused(&id)? {
+    if ! keystore().remove_protector_if_unused(&id)? {
         bail!("Protector {protector_id} is still being used");
     }
     Ok(())
@@ -198,12 +201,13 @@ fn do_remove_protector(protector_id: &str) -> anyhow::Result<()> {
 
 /// Get all existing protectors
 fn do_get_protectors() -> anyhow::Result<Vec<DbusProtectorData>> {
-    let prot_ids = keystore::protector_ids()
+    let ks = keystore();
+    let prot_ids = ks.protector_ids()
         .map_err(|e| anyhow!("Error getting list of protectors: {e}"))?;
 
     let mut prots = vec![];
     for id in prot_ids {
-        match dirlock::get_protector_by_id(id) {
+        match ks.load_protector(id) {
             Ok(prot) => prots.push(prot),
             _ => bail!("Error reading protector {id}"),
         }
@@ -220,13 +224,14 @@ fn do_add_protector_to_policy(
     unlock_with: &str,
     unlock_with_pass: &str,
 ) -> anyhow::Result<()> {
+    let ks = keystore();
     let policy_id = PolicyKeyId::from_str(policy)?;
     let protector = ProtectorId::from_str(protector)
-        .and_then(|id| dirlock::get_protector_by_id(id).map_err(|e| e.into()))?;
+        .and_then(|id| ks.load_protector(id).map_err(|e| e.into()))?;
     let unlock_with = ProtectorId::from_str(unlock_with)
-        .and_then(|id| dirlock::get_protector_by_id(id).map_err(|e| e.into()))?;
+        .and_then(|id| ks.load_protector(id).map_err(|e| e.into()))?;
 
-    let mut policy = dirlock::get_policy_by_id(&policy_id)?;
+    let mut policy = ks.load_policy_data(&policy_id)?;
     let Some(wrapped_policy_key) = policy.keys.get(&unlock_with.id) else {
         bail!("Policy {policy_id} cannot be unlocked with protector {}", unlock_with.id);
     };
@@ -240,7 +245,7 @@ fn do_add_protector_to_policy(
     };
 
     policy.add_protector(&protector_key, policy_key)?;
-    dirlock::save_policy_data(&mut policy)?;
+    keystore().save_policy_data(&mut policy)?;
 
     Ok(())
 }
@@ -252,7 +257,8 @@ fn do_remove_protector_from_policy(
 ) -> anyhow::Result<()> {
     let policy_id = PolicyKeyId::from_str(policy)?;
     let protector_id = ProtectorId::from_str(protector)?;
-    let mut policy = dirlock::get_policy_by_id(&policy_id)?;
+    let ks = keystore();
+    let mut policy = ks.load_policy_data(&policy_id)?;
     if ! policy.keys.contains_key(&protector_id) {
         bail!("Protector {} is not used in this policy", protector_id);
     }
@@ -260,7 +266,7 @@ fn do_remove_protector_from_policy(
         bail!("Cannot remove the last protector");
     }
     policy.remove_protector(&protector_id)?;
-    dirlock::save_policy_data(&mut policy)?;
+    ks.save_policy_data(&mut policy)?;
 
     Ok(())
 }

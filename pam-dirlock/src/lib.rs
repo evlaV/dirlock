@@ -7,7 +7,7 @@
 mod pamlib;
 
 use pamsm::{LogLvl, Pam, PamError, PamFlags, PamLibExt, PamMsgStyle, PamServiceModule, pam_module};
-use dirlock::{DirStatus, EncryptedDir, protector::ProtectorKey};
+use dirlock::{DirStatus, EncryptedDir, keystore, protector::ProtectorKey};
 use std::ffi::c_int;
 
 const PAM_UPDATE_AUTHTOK : c_int = 0x2000;
@@ -77,7 +77,7 @@ fn get_user(pamh: &Pam) -> Result<&str, PamError> {
 /// If it's not encrypted by dirlock then return PAM_USER_UNKNOWN so
 /// other PAM modules can try to handle it.
 fn get_home_data(user: &str) -> Result<EncryptedDir, PamError> {
-    match dirlock::open_home(user) {
+    match dirlock::open_home(user, keystore()) {
         Ok(Some(DirStatus::Encrypted(d))) => Ok(d),
         Ok(Some(_)) => Err(PamError::USER_UNKNOWN), // The home directory is not encrypted with dirlock
         Ok(None)    => Err(PamError::USER_UNKNOWN), // The home directory does not exist
@@ -211,7 +211,7 @@ fn do_chauthtok(pamh: Pam, flags: PamFlags) -> Result<(), PamError> {
 
     // Change the password
     for p in prots {
-        match dirlock::update_protector_password(&mut p.protector, pass, newpass) {
+        match dirlock::update_protector_password(&mut p.protector, pass, newpass, keystore()) {
             Ok(false) => (),
             Ok(true) => {
                 let protid = &p.protector.id;

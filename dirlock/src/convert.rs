@@ -15,6 +15,7 @@ use tempdir::TempDir;
 use walkdir::WalkDir;
 
 use crate::{
+    Keystore,
     fscrypt,
     protector::ProtectorKey,
 };
@@ -54,7 +55,7 @@ pub fn check_can_convert_dir(dir: &Path) -> Result<()> {
 }
 
 /// Convert an unencrypted directory into an encrypted one
-pub fn convert_dir(dir: &Path, protector_key: ProtectorKey) -> Result<fscrypt::PolicyKeyId> {
+pub fn convert_dir(dir: &Path, protector_key: ProtectorKey, ks: &Keystore) -> Result<fscrypt::PolicyKeyId> {
     let dir = dir.canonicalize()?;
     let parent = dir.parent().unwrap_or(&dir);
 
@@ -69,7 +70,7 @@ pub fn convert_dir(dir: &Path, protector_key: ProtectorKey) -> Result<fscrypt::P
     // Create an encrypted directory inside the work dir
     let workdir_e = workdir.join("encrypted");
     fs::create_dir(&workdir_e)?;
-    let keyid = crate::encrypt_dir(&workdir_e, protector_key)?;
+    let keyid = crate::encrypt_dir(&workdir_e, protector_key, ks)?;
 
     // Copy the source directory inside the encrypted directory.
     // This will encrypt the data in the process.
