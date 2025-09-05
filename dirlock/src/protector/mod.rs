@@ -146,6 +146,7 @@ impl ProtectorType {
 pub struct Protector {
     pub id: ProtectorId,
     pub(crate) data: ProtectorData,
+    pub(crate) is_new: bool,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -160,14 +161,20 @@ pub(crate) enum ProtectorData {
 }
 
 impl Protector {
-    pub fn new(opts: ProtectorOpts, raw_key: ProtectorKey, pass: &[u8]) -> Result<Self> {
+    /// Creates a new protector from a [`ProtectorKey`] and a password.
+    pub(crate) fn new(opts: ProtectorOpts, raw_key: ProtectorKey, pass: &[u8]) -> Result<Self> {
         let id = raw_key.get_id();
         let data = match opts {
             ProtectorOpts::Password(pw_opts) => ProtectorData::Password(PasswordProtector::new(pw_opts,raw_key, pass)),
             ProtectorOpts::Tpm2(tpm2_opts) => ProtectorData::Tpm2(Tpm2Protector::new(tpm2_opts, raw_key, pass)?),
             ProtectorOpts::Fido2(fido2_opts) => ProtectorData::Fido2(Fido2Protector::new(fido2_opts, raw_key, pass)?),
         };
-        Ok(Protector { id, data })
+        Ok(Protector { id, data, is_new: true })
+    }
+
+    /// Creates a new protector from existing data (loaded from disk).
+    pub(crate) fn from_data(id: ProtectorId, data: ProtectorData) -> Self {
+        Protector { id, data, is_new: false }
     }
 
     /// Unwraps this protector's [`ProtectorKey`] using a password

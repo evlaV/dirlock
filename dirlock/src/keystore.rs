@@ -94,27 +94,19 @@ pub(crate) fn load_protector(id: ProtectorId) -> std::io::Result<Protector> {
     }
 
     serde_json::from_reader(fs::File::open(protector_file)?)
-        .map(|data| Protector { id, data })
+        .map(|data| Protector::from_data(id, data))
         .map_err(|e| std::io::Error::new(ErrorKind::InvalidData, e))
 }
 
-/// Whether to overwrite an existing protector
-pub enum SaveProtector {
-    /// Add a new protector (don't overwrite an existing one)
-    AddNew,
-    /// Update an existing protector
-    UpdateExisting,
-}
-
 /// Save a protector to disk
-pub fn save_protector(prot: &Protector, save: SaveProtector) -> Result<()> {
+pub fn save_protector(prot: &mut Protector) -> Result<()> {
     let path = &keystore_dirs().protectors;
     fs::create_dir_all(path)
         .map_err(|e| anyhow!("Failed to create {}: {e}", path.display()))?;
     let filename = path.join(prot.id.to_string());
-    match (filename.exists(), save) {
-        (true, SaveProtector::AddNew) => bail!("Trying to overwrite an existing protector"),
-        (false, SaveProtector::UpdateExisting) => bail!("Trying to update a nonexistent protector"),
+    match (filename.exists(), prot.is_new) {
+        (true, true) => bail!("Trying to overwrite an existing protector"),
+        (false, false) => bail!("Trying to update a nonexistent protector"),
         _ => (),
     }
     let mut file = SafeFile::create(&filename)
@@ -122,6 +114,7 @@ pub fn save_protector(prot: &Protector, save: SaveProtector) -> Result<()> {
     serde_json::to_writer_pretty(&mut file, &prot.data)?;
     file.write_all(b"\n")?;
     file.commit()?;
+    prot.is_new = false;
     Ok(())
 }
 

@@ -230,9 +230,9 @@ pub enum CreateOpts {
 /// Create a new protector (without saving it to disk)
 pub fn create_protector(opts: ProtectorOpts, pass: &[u8], create: CreateOpts) -> Result<(Protector, ProtectorKey)> {
     let protector_key = ProtectorKey::new_random();
-    let protector = Protector::new(opts, protector_key.clone(), pass)?;
+    let mut protector = Protector::new(opts, protector_key.clone(), pass)?;
     if matches!(create, CreateOpts::CreateAndSave) {
-        keystore::save_protector(&protector, keystore::SaveProtector::AddNew)?;
+        keystore::save_protector(&mut protector)?;
     }
     Ok((protector, protector_key))
 }
@@ -250,7 +250,7 @@ pub fn update_protector_password(protector: &mut Protector, pass: &[u8], newpass
 /// Update `protector` (wrapping its key again with a new password) and save it to disk
 pub fn wrap_and_save_protector_key(protector: &mut Protector, key: ProtectorKey, newpass: &[u8]) -> Result<()> {
     protector.wrap_key(key, newpass)?;
-    keystore::save_protector(protector, keystore::SaveProtector::UpdateExisting)
+    keystore::save_protector(protector)
 }
 
 /// Create a new policy with the given key (or a random one if not provided).
