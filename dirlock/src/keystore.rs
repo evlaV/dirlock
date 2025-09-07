@@ -11,12 +11,13 @@ use std::{
     fs,
     io::ErrorKind,
     io::Write,
-    path::{Path, PathBuf},
+    path::PathBuf,
     sync::OnceLock,
 };
 use crate::{
     ProtectedPolicyKey,
     UnusableProtector,
+    config::Config,
     fscrypt::PolicyKeyId,
     policy::PolicyData,
     protector::{
@@ -25,10 +26,6 @@ use crate::{
     },
     util::SafeFile,
 };
-
-// If this variable is set use this keystore dir instead of the default one
-const KEYSTORE_DIR_ENV_VAR : &str = "DIRLOCK_KEYSTORE";
-const DEFAULT_KEYSTORE_DIR : &str = "/var/lib/dirlock";
 
 struct KeystoreDirs {
     policies: PathBuf,
@@ -39,10 +36,9 @@ struct KeystoreDirs {
 fn keystore_dirs() -> &'static KeystoreDirs {
     static DIR_NAME : OnceLock<KeystoreDirs> = OnceLock::new();
     DIR_NAME.get_or_init(|| {
-        let dir = std::env::var(KEYSTORE_DIR_ENV_VAR)
-            .unwrap_or(String::from(DEFAULT_KEYSTORE_DIR));
-        let policies = Path::new(&dir).join("policies");
-        let protectors = Path::new(&dir).join("protectors");
+        let dir = Config::keystore_dir();
+        let policies = dir.join("policies");
+        let protectors = dir.join("protectors");
         KeystoreDirs{ policies, protectors }
     })
 }

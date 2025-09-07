@@ -9,24 +9,31 @@ use serde::Deserialize;
 use std::{
     fs::File,
     io::{Error, ErrorKind},
+    path::Path,
     path::PathBuf,
     sync::OnceLock,
 };
 
 const CONFIG_FILE_PATH:   &str = "/etc/dirlock.conf";
 const DEFAULT_TPM2_TCTI: &str = "device:/dev/tpm0";
+// If this variable is set use this keystore dir instead of the default one
+const KEYSTORE_DIR_ENV_VAR : &str = "DIRLOCK_KEYSTORE";
+const DEFAULT_KEYSTORE_DIR : &str = "/var/lib/dirlock";
 
 #[derive(Deserialize)]
 pub struct Config {
     #[serde(default = "default_tpm2_tcti")]
     #[allow(dead_code)]
     tpm2_tcti: String,
+    #[serde(default = "default_keystore_dir")]
+    keystore_dir: PathBuf,
 }
 
 impl Default for Config {
     fn default() -> Config {
         Config {
             tpm2_tcti: default_tpm2_tcti(),
+            keystore_dir: default_keystore_dir(),
         }
     }
 }
@@ -35,6 +42,12 @@ fn default_tpm2_tcti() -> String {
     std::env::var("TPM2TOOLS_TCTI")
         .or_else(|_| std::env::var("TCTI"))
         .unwrap_or(String::from(DEFAULT_TPM2_TCTI))
+}
+
+fn default_keystore_dir() -> PathBuf {
+    std::env::var(KEYSTORE_DIR_ENV_VAR)
+        .unwrap_or(String::from(DEFAULT_KEYSTORE_DIR))
+        .into()
 }
 
 impl Config {
@@ -55,6 +68,10 @@ impl Config {
     #[allow(dead_code)]
     pub fn tpm2_tcti() -> &'static str {
         Config::get().unwrap().tpm2_tcti.as_str()
+    }
+
+    pub fn keystore_dir() -> &'static Path {
+        Config::get().unwrap().keystore_dir.as_path()
     }
 
     pub fn check() -> Result<()> {
