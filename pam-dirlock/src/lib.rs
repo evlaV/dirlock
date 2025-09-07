@@ -55,6 +55,15 @@ fn log_info(pamh: &Pam, msg: impl AsRef<str>) {
     let _ = pamh.syslog(LogLvl::INFO, msg.as_ref());
 }
 
+fn pam_init(pamh: &Pam) -> bool {
+    if let Err(e) = dirlock::init() {
+        log_warning(pamh, format!("{e}"));
+        false
+    } else {
+        true
+    }
+}
+
 /// Get the user name and check that it's an ASCII string
 fn get_user(pamh: &Pam) -> Result<&str, PamError> {
     match pamh.get_user(None)?.ok_or(PamError::AUTH_ERR)?.to_str() {
@@ -262,12 +271,16 @@ pam_module!(FscryptPam);
 
 impl PamServiceModule for FscryptPam {
     fn authenticate(pamh: Pam, _flags: PamFlags, _args: Vec<String>) -> PamError {
-        dirlock::init();
+        if ! pam_init(&pamh) {
+            return PamError::SERVICE_ERR;
+        }
         do_authenticate(pamh).err().unwrap_or(PamError::SUCCESS)
     }
 
     fn open_session(pamh: Pam, _flags: PamFlags, _args: Vec<String>) -> PamError {
-        dirlock::init();
+        if ! pam_init(&pamh) {
+            return PamError::SERVICE_ERR;
+        }
         match do_open_session(pamh) {
             Ok(()) => PamError::SUCCESS,
             Err(PamError::USER_UNKNOWN) => PamError::SUCCESS,
@@ -276,7 +289,9 @@ impl PamServiceModule for FscryptPam {
     }
 
     fn close_session(pamh: Pam, _flags: PamFlags, _args: Vec<String>) -> PamError {
-        dirlock::init();
+        if ! pam_init(&pamh) {
+            return PamError::SERVICE_ERR;
+        }
         match do_close_session(pamh) {
             Ok(()) => PamError::SUCCESS,
             Err(PamError::USER_UNKNOWN) => PamError::SUCCESS,
@@ -289,7 +304,9 @@ impl PamServiceModule for FscryptPam {
     }
 
     fn chauthtok(pamh: Pam, flags: PamFlags, _args: Vec<String>) -> PamError {
-        dirlock::init();
+        if ! pam_init(&pamh) {
+            return PamError::SERVICE_ERR;
+        }
         do_chauthtok(pamh, flags).err().unwrap_or(PamError::SUCCESS)
     }
 }

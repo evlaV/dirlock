@@ -370,6 +370,7 @@ impl Manager {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    dirlock::init()?;
     let builder = zbus::connection::Builder::session()?;
     let conn = builder.name("com.valvesoftware.Dirlock")?
         .build()

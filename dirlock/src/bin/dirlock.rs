@@ -922,7 +922,7 @@ fn main() -> Result<()> {
 
     let args: Args = argh::from_env();
 
-    dirlock::init();
+    dirlock::init()?;
 
     match &args.command {
         Lock(args) => cmd_lock(args),

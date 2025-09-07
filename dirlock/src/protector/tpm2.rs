@@ -160,8 +160,7 @@ impl Tpm2Protector {
 
     /// Returns the prompt, or an error message if the TPM is not usable
     pub fn get_prompt(&self) -> Result<String, String> {
-        let s = self.get_tcti_conf()
-            .and_then(|c| get_status(Some(c)))
+        let s = get_status(Some(self.get_tcti_conf()))
             .map_err(|_| String::from("Error connecting to the TPM"))?;
         let retries = s.max_auth_fail - s.lockout_counter;
         if retries == 0 {
@@ -175,20 +174,20 @@ impl Tpm2Protector {
     }
 
     /// Gets (and initializes if necessary) the TCTI conf string
-    fn get_tcti_conf(&self) -> Result<&str> {
+    fn get_tcti_conf(&self) -> &str {
         match self.tcti.get() {
-            Some(s) => Ok(s),
+            Some(s) => s,
             None => {
-                let tcti = Config::tpm2_tcti()?;
+                let tcti = Config::tpm2_tcti();
                 self.tcti.set(tcti.to_string()).unwrap();
-                Ok(tcti)
+                tcti
             }
         }
     }
 
     /// Creates a new Context
     fn create_context(&self) -> Result<Context> {
-        let tcti = self.get_tcti_conf()?;
+        let tcti = self.get_tcti_conf();
         Context::new(TctiNameConf::from_str(tcti)?)
             .map_err(|e| anyhow!("Unable to access the TPM at {tcti}: {e}"))
     }
@@ -354,10 +353,7 @@ pub struct TpmStatus {
 pub fn get_status(tcti_conf: Option<&str>) -> Result<TpmStatus> {
     use PropertyTag::*;
 
-    let tcti = match tcti_conf {
-        Some(s) => s,
-        _ => Config::tpm2_tcti()?,
-    };
+    let tcti = tcti_conf.unwrap_or_else(|| Config::tpm2_tcti());
     let mut ctx = Context::new(TctiNameConf::from_str(tcti)?)?;
 
     let perm = ctx.get_tpm_property(Permanent)?.unwrap_or(0);
@@ -490,7 +486,7 @@ pub mod tests {
 
     #[test]
     fn test_tpm() -> Result<()> {
-        crate::init();
+        crate::init()?;
 
         let json = r#"
             {
@@ -513,7 +509,7 @@ pub mod tests {
         prot.tcti.set(tpm.tcti_conf()).unwrap();
         assert!(prot.unwrap_key(b"1234").unwrap().is_some());
         assert!(prot.unwrap_key(b"wrongpw").unwrap().is_none());
-        let status = get_status(prot.get_tcti_conf().ok())?;
+        let status = get_status(Some(prot.get_tcti_conf()))?;
         // Check that the dictionary attack parameters match the expected values
         assert_eq!(status.lockout_counter, 1);
         assert_eq!(status.max_auth_fail, 31);

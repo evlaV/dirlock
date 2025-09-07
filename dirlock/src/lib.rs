@@ -4,9 +4,7 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
-#[cfg(feature = "tpm2")]
 pub(crate) mod config;
-
 pub mod convert;
 pub(crate) mod crypto;
 pub mod fscrypt;
@@ -277,11 +275,12 @@ pub fn remove_policy_data(id: &PolicyKeyId) -> Result<()> {
 }
 
 /// Initialize the dirlock library
-pub fn init() {
+pub fn init() -> Result<()> {
     use std::sync::Once;
     static DIRLOCK_INIT: Once = Once::new();
     DIRLOCK_INIT.call_once(|| {
         // Disable log messages from the TPM2 library
         std::env::set_var("TSS2_LOG", "all+NONE");
     });
+    config::Config::check()
 }

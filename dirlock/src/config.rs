@@ -6,9 +6,12 @@
 
 use anyhow::{anyhow, Result};
 use serde::Deserialize;
-use std::fs::File;
-use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::{
+    fs::File,
+    io::{Error, ErrorKind},
+    path::PathBuf,
+    sync::OnceLock,
+};
 
 const CONFIG_FILE_PATH:   &str = "/etc/dirlock.conf";
 const DEFAULT_TPM2_TCTI: &str = "device:/dev/tpm0";
@@ -16,7 +19,16 @@ const DEFAULT_TPM2_TCTI: &str = "device:/dev/tpm0";
 #[derive(Deserialize)]
 pub struct Config {
     #[serde(default = "default_tpm2_tcti")]
+    #[allow(dead_code)]
     tpm2_tcti: String,
+}
+
+impl Default for Config {
+    fn default() -> Config {
+        Config {
+            tpm2_tcti: default_tpm2_tcti(),
+        }
+    }
 }
 
 fn default_tpm2_tcti() -> String {
@@ -27,21 +39,25 @@ fn default_tpm2_tcti() -> String {
 
 impl Config {
     fn get() -> Result<&'static Config> {
-        static GLOBAL_CONFIG : OnceLock<Result<Config, String>> = OnceLock::new();
+        static GLOBAL_CONFIG : OnceLock<std::io::Result<Config>> = OnceLock::new();
         GLOBAL_CONFIG.get_or_init(|| {
             let file = PathBuf::from(CONFIG_FILE_PATH);
             if file.exists() {
                 File::open(file)
-                    .map_err(|e| format!("{e}"))
-                    .and_then(|f| serde_json::from_reader(f).map_err(|e| format!("{e}")))
-                    .map_err(|e| format!("Error reading {CONFIG_FILE_PATH}: {e}"))
+                    .and_then(|f| serde_json::from_reader(f)
+                              .map_err(|e| Error::new(ErrorKind::InvalidData, e)))
             } else {
-                Ok(Config { tpm2_tcti: default_tpm2_tcti() })
+                Ok(Config::default())
             }
-        }).as_ref().map_err(|e| anyhow!(e))
+        }).as_ref().map_err(|e| anyhow!("failed to read {CONFIG_FILE_PATH}: {e}"))
     }
 
-    pub fn tpm2_tcti() -> Result<&'static str> {
-        Config::get().map(|c| c.tpm2_tcti.as_str())
+    #[allow(dead_code)]
+    pub fn tpm2_tcti() -> &'static str {
+        Config::get().unwrap().tpm2_tcti.as_str()
+    }
+
+    pub fn check() -> Result<()> {
+        Config::get().and(Ok(()))
     }
 }
