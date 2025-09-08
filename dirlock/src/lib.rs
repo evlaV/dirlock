@@ -220,9 +220,9 @@ pub enum CreateOpts {
 pub fn create_protector(opts: ProtectorOpts, pass: &[u8],
                         create: CreateOpts, ks: &Keystore) -> Result<(Protector, ProtectorKey)> {
     let protector_key = ProtectorKey::new_random();
-    let mut protector = Protector::new(opts, protector_key.clone(), pass)?;
+    let protector = Protector::new(opts, protector_key.clone(), pass)?;
     if matches!(create, CreateOpts::CreateAndSave) {
-        ks.save_protector(&mut protector)?;
+        ks.save_protector(&protector)?;
     }
     Ok((protector, protector_key))
 }
@@ -252,7 +252,7 @@ pub fn create_policy_data(protector_key: ProtectorKey, policy_key: Option<Policy
     let mut policy = PolicyData::new(master_key.get_id());
     policy.add_protector(&protector_key, master_key).unwrap(); // This must always succeed
     if matches!(create, CreateOpts::CreateAndSave) {
-        ks.save_policy_data(&mut policy)?;
+        ks.save_policy_data(&policy)?;
     }
     Ok(policy)
 }

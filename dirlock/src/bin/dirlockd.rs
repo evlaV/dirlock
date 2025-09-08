@@ -245,7 +245,7 @@ fn do_add_protector_to_policy(
     };
 
     policy.add_protector(&protector_key, policy_key)?;
-    keystore().save_policy_data(&mut policy)?;
+    keystore().save_policy_data(&policy)?;
 
     Ok(())
 }
@@ -266,7 +266,7 @@ fn do_remove_protector_from_policy(
         bail!("Cannot remove the last protector");
     }
     policy.remove_protector(&protector_id)?;
-    ks.save_policy_data(&mut policy)?;
+    ks.save_policy_data(&policy)?;
 
     Ok(())
 }

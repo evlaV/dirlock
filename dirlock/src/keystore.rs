@@ -99,12 +99,12 @@ impl Keystore {
     }
 
     /// Save a protector to disk
-    pub fn save_protector(&self, prot: &mut Protector) -> Result<()> {
+    pub fn save_protector(&self, prot: &Protector) -> Result<()> {
         let path = &self.protector_dir;
         fs::create_dir_all(path)
             .map_err(|e| anyhow!("Failed to create {}: {e}", path.display()))?;
         let filename = path.join(prot.id.to_string());
-        match (filename.exists(), prot.is_new) {
+        match (filename.exists(), prot.is_new.get()) {
             (true, true) => bail!("Trying to overwrite an existing protector"),
             (false, false) => bail!("Trying to update a nonexistent protector"),
             _ => (),
@@ -114,7 +114,7 @@ impl Keystore {
         serde_json::to_writer_pretty(&mut file, &prot.data)?;
         file.write_all(b"\n")?;
         file.commit()?;
-        prot.is_new = false;
+        prot.is_new.set(false);
         Ok(())
     }
 
@@ -146,13 +146,13 @@ impl Keystore {
     }
 
     /// Save a policy to disk
-    pub fn save_policy_data(&self, policy: &mut PolicyData) -> Result<()> {
+    pub fn save_policy_data(&self, policy: &PolicyData) -> Result<()> {
         let id = &policy.id;
         let path = &self.policy_dir;
         fs::create_dir_all(path)
             .context(format!("Failed to create {}", path.display()))?;
         let filename = path.join(id.to_string());
-        match (filename.exists(), policy.is_new) {
+        match (filename.exists(), policy.is_new.get()) {
             (true, true) => bail!("Trying to overwrite existing data from policy {id}"),
             (false, false) => bail!("Trying to update nonexistent policy {id}"),
             _ => (),
@@ -160,7 +160,7 @@ impl Keystore {
         if policy.keys.is_empty() {
             if filename.exists() {
                 return std::fs::remove_file(filename)
-                    .inspect(|_| policy.is_new = true)
+                    .inspect(|_| policy.is_new.set(true))
                     .context(format!("Failed to remove data from policy {id}"));
             }
             bail!("Trying to remove nonexistent policy {id}");
@@ -170,7 +170,7 @@ impl Keystore {
         serde_json::to_writer_pretty(&mut file, &policy.keys)?;
         file.write_all(b"\n")?;
         file.commit()?;
-        policy.is_new = false;
+        policy.is_new.set(false);
         Ok(())
     }
 
@@ -285,13 +285,13 @@ mod tests {
             }"#;
 
         let data = serde_json::from_str::<ProtectorData>(json)?;
-        let mut prot = Protector::from_data(id, data);
+        let prot = Protector::from_data(id, data);
 
         // Save the protector to disk
-        ks.save_protector(&mut prot).expect_err("Expected error saving file");
+        ks.save_protector(&prot).expect_err("Expected error saving file");
         assert!(!ks.protector_dir.join(id_str).exists());
-        prot.is_new = true;
-        ks.save_protector(&mut prot)?;
+        prot.is_new.set(true);
+        ks.save_protector(&prot)?;
         assert!(ks.protector_dir.join(id_str).exists());
 
         // Load it again and check that it matches the previous value
@@ -307,7 +307,7 @@ mod tests {
             ProtectorData::Password(ref mut p) => p.name = String::from("new name"),
             _ => panic!(),
         }
-        ks.save_protector(&mut prot2)?;
+        ks.save_protector(&prot2)?;
 
         // Load it again
         let prot3 = ks.load_protector(prot.id)?;

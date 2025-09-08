@@ -9,6 +9,7 @@ use opts::ProtectorOpts;
 use serde::{Serialize, Deserialize};
 use serde_with::{serde_as, hex::Hex};
 use sha2::{Digest, Sha512};
+use std::cell::Cell;
 use std::cmp;
 use std::fmt;
 
@@ -146,7 +147,7 @@ impl ProtectorType {
 pub struct Protector {
     pub id: ProtectorId,
     pub(crate) data: ProtectorData,
-    pub(crate) is_new: bool,
+    pub(crate) is_new: Cell<bool>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -169,12 +170,12 @@ impl Protector {
             ProtectorOpts::Tpm2(tpm2_opts) => ProtectorData::Tpm2(Tpm2Protector::new(tpm2_opts, raw_key, pass)?),
             ProtectorOpts::Fido2(fido2_opts) => ProtectorData::Fido2(Fido2Protector::new(fido2_opts, raw_key, pass)?),
         };
-        Ok(Protector { id, data, is_new: true })
+        Ok(Protector { id, data, is_new: Cell::new(true) })
     }
 
     /// Creates a new protector from existing data (loaded from disk).
     pub(crate) fn from_data(id: ProtectorId, data: ProtectorData) -> Self {
-        Protector { id, data, is_new: false }
+        Protector { id, data, is_new: Cell::new(false) }
     }
 
     /// Unwraps this protector's [`ProtectorKey`] using a password

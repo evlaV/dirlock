@@ -8,6 +8,7 @@ use anyhow::{bail, ensure, Result};
 use rand::{RngCore, rngs::OsRng};
 use serde::{Serialize, Deserialize};
 use serde_with::{serde_as, base64::Base64};
+use std::cell::Cell;
 use std::collections::{
     HashMap,
     hash_map::Entry,
@@ -85,18 +86,18 @@ impl PolicyKey {
 pub struct PolicyData {
     pub id: PolicyKeyId,
     pub keys: HashMap<ProtectorId, WrappedPolicyKey>,
-    pub(crate) is_new: bool,
+    pub(crate) is_new: Cell<bool>,
 }
 
 impl PolicyData {
     /// Creates a new, empty [`PolicyData`] object.
     pub fn new(id: PolicyKeyId) -> Self {
-        PolicyData { id, keys: Default::default(), is_new: true }
+        PolicyData { id, keys: Default::default(), is_new: Cell::new(true) }
     }
 
     /// Creates a [`PolicyData`] object from existing data (loaded from disk).
     pub fn from_existing(id: PolicyKeyId, keys: HashMap<ProtectorId, WrappedPolicyKey>) -> Self {
-        PolicyData { id, keys, is_new: false }
+        PolicyData { id, keys, is_new: Cell::new(false) }
     }
 
     /// Adds a new a [`PolicyKey`] to the policy, wrapping it with a [`ProtectorKey`].

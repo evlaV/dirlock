@@ -667,7 +667,7 @@ fn cmd_policy_add_protector(args: &PolicyAddProtectorArgs) -> Result<()> {
     };
 
     policy.add_protector(&protector_key, policy_key)?;
-    ks.save_policy_data(&mut policy)?;
+    ks.save_policy_data(&policy)?;
     println!("Protector {} added to policy {policy_id}", protector.id);
 
     Ok(())
@@ -693,7 +693,7 @@ fn cmd_policy_remove_protector(args: &PolicyRemoveProtectorArgs) -> Result<()> {
     }
 
     policy.remove_protector(&protector.id)?;
-    ks.save_policy_data(&mut policy)?;
+    ks.save_policy_data(&policy)?;
     println!("Protector {} remove from policy {policy_id}", protector.id);
 
     Ok(())
