@@ -694,7 +694,7 @@ fn cmd_policy_remove_protector(args: &PolicyRemoveProtectorArgs) -> Result<()> {
 
     policy.remove_protector(&protector.id)?;
     ks.save_policy_data(&policy)?;
-    println!("Protector {} remove from policy {policy_id}", protector.id);
+    println!("Protector {} removed from policy {policy_id}", protector.id);
 
     Ok(())
 }
