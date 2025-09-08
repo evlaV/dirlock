@@ -227,6 +227,7 @@ mod tests {
     use std::str::FromStr;
     use tempdir::TempDir;
     use super::*;
+    use crate::protector::ProtectorData;
 
     #[test]
     fn test_empty_keystore() -> Result<()> {
@@ -257,6 +258,68 @@ mod tests {
             bail!("Expected error removing nonexistent policy");
         };
         assert_eq!(err.kind(), ErrorKind::NotFound);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_create_protector() -> Result<()> {
+        let tmpdir = TempDir::new("keystore")?;
+        let ks = Keystore::from_path(tmpdir.path());
+
+        // This tests that the JSON serialization of a protector works as expected
+        let id_str = "507e25bbfa1277f2";
+        let id = ProtectorId::from_str(id_str)?;
+        let json = r#"
+            {
+              "type": "password",
+              "name": "test",
+              "wrapped_key": "OGkURqRk4t9ItlrRSuT6Mg0Ur3c72OE6TvvE3Yk/HkA=",
+              "iv": "7wM9e/49nm6WElpqv27luw==",
+              "salt": "xT6P24w5eHBwEa39br9CJIuXKtx9y2WwLaeETWUcMQg=",
+              "hmac": "bgWg3NPwaUJ6mmYlSnt8860HecOPLkHJGikYmn5F1+8=",
+              "kdf": {
+                "type": "pbkdf2",
+                "iterations": 1
+              }
+            }"#;
+
+        let data = serde_json::from_str::<ProtectorData>(json)?;
+        let mut prot = Protector::from_data(id, data);
+
+        // Save the protector to disk
+        ks.save_protector(&mut prot).expect_err("Expected error saving file");
+        assert!(!ks.protector_dir.join(id_str).exists());
+        prot.is_new = true;
+        ks.save_protector(&mut prot)?;
+        assert!(ks.protector_dir.join(id_str).exists());
+
+        // Load it again and check that it matches the previous value
+        let mut prot2 = ks.load_protector(prot.id)?;
+        assert_eq!(serde_json::to_value(&prot2.data)?, serde_json::to_value(&prot.data)?);
+
+        // Compare it also to the original JSON string
+        let data = serde_json::from_str::<ProtectorData>(json)?;
+        assert_eq!(serde_json::to_value(&prot2.data)?, serde_json::to_value(&data)?);
+
+        // Change the protector data and save it to disk
+        match prot2.data {
+            ProtectorData::Password(ref mut p) => p.name = String::from("new name"),
+            _ => panic!(),
+        }
+        ks.save_protector(&mut prot2)?;
+
+        // Load it again
+        let prot3 = ks.load_protector(prot.id)?;
+
+        // And verify that it matches the expected value
+        assert_eq!(serde_json::to_value(&prot3.data)?, serde_json::to_value(&prot2.data)?);
+        assert_ne!(serde_json::to_value(&prot3.data)?, serde_json::to_value(&prot.data)?);
+
+        // Remove it from disk
+        ks.remove_protector_if_unused(&prot.id)?;
+        assert!(ks.load_protector(prot.id).is_err());
+        assert!(!ks.protector_dir.join(id_str).exists());
 
         Ok(())
     }
