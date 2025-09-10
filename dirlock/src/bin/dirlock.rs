@@ -111,6 +111,9 @@ struct EncryptArgs {
     /// force encrypting a directory with data
     #[argh(switch)]
     force: bool,
+    /// owner of the protector (default: current user)
+    #[argh(option)]
+    user: Option<String>,
     /// directory
     #[argh(positional)]
     dir: PathBuf,
@@ -226,6 +229,9 @@ struct ProtectorCreateArgs {
     /// whether to require a PIN / password (default: true)
     #[argh(option)]
     use_pin: Option<bool>,
+    /// owner of the protector (default: current user)
+    #[argh(option)]
+    user: Option<String>,
 }
 
 #[derive(FromArgs)]
@@ -467,13 +473,16 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
     }
 
     let protector_is_new = args.protector.is_none();
-    let protector_key = if let Some(id) = args.protector {
+    let (_, protector_key) = if let Some(id) = args.protector {
+        if args.user.is_some() {
+            bail!("Cannot set --user with an existing protector");
+        }
         let protector = ks.load_protector(id)?;
         let pass = read_password_for_protector(&protector)?;
         let Some(protector_key) = protector.unwrap_key(pass.as_bytes())? else {
             bail!("Invalid {}", protector.get_type().credential_name());
         };
-        protector_key
+        (protector, protector_key)
     } else {
         let name = args.protector_name.clone().unwrap_or_else(|| {
             let mut n = format!("Protector for {}", args.dir.display());
@@ -487,10 +496,10 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
         let opts = ProtectorOptsBuilder::new()
             .with_type(args.protector_type)
             .with_name(name)
+            .with_user(args.user.clone())
             .build()?;
         let pass = read_new_password_for_protector(opts.get_type())?;
-        let (_, protector_key) = dirlock::create_protector(opts, pass.as_bytes(), CreateOpts::CreateAndSave, ks)?;
-        protector_key
+        dirlock::create_protector(opts, pass.as_bytes(), CreateOpts::CreateAndSave, ks)?
     };
 
     let protector_id = protector_key.get_id();
@@ -705,6 +714,7 @@ fn cmd_create_protector(args: &ProtectorCreateArgs) -> Result<()> {
         .with_kdf_iter(args.kdf_iter)
         .with_use_pin(args.use_pin)
         .with_name(args.name.clone())
+        .with_user(args.user.clone())
         .build()?;
 
     let pass = read_new_password_for_protector(opts.get_type())?;

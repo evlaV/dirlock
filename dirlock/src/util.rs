@@ -87,7 +87,7 @@ impl SafeFile {
     ///
     /// This works on a temporary file, the actual file at `path` is
     /// only updated when calling commit().
-    pub fn create(path: &Path) -> std::io::Result<Self> {
+    pub fn create(path: &Path, default_uid: Option<u32>, default_gid: Option<u32>) -> std::io::Result<Self> {
         let template = match (path.parent(), path.file_name()) {
             (Some(dirname), Some(filename)) => {
                 let mut name = std::ffi::OsString::from(".#");
@@ -111,6 +111,8 @@ impl SafeFile {
             if oldmd.permissions() != newmd.permissions() {
                 file.set_permissions(oldmd.permissions())?;
             }
+        } else if default_uid.is_some() || default_gid.is_some() {
+            fs::fchown(&file, default_uid, default_gid)?;
         }
         let final_path = PathBuf::from(path);
         let committed = false;
@@ -165,7 +167,7 @@ mod tests {
         let path = tmpdir.path().join("test1");
         fs::write(&path, b"old")?;
 
-        let mut file = SafeFile::create(&path)?;
+        let mut file = SafeFile::create(&path, None, None)?;
         _ = file.write(b"new")?;
         drop(file);
 
@@ -178,7 +180,7 @@ mod tests {
             .expect("chown() failed. Run as root or with fakeroot");
         let oldmd = fs::metadata(&path)?;
 
-        let mut file = SafeFile::create(&path)?;
+        let mut file = SafeFile::create(&path, None, None)?;
         _ = file.write(b"new")?;
         file.commit()?;
         let newmd = fs::metadata(&path)?;
@@ -193,7 +195,7 @@ mod tests {
         fs::write(&path, b"old")?;
         fs::set_permissions(&path, Permissions::from_mode(0o751))?;
 
-        let mut file = SafeFile::create(&path)?;
+        let mut file = SafeFile::create(&path, None, None)?;
         _ = file.write(b"new")?;
         file.commit()?;
 
@@ -209,7 +211,7 @@ mod tests {
             .expect("chown() failed. Run as root or with fakeroot");
         fs::set_permissions(&path, Permissions::from_mode(0o751))?;
 
-        let mut file = SafeFile::create(&path)?;
+        let mut file = SafeFile::create(&path, None, None)?;
         _ = file.write(b"new")?;
         file.commit()?;
 

@@ -25,6 +25,22 @@ impl ProtectorOpts {
             ProtectorOpts::Password(_) => ProtectorType::Password,
         }
     }
+
+    pub fn uid(&self) -> Option<u32> {
+        match self {
+            ProtectorOpts::Fido2(p) => p.uid,
+            ProtectorOpts::Tpm2(p) => p.uid,
+            ProtectorOpts::Password(p) => p.uid,
+        }
+    }
+
+    pub fn gid(&self) -> Option<u32> {
+        match self {
+            ProtectorOpts::Fido2(p) => p.gid,
+            ProtectorOpts::Tpm2(p) => p.gid,
+            ProtectorOpts::Password(p) => p.gid,
+        }
+    }
 }
 
 
@@ -32,6 +48,8 @@ impl ProtectorOpts {
 pub struct PasswordOpts {
     pub kdf_iter: Option<NonZeroU32>,
     pub name: String,
+    pub uid: Option<u32>,
+    pub gid: Option<u32>,
 }
 
 
@@ -39,6 +57,8 @@ pub struct PasswordOpts {
 pub struct Tpm2Opts {
     pub kdf_iter: Option<NonZeroU32>,
     pub name: String,
+    pub uid: Option<u32>,
+    pub gid: Option<u32>,
     pub tpm2_tcti: Option<String>,
 }
 
@@ -46,6 +66,8 @@ pub struct Tpm2Opts {
 /// Options for FIDO2 protectors
 pub struct Fido2Opts {
     pub name: String,
+    pub uid: Option<u32>,
+    pub gid: Option<u32>,
     pub use_pin: Option<bool>,
 }
 
@@ -57,6 +79,7 @@ pub struct ProtectorOptsBuilder {
     name: String,
     tpm2_tcti: Option<String>,
     use_pin: Option<bool>,
+    user: Option<String>,
 }
 
 impl ProtectorOptsBuilder {
@@ -74,6 +97,12 @@ impl ProtectorOptsBuilder {
     /// Sets the type of the protector
     pub fn with_name(mut self, name: String) -> Self {
         self.name = name.as_str().trim().to_string();
+        self
+    }
+
+    /// Sets the owner of the protector
+    pub fn with_user(mut self, user: Option<String>) -> Self {
+        self.user = user;
         self
     }
 
@@ -116,23 +145,34 @@ impl ProtectorOptsBuilder {
         if self.kdf_iter.is_some() && ptype == ProtectorType::Fido2 {
             bail!("FIDO2 protectors don't support KDF options");
         }
+        let (uid, gid) = if let Some(user) = self.user {
+            let Some(entry) = nix::unistd::User::from_name(&user)? else {
+                bail!("Unknown user {user}");
+            };
+            (Some(entry.uid.as_raw()), Some(entry.gid.as_raw()))
+        } else {
+            (None, None)
+        };
         match ptype {
             ProtectorType::Tpm2 => {
                 Ok(ProtectorOpts::Tpm2(Tpm2Opts {
                     kdf_iter: self.kdf_iter,
                     tpm2_tcti: self.tpm2_tcti,
                     name: self.name,
+                    uid, gid,
                 }))
             },
             ProtectorType::Password => {
                 Ok(ProtectorOpts::Password(PasswordOpts {
                     kdf_iter: self.kdf_iter,
                     name: self.name,
+                    uid, gid,
                 }))
             },
             ProtectorType::Fido2 => {
                 Ok(ProtectorOpts::Fido2(Fido2Opts {
                     name: self.name,
+                    uid, gid,
                     use_pin: self.use_pin,
                 }))
             },

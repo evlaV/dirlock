@@ -11,6 +11,7 @@ use std::{
     fs,
     io::ErrorKind,
     io::Write,
+    os::unix::fs::MetadataExt,
     path::Path,
     path::PathBuf,
     sync::OnceLock,
@@ -89,12 +90,12 @@ impl Keystore {
     pub fn load_protector(&self, id: ProtectorId) -> std::io::Result<Protector> {
         let dir = &self.protector_dir;
         let protector_file = dir.join(id.to_string());
-        if !dir.exists() || !protector_file.exists() {
+        let Ok(md) = fs::metadata(&protector_file) else {
             return Err(std::io::Error::new(ErrorKind::NotFound, "protector not found"));
-        }
+        };
 
         serde_json::from_reader(fs::File::open(protector_file)?)
-            .map(|data| Protector::from_data(id, data))
+            .map(|data| Protector::from_data(id, data, Some(md.uid()), Some(md.gid())))
             .map_err(|e| std::io::Error::new(ErrorKind::InvalidData, e))
     }
 
@@ -109,7 +110,7 @@ impl Keystore {
             (false, false) => bail!("Trying to update a nonexistent protector"),
             _ => (),
         }
-        let mut file = SafeFile::create(&filename)
+        let mut file = SafeFile::create(&filename, prot.uid, prot.gid)
             .map_err(|e| anyhow!("Failed to store protector {}: {e}", prot.id))?;
         serde_json::to_writer_pretty(&mut file, &prot.data)?;
         file.write_all(b"\n")?;
@@ -165,7 +166,7 @@ impl Keystore {
             }
             bail!("Trying to remove nonexistent policy {id}");
         }
-        let mut file = SafeFile::create(&filename)
+        let mut file = SafeFile::create(&filename, None, None)
             .context(format!("Failed to store data from policy {id}"))?;
         serde_json::to_writer_pretty(&mut file, &policy.keys)?;
         file.write_all(b"\n")?;
@@ -285,7 +286,7 @@ mod tests {
             }"#;
 
         let data = serde_json::from_str::<ProtectorData>(json)?;
-        let prot = Protector::from_data(id, data);
+        let prot = Protector::from_data(id, data, None, None);
 
         // Save the protector to disk
         ks.save_protector(&prot).expect_err("Expected error saving file");

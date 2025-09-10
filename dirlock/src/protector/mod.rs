@@ -147,6 +147,8 @@ impl ProtectorType {
 pub struct Protector {
     pub id: ProtectorId,
     pub(crate) data: ProtectorData,
+    pub uid: Option<u32>,
+    pub gid: Option<u32>,
     pub(crate) is_new: Cell<bool>,
 }
 
@@ -165,17 +167,20 @@ impl Protector {
     /// Creates a new protector from a [`ProtectorKey`] and a password.
     pub(crate) fn new(opts: ProtectorOpts, raw_key: ProtectorKey, pass: &[u8]) -> Result<Self> {
         let id = raw_key.get_id();
+        let uid = opts.uid();
+        let gid = opts.gid();
         let data = match opts {
             ProtectorOpts::Password(pw_opts) => ProtectorData::Password(PasswordProtector::new(pw_opts,raw_key, pass)),
             ProtectorOpts::Tpm2(tpm2_opts) => ProtectorData::Tpm2(Tpm2Protector::new(tpm2_opts, raw_key, pass)?),
             ProtectorOpts::Fido2(fido2_opts) => ProtectorData::Fido2(Fido2Protector::new(fido2_opts, raw_key, pass)?),
         };
-        Ok(Protector { id, data, is_new: Cell::new(true) })
+        Ok(Protector { id, data, uid, gid, is_new: Cell::new(true) })
     }
 
     /// Creates a new protector from existing data (loaded from disk).
-    pub(crate) fn from_data(id: ProtectorId, data: ProtectorData) -> Self {
-        Protector { id, data, is_new: Cell::new(false) }
+    pub(crate) fn from_data(id: ProtectorId, data: ProtectorData,
+                            uid: Option<u32>, gid: Option<u32>) -> Self {
+        Protector { id, data, uid, gid, is_new: Cell::new(false) }
     }
 
     /// Unwraps this protector's [`ProtectorKey`] using a password
