@@ -111,7 +111,7 @@ struct EncryptArgs {
     /// force encrypting a directory with data
     #[argh(switch)]
     force: bool,
-    /// owner of the protector (default: current user)
+    /// owner of the protector and policy (default: current user)
     #[argh(option)]
     user: Option<String>,
     /// directory
@@ -473,7 +473,7 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
     }
 
     let protector_is_new = args.protector.is_none();
-    let (_, protector_key) = if let Some(id) = args.protector {
+    let (protector, protector_key) = if let Some(id) = args.protector {
         if args.user.is_some() {
             bail!("Cannot set --user with an existing protector");
         }
@@ -505,7 +505,7 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
     let protector_id = protector_key.get_id();
     let keyid = if args.force && !empty_dir {
         println!("\nEncrypting the contents of {}, this can take a while", args.dir.display());
-        let k = dirlock::convert::convert_dir(&args.dir, protector_key, ks)
+        let k = dirlock::convert::convert_dir(&args.dir, &protector, protector_key, ks)
             .inspect_err(|_| {
                 if protector_is_new {
                     let _ = ks.remove_protector_if_unused(&protector_id);
@@ -517,7 +517,7 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
                   used and you can disable it with usermod -p '*' USERNAME\n");
         k
     } else {
-        dirlock::encrypt_dir(&args.dir, protector_key, ks)
+        dirlock::encrypt_dir(&args.dir, &protector, protector_key, ks)
             .inspect_err(|_| {
                 if protector_is_new {
                     let _ = ks.remove_protector_if_unused(&protector_id);
@@ -595,7 +595,8 @@ fn cmd_create_policy(args: &PolicyCreateArgs) -> Result<()> {
     let Some(protector_key) = protector.unwrap_key(pass.as_bytes())? else {
         bail!("Invalid {} for protector {id}", protector.get_type().credential_name());
     };
-    let policy = dirlock::create_policy_data(protector_key, None, CreateOpts::CreateAndSave, ks)?;
+    let policy = dirlock::create_policy_data(&protector, protector_key, None,
+                                             CreateOpts::CreateAndSave, ks)?;
     println!("Created encryption policy {}", policy.id);
     Ok(())
 }
@@ -836,8 +837,9 @@ fn cmd_import_master_key() -> Result<()> {
         .with_type(Some(ProtectorType::Password))
         .build()?;
     let pass = read_new_password_for_protector(opts.get_type())?;
-    let (_, protector_key) = dirlock::create_protector(opts, pass.as_bytes(), CreateOpts::CreateAndSave, ks)?;
-    let _  = dirlock::create_policy_data(protector_key, Some(master_key), CreateOpts::CreateAndSave, ks)?;
+    let (protector, protector_key) = dirlock::create_protector(opts, pass.as_bytes(), CreateOpts::CreateAndSave, ks)?;
+    let _  = dirlock::create_policy_data(&protector, protector_key, Some(master_key),
+                                         CreateOpts::CreateAndSave, ks)?;
     println!("Imported key for policy {keyid}");
     Ok(())
 }

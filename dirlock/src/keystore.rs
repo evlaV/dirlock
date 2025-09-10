@@ -123,9 +123,9 @@ impl Keystore {
     pub fn load_policy_data(&self, id: &PolicyKeyId) -> std::io::Result<PolicyData> {
         let dir = &self.policy_dir;
         let policy_file = dir.join(id.to_string());
-        if !dir.exists() || !policy_file.exists() {
+        let Ok(md) = fs::metadata(&policy_file) else {
             return Err(std::io::Error::new(ErrorKind::NotFound, "policy not found"));
-        }
+        };
 
         serde_json::from_reader(fs::File::open(policy_file)?)
             .map_err(|e| std::io::Error::new(ErrorKind::InvalidData, e))
@@ -133,7 +133,7 @@ impl Keystore {
                 if keys.is_empty() {
                     Err(std::io::Error::new(ErrorKind::InvalidData, "policy contains no data"))
                 } else {
-                    Ok(PolicyData::from_existing(id.clone(), keys))
+                    Ok(PolicyData::from_existing(id.clone(), keys, Some(md.uid()), Some(md.gid())))
                 }
             })
     }
@@ -141,7 +141,7 @@ impl Keystore {
     /// Load a policy from disk, or return an empty one if the file is missing
     fn load_or_create_policy_data(&self, id: &PolicyKeyId) -> std::io::Result<PolicyData> {
         match self.load_policy_data(id) {
-            Err(e) if e.kind() == ErrorKind::NotFound => Ok(PolicyData::new(id.clone())),
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(PolicyData::new(id.clone(), None, None)),
             x => x,
         }
     }
@@ -166,7 +166,7 @@ impl Keystore {
             }
             bail!("Trying to remove nonexistent policy {id}");
         }
-        let mut file = SafeFile::create(&filename, None, None)
+        let mut file = SafeFile::create(&filename, policy.uid, policy.gid)
             .context(format!("Failed to store data from policy {id}"))?;
         serde_json::to_writer_pretty(&mut file, &policy.keys)?;
         file.write_all(b"\n")?;

@@ -86,18 +86,21 @@ impl PolicyKey {
 pub struct PolicyData {
     pub id: PolicyKeyId,
     pub keys: HashMap<ProtectorId, WrappedPolicyKey>,
+    pub uid: Option<u32>,
+    pub gid: Option<u32>,
     pub(crate) is_new: Cell<bool>,
 }
 
 impl PolicyData {
     /// Creates a new, empty [`PolicyData`] object.
-    pub fn new(id: PolicyKeyId) -> Self {
-        PolicyData { id, keys: Default::default(), is_new: Cell::new(true) }
+    pub fn new(id: PolicyKeyId, uid: Option<u32>, gid: Option<u32>) -> Self {
+        PolicyData { id, uid, gid, keys: Default::default(), is_new: Cell::new(true) }
     }
 
     /// Creates a [`PolicyData`] object from existing data (loaded from disk).
-    pub fn from_existing(id: PolicyKeyId, keys: HashMap<ProtectorId, WrappedPolicyKey>) -> Self {
-        PolicyData { id, keys, is_new: Cell::new(false) }
+    pub fn from_existing(id: PolicyKeyId, keys: HashMap<ProtectorId, WrappedPolicyKey>,
+                         uid: Option<u32>, gid: Option<u32>) -> Self {
+        PolicyData { id, keys, uid, gid, is_new: Cell::new(false) }
     }
 
     /// Adds a new a [`PolicyKey`] to the policy, wrapping it with a [`ProtectorKey`].

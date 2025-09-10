@@ -174,7 +174,8 @@ impl EncryptedDir {
 
 
 /// Encrypts a directory
-pub fn encrypt_dir(path: &Path, protector_key: ProtectorKey, ks: &Keystore) -> Result<PolicyKeyId> {
+pub fn encrypt_dir(path: &Path, protector: &Protector, protector_key: ProtectorKey,
+                   ks: &Keystore) -> Result<PolicyKeyId> {
     match open_dir(path, ks)? {
         DirStatus::Unencrypted => (),
         x => bail!("{}", x),
@@ -186,7 +187,7 @@ pub fn encrypt_dir(path: &Path, protector_key: ProtectorKey, ks: &Keystore) -> R
 
     // Generate a master key
     let master_key = PolicyKey::new_random();
-    let policy = create_policy_data(protector_key, Some(master_key.clone()),
+    let policy = create_policy_data(protector, protector_key, Some(master_key.clone()),
                                     CreateOpts::CreateAndSave, ks)?;
 
     // Add the key to the kernel and encrypt the directory
@@ -246,10 +247,11 @@ pub fn wrap_and_save_protector_key(protector: &mut Protector, key: ProtectorKey,
 }
 
 /// Create a new policy with the given key (or a random one if not provided).
-pub fn create_policy_data(protector_key: ProtectorKey, policy_key: Option<PolicyKey>,
-                          create: CreateOpts, ks: &Keystore) -> Result<PolicyData> {
+pub fn create_policy_data(protector: &Protector, protector_key: ProtectorKey,
+                          policy_key: Option<PolicyKey>, create: CreateOpts,
+                          ks: &Keystore) -> Result<PolicyData> {
     let master_key = policy_key.unwrap_or_else(PolicyKey::new_random);
-    let mut policy = PolicyData::new(master_key.get_id());
+    let mut policy = PolicyData::new(master_key.get_id(), protector.uid, protector.gid);
     policy.add_protector(&protector_key, master_key).unwrap(); // This must always succeed
     if matches!(create, CreateOpts::CreateAndSave) {
         ks.save_policy_data(&policy)?;

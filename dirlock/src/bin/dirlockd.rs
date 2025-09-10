@@ -164,7 +164,7 @@ fn do_encrypt_dir(
         None => bail!("Authentication failed"),
     };
 
-    let keyid = dirlock::encrypt_dir(dir, key, ks)?;
+    let keyid = dirlock::encrypt_dir(dir, &protector, key, ks)?;
     Ok(keyid.to_string())
 }
 
