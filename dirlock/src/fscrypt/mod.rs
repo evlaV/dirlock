@@ -306,6 +306,21 @@ pub fn get_policy(dir: &Path) -> Result<Option<Policy>> {
     let argptr = &raw mut arg as *mut fscrypt_get_policy_ex_arg_ioctl;
     match unsafe { ioctl::fscrypt_get_policy_ex(raw_fd, argptr) } {
         Err(Errno::ENODATA) => Ok(None),
+        Err(x) if x == Errno::EOPNOTSUPP || x == Errno::ENOTTY => {
+            // This can mean that the directory is encrypted but the kernel
+            // is old or does not have encryption enabled.
+            // We use statx(2) to see if that's the case.
+            use statx_sys::*;
+            let mut buf : statx = unsafe { mem::zeroed() };
+            let ret = unsafe {
+                statx(raw_fd, c"".as_ptr(), AT_EMPTY_PATH, 0, &raw mut buf)
+            };
+            if ret == 0 && buf.stx_attributes & (STATX_ATTR_ENCRYPTED as u64) == 0 {
+                Ok(None)
+            } else {
+                Err(describe_error(x))
+            }
+        },
         Err(x) => Err(describe_error(x)),
         Ok(_) => Ok(Some(arg.policy.into()))
     }
@@ -463,7 +478,7 @@ mod tests {
 
         assert!(add_key(mntpoint, &key).is_err());
         assert!(set_policy(workdir.path(), &id).is_err());
-        assert!(get_policy(workdir.path()).is_err());
+        assert!(get_policy(workdir.path())?.is_none());
         assert!(get_key_status(mntpoint, &id).is_err());
         assert!(remove_key(mntpoint, &id, RemoveKeyUsers::CurrentUser).is_err());
 
