@@ -15,6 +15,7 @@ source=("git+ssh://git@gitlab.steamos.cloud/holo/$pkgname.git#commit=$_commit"
         'steamos-encrypt-home'
         'steamos-decrypt-home'
         'tmpfiles.conf'
+        'udev.rules'
         'tpm2-dict-setup.c'
         'addr2line-0.24.2.tar.gz::https://crates.io/api/v1/crates/addr2line/0.24.2/download'
         'adler2-2.0.1.tar.gz::https://crates.io/api/v1/crates/adler2/2.0.1/download'
@@ -319,6 +320,7 @@ makedepends=('git'
              'holo-rust-packaging-tools')
 license=('BSD-3-Clause')
 sha256sums=('SKIP'
+            'SKIP'
             'SKIP'
             'SKIP'
             'SKIP'
@@ -679,6 +681,9 @@ package() {
 
   # tmpfiles.d configuration
   install -m644 -D ../tmpfiles.conf "$pkgdir/usr/lib/tmpfiles.d/dirlock.conf"
+
+  # udev rules
+  install -m644 -D ../udev.rules "$pkgdir/usr/lib/udev/rules.d/99-dirlock.rules"
 
   # Debug and helper tools
   install -m755 -D "target/release/fscryptctl" "$pkgdir/usr/lib/dirlock/fscryptctl"
