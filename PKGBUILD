@@ -1,8 +1,8 @@
 # Maintainer: Alberto Garcia <berto@igalia.com>
 
 pkgname=dirlock
-_commit=616229827eb4b883f76fe132b26fb2586574475f
-pkgver=0.0.1.185.6162298
+_commit=b6c59b1022e16a6b00c27ac2e3d40f9acf9b0cb6
+pkgver=0.0.1.207.b6c59b1
 pkgrel=1
 pkgdesc='Tool for managing encrypted directories'
 url='https://gitlab.steamos.cloud/holo/dirlock/'

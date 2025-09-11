@@ -127,7 +127,7 @@ encrypt_home() {
     echo -e "** ${CYAN}Initializing encryption for /home/deck${NC}"
     rm -rf "$tempdir"
     mkdir -p "$tempdir/enc"
-    dirlock encrypt --protector-type "$protector" --protector-name "Protector for /home/deck" "$tempdir/enc"
+    dirlock encrypt --user deck --protector-type "$protector" --protector-name "Protector for /home/deck" "$tempdir/enc"
     echo -e "** ${CYAN}Encrypting /home/deck (this can take a while)${NC}"
     rsync -aAXH --open-noatime --info=progress2 /home/deck/ "$tempdir/enc/deck/"
     mv "$tempdir/enc/deck" "$tempdir/deck"
