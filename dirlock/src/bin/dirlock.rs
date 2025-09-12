@@ -290,6 +290,9 @@ struct StatusArgs {
     /// brief output
     #[argh(switch, short = 'b')]
     brief: bool,
+    /// report if encryption is enabled on the filesystem
+    #[argh(switch, short = 'e')]
+    enabled: bool,
     /// directory (default: show global status)
     #[argh(positional)]
     dir: Option<PathBuf>,
@@ -881,9 +884,17 @@ fn cmd_tpm2_test() -> Result<()> {
 fn cmd_status(args: &StatusArgs) -> Result<()> {
     use fscrypt::KeyStatus::*;
 
+    if args.enabled && args.brief {
+        bail!("Cannot use --brief and --enabled at the same time");
+    }
+
     let Some(dir) = &args.dir else {
         if args.brief {
-            bail!("The brief output can only be used on a directory");
+            bail!("The --brief option can only be used on a directory");
+        }
+
+        if args.enabled {
+            bail!("The --enabled option can only be used on a directory");
         }
 
         display_protector_list()?;
@@ -896,6 +907,13 @@ fn cmd_status(args: &StatusArgs) -> Result<()> {
 
         return Ok(());
     };
+
+    if args.enabled {
+        let id = PolicyKeyId::default();
+        fscrypt::get_key_status(dir, &id)?;
+        println!("enabled");
+        return Ok(());
+    }
 
     let ks = keystore();
     if args.brief {
