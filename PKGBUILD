@@ -1,8 +1,8 @@
 # Maintainer: Alberto Garcia <berto@igalia.com>
 
 pkgname=dirlock
-_commit=b6c59b1022e16a6b00c27ac2e3d40f9acf9b0cb6
-pkgver=0.0.1.207.b6c59b1
+_commit=de5694868e8705766c15b9ae5c38b2293efd66ee
+pkgver=0.0.1.209.de56948
 pkgrel=1
 pkgdesc='Tool for managing encrypted directories'
 url='https://gitlab.steamos.cloud/holo/dirlock/'
@@ -209,6 +209,7 @@ source=("git+ssh://git@gitlab.steamos.cloud/holo/$pkgname.git#commit=$_commit"
         'smallvec-1.15.1.tar.gz::https://crates.io/api/v1/crates/smallvec/1.15.1/download'
         'stable_deref_trait-1.2.0.tar.gz::https://crates.io/api/v1/crates/stable_deref_trait/1.2.0/download'
         'static_assertions-1.1.0.tar.gz::https://crates.io/api/v1/crates/static_assertions/1.1.0/download'
+        'statx-sys-0.4.1.tar.gz::https://crates.io/api/v1/crates/statx-sys/0.4.1/download'
         'strsim-0.11.1.tar.gz::https://crates.io/api/v1/crates/strsim/0.11.1/download'
         'subtle-2.6.1.tar.gz::https://crates.io/api/v1/crates/subtle/2.6.1/download'
         'syn-2.0.106.tar.gz::https://crates.io/api/v1/crates/syn/2.0.106/download'
@@ -520,6 +521,7 @@ sha256sums=('SKIP'
             '67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03'
             'a8f112729512f8e442d81f95a8a7ddf2b7c6b8a1a6f509a95864142b30cab2d3'
             'a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f'
+            '69c325f46f705b7a66fb87f0ebb999524a7363f30f05d373277b4ef7f409fe87'
             '7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f'
             '13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292'
             'ede7c438028d4436d71104916910f5bb611972c5cfd7f89b8300a8186e6fada6'
