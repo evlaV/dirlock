@@ -445,7 +445,7 @@ mod tests {
 
     #[test]
     fn test_protectors() -> Result<()> {
-        let tpm = tpm2::tests::Swtpm::new(7982)?;
+        let tpm = tpm2::tests::Swtpm::new()?;
         for t in PROTECTOR_TYPE_NAMES {
             let ptype = t.1;
 

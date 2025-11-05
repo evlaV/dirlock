@@ -410,6 +410,7 @@ pub mod tests {
 pub mod tests {
     use base64::prelude::*;
     use crate::protector::ProtectorData;
+    use std::sync::atomic::{AtomicU16, Ordering};
     use super::*;
 
     // Create the swtpm with the same initial state so the tests are reproducible.
@@ -445,7 +446,9 @@ pub mod tests {
     }
 
     impl Swtpm {
-        pub fn new(port: u16) -> Result<Self> {
+        pub fn new() -> Result<Self> {
+            static SWTPM_PORT : AtomicU16 = AtomicU16::new(7900);
+            let port = SWTPM_PORT.fetch_add(2, Ordering::Relaxed);
             let dir = tempdir::TempDir::new("swtpm")?;
             let path = dir.path().to_str()
                 .expect("Error creating temporary dir for swtpm");
@@ -500,7 +503,7 @@ pub mod tests {
               }
             }"#;
 
-        let tpm = Swtpm::new(7976)?;
+        let tpm = Swtpm::new()?;
         let prot = match serde_json::from_str::<ProtectorData>(json) {
             Ok(ProtectorData::Tpm2(p)) => p,
             _ => bail!("Error creating protector from JSON data"),
