@@ -455,7 +455,7 @@ pub mod tests {
             let tpm_state_file = dir.path().join("tpm2-00.permall");
             let tpm_state = BASE64_STANDARD.decode(SWTPM_INITIAL_STATE)?;
             std::fs::write(tpm_state_file, tpm_state)?;
-            let status = std::process::Command::new("swtpm")
+            let out = std::process::Command::new("swtpm")
                 .arg("socket")
                 .arg("--daemon")
                 .arg("--tpm2")
@@ -464,9 +464,10 @@ pub mod tests {
                 .args(["--pid", &format!("file={path}/pid")])
                 .args(["--server", &format!("type=tcp,port={port}")])
                 .args(["--ctrl", &format!("type=tcp,port={}", port + 1)])
-                .status()
+                .output()
                 .expect("Failed to run swtpm");
-            assert!(status.success(), "Error starting swtpm");
+            assert!(out.status.success(), "Error starting swtpm: {}",
+                    String::from_utf8_lossy(&out.stderr));
             Ok(Swtpm{dir, port})
         }
 
