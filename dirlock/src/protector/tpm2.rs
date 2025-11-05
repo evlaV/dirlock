@@ -154,8 +154,7 @@ impl Tpm2Protector {
         let Ok(data) = unseal_data(ctx, primary_key, public, private, auth) else {
             return Ok(None);
         };
-        let raw_data : &[u8; 32] = data.value().try_into()?;
-        Ok(Some(ProtectorKey::from(raw_data)))
+        Ok(Some(ProtectorKey::try_from(data.value())?))
     }
 
     /// Returns the prompt, or an error message if the TPM is not usable

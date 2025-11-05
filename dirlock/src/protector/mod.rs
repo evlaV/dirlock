@@ -44,6 +44,14 @@ impl From<&[u8; PROTECTOR_KEY_LEN]> for ProtectorKey {
     }
 }
 
+impl TryFrom<&[u8]> for ProtectorKey {
+    type Error = std::array::TryFromSliceError;
+    fn try_from(src: &[u8]) -> Result<Self, Self::Error> {
+        let k : &[u8; PROTECTOR_KEY_LEN] = src.try_into()?;
+        Ok(ProtectorKey::from(k))
+    }
+}
+
 impl ProtectorKey {
     /// Return a reference to the data
     pub fn secret(&self) -> &[u8; PROTECTOR_KEY_LEN] {
