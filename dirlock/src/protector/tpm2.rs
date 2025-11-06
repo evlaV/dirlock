@@ -567,6 +567,7 @@ pub mod tests {
                 "iterations": 3
               }
             }"#;
+        let key = "28bd123a723566da448c57b43a3212ec03f6a3f7e09e033db124ec25e85ffdb2";
 
         let tpm = Swtpm::new()?;
         let prot = match serde_json::from_str::<ProtectorData>(json) {
@@ -574,8 +575,8 @@ pub mod tests {
             _ => bail!("Error creating protector from JSON data"),
         };
         prot.tcti.set(tpm.tcti_conf()).unwrap();
-        assert!(prot.unwrap_key(b"5678").unwrap().is_some());
-        assert!(prot.unwrap_key(b"wrongpw").unwrap().is_none());
+        assert_eq!(hex::encode(prot.unwrap_key(b"5678")?.unwrap().secret()), key);
+        assert!(prot.unwrap_key(b"wrongpw")?.is_none());
         let status = get_status(Some(prot.get_tcti_conf()))?;
         // Check that the dictionary attack parameters match the expected values
         assert_eq!(status.lockout_counter, 1);
@@ -600,6 +601,7 @@ pub mod tests {
                 "iterations": 5
               }
             }"#;
+        let key = "faf578fcb64827e63fe9ba4e444045f76b0599f7a5793bd551a4284c4c3c7df0";
 
         let tpm = Swtpm::new()?;
         let prot = match serde_json::from_str::<ProtectorData>(json) {
@@ -607,8 +609,8 @@ pub mod tests {
             _ => bail!("Error creating protector from JSON data"),
         };
         prot.tcti.set(tpm.tcti_conf()).unwrap();
-        assert!(prot.unwrap_key(b"1234").unwrap().is_some());
-        assert!(prot.unwrap_key(b"wrongpw").unwrap().is_none());
+        assert_eq!(hex::encode(prot.unwrap_key(b"1234")?.unwrap().secret()), key);
+        assert!(prot.unwrap_key(b"wrongpw")?.is_none());
         let status = get_status(Some(prot.get_tcti_conf()))?;
         // Check that the dictionary attack parameters match the expected values
         assert_eq!(status.lockout_counter, 1);
