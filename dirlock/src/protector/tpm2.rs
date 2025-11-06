@@ -61,6 +61,11 @@ use {
 };
 
 use crate::{
+    crypto::{
+        Aes256Key,
+        AesIv,
+        Hmac,
+    },
     protector::{
         ProtectorKey,
         Salt,
@@ -70,6 +75,21 @@ use crate::{
 
 #[cfg(doc)]
 use crate::protector::Protector;
+
+/*
+   Tpm2Protector had some changes and we want to be able to read
+   the older versions.
+
+   Here is a list of all versions and what changed between them:
+
+   v2: Same as v1 with two new fields, 'iv' and 'hmac' (both must have
+       values).
+
+       In this case the ProtectorKey is first encrypted with a key
+       derived from the user PIN before being sent to the TPM.
+
+   v1: initial version
+ */
 
 /// A [`Protector`] that wraps a [`ProtectorKey`] using a TPM
 #[serde_as]
@@ -81,6 +101,8 @@ pub struct Tpm2Protector {
     #[serde_as(as = "Base64")]
     private: Vec<u8>,
     salt: Salt,
+    iv: Option<AesIv>,
+    hmac: Option<Hmac>,
     kdf: Kdf,
     #[serde(skip)]
     #[cfg(feature = "tpm2")]
@@ -126,18 +148,23 @@ impl Tpm2Protector {
     }
 
     /// Wraps `prot_key` with `pass`. This generates a new random Salt.
-    pub fn wrap_key(&mut self, prot_key: ProtectorKey, pass: &[u8]) -> Result<()> {
+    pub fn wrap_key(&mut self, mut prot_key: ProtectorKey, pass: &[u8]) -> Result<()> {
         let mut ctx = self.create_context()?;
         let primary_key = create_primary_key(&mut ctx)?;
         let mut salt = Salt::default();
         OsRng.fill_bytes(&mut salt.0);
-        let auth = derive_auth_value(pass, &salt, &self.kdf);
+        let mut iv = AesIv::default();
+        OsRng.fill_bytes(&mut iv.0);
+        let (auth, enc_key) = derive_auth_value_and_key(pass, &salt, &self.kdf);
+        let hmac = enc_key.encrypt(&iv, prot_key.secret_mut());
         let (public, private) = {
             let (pb, pv) = seal_data(ctx, primary_key, prot_key.secret(), auth)?;
             let public = PublicBuffer::try_from(pb)?.marshall()?;
             let private = tpm_private_marshall(pv)?;
             (public, private)
         };
+        self.iv = Some(iv);
+        self.hmac = Some(hmac);
         self.salt = salt;
         self.public = public;
         self.private = private;
@@ -150,11 +177,33 @@ impl Tpm2Protector {
         let primary_key = create_primary_key(&mut ctx)?;
         let public = Public::try_from(PublicBuffer::unmarshall(&self.public)?)?;
         let private = tpm_private_unmarshall(&self.private)?;
-        let auth = derive_auth_value(pass, &self.salt, &self.kdf);
-        let Ok(data) = unseal_data(ctx, primary_key, public, private, auth) else {
-            return Ok(None);
-        };
-        Ok(Some(ProtectorKey::try_from(data.value())?))
+        match (&self.iv, &self.hmac) {
+            // v2 protector: unseal and decrypt
+            (Some(iv), Some(hmac)) => {
+                let (auth, enc_key) = derive_auth_value_and_key(pass, &self.salt, &self.kdf);
+                let Ok(data) = unseal_data(ctx, primary_key, public, private, auth) else {
+                    return Ok(None);
+                };
+                let mut prot_key = ProtectorKey::try_from(data.value())?;
+                if enc_key.decrypt(iv, hmac, prot_key.secret_mut()) {
+                    Ok(Some(prot_key))
+                } else {
+                    // TODO: if pass succeeded the TPM auth it should
+                    // also be able to decrypt the key, so this should
+                    // not happen and this should be reported.
+                    Ok(None)
+                }
+            },
+            // v1 protector: unseal only
+            (None, None) => {
+                let auth = derive_auth_value_v1(pass, &self.salt, &self.kdf);
+                let Ok(data) = unseal_data(ctx, primary_key, public, private, auth) else {
+                    return Ok(None);
+                };
+                Ok(Some(ProtectorKey::try_from(data.value())?))
+            },
+            _ => bail!("Invalid protector data"),
+        }
     }
 
     /// Returns the prompt, or an error message if the TPM is not usable
@@ -243,9 +292,22 @@ fn tpm_private_unmarshall(data: &[u8]) -> Result<Private> {
     Ok(Private::try_from(tpm2b_priv)?)
 }
 
-/// Derive a TPM authentication value from a password and a salt
+/// Derive the TPM authentication value and encryption key from a password and a salt
 #[cfg(feature = "tpm2")]
-fn derive_auth_value(pass: &[u8], salt: &Salt, kdf: &Kdf) -> Auth {
+fn derive_auth_value_and_key(pass: &[u8], salt: &Salt, kdf: &Kdf) -> (Auth, Aes256Key) {
+    let mut data = zeroize::Zeroizing::new([0u8; 64]);
+    kdf.derive(pass, &salt.0, data.as_mut());
+    // After the password is passed to the KDF we get a 512 bit key
+    // that we split in two: 256 bits for TPM authentication
+    // and 256 bits for encrypting the protector key.
+    let auth = Auth::try_from(&data[0..32]).unwrap();
+    let key = Aes256Key::try_from(&data[32..64]).unwrap();
+    (auth, key)
+}
+
+/// For v1 protectors, derive the TPM authentication value only
+#[cfg(feature = "tpm2")]
+fn derive_auth_value_v1(pass: &[u8], salt: &Salt, kdf: &Kdf) -> Auth {
     let mut data = zeroize::Zeroizing::new([0u8; 64]);
     kdf.derive(pass, &salt.0, data.as_mut());
     Auth::try_from(data.as_ref()).unwrap()
@@ -488,7 +550,42 @@ pub mod tests {
     }
 
     #[test]
-    fn test_tpm() -> Result<()> {
+    fn test_tpm_v2() -> Result<()> {
+        crate::init()?;
+
+        let json = r#"
+            {
+              "type": "tpm2",
+              "name": "test",
+              "public": "AC4ACAALAAAAUgAAABAAIGNfkF56YPujBBN9zyvc5VsnWu2WXnmD/OdtA8e+sRJG",
+              "private": "AJ4AIE2H5cgnThJ2pRyEDVCa9zo8+qeSbTvVUWC7ykLavBSQABDiPM+O9zMv3NcfO0eeWmcbwpymJq9bVgdjQuAQP3GRql0kuXTQPB+Y99b4E/6l/amlTkF528fgS1vIasuFvMU6NmapGJoP5btIYgddWwKSyuSAH15tPt0w7cV9iavJ/3NN1R4IR9aAbu86imYXSB8jRRPdco06dtcSUQ==",
+              "salt": "XuZwXJdILdOZimLYYhG9Xa2mHQczrP8YR1A81ICNEJU=",
+              "iv": "9X2h498jEdUjQ0u6Psz2Pw==",
+              "hmac": "TJYJ4Frlp6YcIsyROtmUIf3ribkDOagijifh+4lG0X4=",
+              "kdf": {
+                "type": "pbkdf2",
+                "iterations": 3
+              }
+            }"#;
+
+        let tpm = Swtpm::new()?;
+        let prot = match serde_json::from_str::<ProtectorData>(json) {
+            Ok(ProtectorData::Tpm2(p)) => p,
+            _ => bail!("Error creating protector from JSON data"),
+        };
+        prot.tcti.set(tpm.tcti_conf()).unwrap();
+        assert!(prot.unwrap_key(b"5678").unwrap().is_some());
+        assert!(prot.unwrap_key(b"wrongpw").unwrap().is_none());
+        let status = get_status(Some(prot.get_tcti_conf()))?;
+        // Check that the dictionary attack parameters match the expected values
+        assert_eq!(status.lockout_counter, 1);
+        assert_eq!(status.max_auth_fail, 31);
+        assert_eq!(status.lockout_interval, 600);
+        Ok(())
+    }
+
+    #[test]
+    fn test_tpm_v1() -> Result<()> {
         crate::init()?;
 
         let json = r#"
@@ -517,6 +614,64 @@ pub mod tests {
         assert_eq!(status.lockout_counter, 1);
         assert_eq!(status.max_auth_fail, 31);
         assert_eq!(status.lockout_interval, 600);
+        Ok(())
+    }
+
+    #[test]
+    fn test_tpm_invalid_1() -> Result<()> {
+        crate::init()?;
+
+        // This one has IV but no HMAC
+        let json = r#"
+            {
+              "type": "tpm2",
+              "name": "test",
+              "public": "AC4ACAALAAAAUgAAABAAIJ5/c4jAMSqZJy+WdOmYZEvTHzySYb7q64RjAGB4HnIq",
+              "private": "AJ4AIJaH4Zd1POY4nm3fOSoKcIrumK1UY+G+7rK77lT7P2xCABDygTzPRBEgaAm4DRLgtgD6BiKcV4idSdDI+powZcfHfisIA+WwugPEeNgLBg6AJzOEPQIGeGKiXshl4QyVMorsDTZIzTnXHiVmA3AtT8ZuUqyqjolmUzbITsI82uSL5e4EaHiNBR/Un/38lI48DMtfQMOqcGC0b9JHAQ==",
+              "salt": "neeZ+2/7a0TWr2IgLEvUBOb9mqpyt5CDjzovHpi0sJ4=",
+              "iv": "fAuphFuFNBf6lxCIQK7f8g==",
+              "kdf": {
+                "type": "pbkdf2",
+                "iterations": 5
+              }
+            }"#;
+
+        let tpm = Swtpm::new()?;
+        let prot = match serde_json::from_str::<ProtectorData>(json) {
+            Ok(ProtectorData::Tpm2(p)) => p,
+            _ => bail!("Error creating protector from JSON data"),
+        };
+        prot.tcti.set(tpm.tcti_conf()).unwrap();
+        assert!(prot.unwrap_key(b"1234").is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn test_tpm_invalid_2() -> Result<()> {
+        crate::init()?;
+
+        // This one has HMAC but no IV
+        let json = r#"
+            {
+              "type": "tpm2",
+              "name": "test",
+              "public": "AC4ACAALAAAAUgAAABAAIJ5/c4jAMSqZJy+WdOmYZEvTHzySYb7q64RjAGB4HnIq",
+              "private": "AJ4AIJaH4Zd1POY4nm3fOSoKcIrumK1UY+G+7rK77lT7P2xCABDygTzPRBEgaAm4DRLgtgD6BiKcV4idSdDI+powZcfHfisIA+WwugPEeNgLBg6AJzOEPQIGeGKiXshl4QyVMorsDTZIzTnXHiVmA3AtT8ZuUqyqjolmUzbITsI82uSL5e4EaHiNBR/Un/38lI48DMtfQMOqcGC0b9JHAQ==",
+              "salt": "neeZ+2/7a0TWr2IgLEvUBOb9mqpyt5CDjzovHpi0sJ4=",
+              "hmac": "OkJMidfYDdZt5jIdz8EsgOmJ+uQPZtzwGkZe5P2PD0o=",
+              "kdf": {
+                "type": "pbkdf2",
+                "iterations": 5
+              }
+            }"#;
+
+        let tpm = Swtpm::new()?;
+        let prot = match serde_json::from_str::<ProtectorData>(json) {
+            Ok(ProtectorData::Tpm2(p)) => p,
+            _ => bail!("Error creating protector from JSON data"),
+        };
+        prot.tcti.set(tpm.tcti_conf()).unwrap();
+        assert!(prot.unwrap_key(b"1234").is_err());
         Ok(())
     }
 }
