@@ -882,8 +882,6 @@ fn cmd_tpm2_test() -> Result<()> {
 }
 
 fn cmd_status(args: &StatusArgs) -> Result<()> {
-    use fscrypt::KeyStatus::*;
-
     if args.enabled && args.brief {
         bail!("Cannot use --brief and --enabled at the same time");
     }
@@ -916,36 +914,19 @@ fn cmd_status(args: &StatusArgs) -> Result<()> {
     }
 
     let ks = keystore();
+    let dir_status = dirlock::open_dir(dir, ks)?;
     if args.brief {
-        let s = match dirlock::open_dir(dir, ks)? {
-            DirStatus::Unencrypted => "unencrypted",
-            DirStatus::Unsupported => "unsupported",
-            DirStatus::KeyMissing => "key-missing",
-            DirStatus::Encrypted(d) => match d.key_status {
-                Absent => "locked",
-                Present => "unlocked",
-                IncompletelyRemoved => "partially-locked",
-            }
-        };
-        println!("{s}");
+        println!("{}", dir_status.name());
         return Ok(());
     }
 
-    let encrypted_dir = match dirlock::open_dir(dir, ks)? {
-        DirStatus::Encrypted(d) => d,
-        x => {
-            println!("{}", x.error_msg());
-            return Ok(());
-        }
+    let DirStatus::Encrypted(encrypted_dir) = &dir_status else {
+        println!("{}", dir_status.error_msg());
+        return Ok(());
     };
 
-    let locked = match encrypted_dir.key_status {
-        Absent => "locked",
-        Present => "unlocked",
-        IncompletelyRemoved => "partially locked",
-    };
+    let locked = dir_status.name(); // locked, unlocked, partially-locked
     println!("Encrypted, {locked}, policy {}", encrypted_dir.policy.keyid);
-
     println!("Contents: {}",  encrypted_dir.policy.contents_mode);
     println!("Filenames: {}", encrypted_dir.policy.filenames_mode);
     println!("Padding: {}",   encrypted_dir.policy.flags.pad);
@@ -956,7 +937,7 @@ fn cmd_status(args: &StatusArgs) -> Result<()> {
         println!("Flags: {}", encrypted_dir.policy.flags.flags);
     }
 
-    display_protectors_from_dir(&encrypted_dir);
+    display_protectors_from_dir(encrypted_dir);
     Ok(())
 }
 

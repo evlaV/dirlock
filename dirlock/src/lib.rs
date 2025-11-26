@@ -39,6 +39,22 @@ pub enum DirStatus {
 }
 
 impl DirStatus {
+    /// A stringified version of the enum value, in lower case and without spaces
+    pub fn name(&self) -> &'static str {
+        use DirStatus::*;
+        use fscrypt::KeyStatus::*;
+        match &self {
+            Unencrypted => "unencrypted",
+            Unsupported => "unsupported",
+            KeyMissing => "key-missing",
+            Encrypted(d) => match d.key_status {
+                Absent => "locked",
+                Present => "unlocked",
+                IncompletelyRemoved => "partially-locked",
+            }
+        }
+    }
+
     /// The error message to display when the status of the directory
     /// is unexpected for a given operation.
     pub fn error_msg(&self) -> &'static str {
