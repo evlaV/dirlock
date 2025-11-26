@@ -49,7 +49,7 @@ fn do_lock_dir(dir: &Path) -> anyhow::Result<()> {
         Ok(DirStatus::Encrypted(d)) if d.key_status == fscrypt::KeyStatus::Absent =>
             Err(anyhow!("Already locked")),
         Ok(DirStatus::Encrypted(d)) => Ok(d),
-        Ok(x) => Err(anyhow!("{x}")),
+        Ok(x) => Err(anyhow!("{}", x.error_msg())),
         Err(e) => Err(e),
     }?;
 
@@ -69,7 +69,7 @@ fn do_unlock_dir(
         Ok(DirStatus::Encrypted(d)) if d.key_status == fscrypt::KeyStatus::Present =>
             Err(anyhow!("Already unlocked")),
         Ok(DirStatus::Encrypted(d)) => Ok(d),
-        Ok(x) => Err(anyhow!("{x}")),
+        Ok(x) => Err(anyhow!("{}", x.error_msg())),
         Err(e) => Err(e),
     }?;
 
@@ -156,7 +156,7 @@ fn do_encrypt_dir(
 
     match dirlock::open_dir(dir, ks)? {
         DirStatus::Unencrypted => (),
-        x => bail!("{x}"),
+        x => bail!("{}", x.error_msg()),
     }
 
     let key = match protector.unwrap_key(pass.as_bytes())? {

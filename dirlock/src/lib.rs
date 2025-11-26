@@ -30,6 +30,7 @@ use protector::{
 };
 use std::path::{Path, PathBuf};
 
+/// The encryption status of an existing directory
 pub enum DirStatus {
     Unencrypted,
     Encrypted(EncryptedDir),
@@ -37,16 +38,17 @@ pub enum DirStatus {
     Unsupported,
 }
 
-impl std::fmt::Display for DirStatus {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl DirStatus {
+    /// The error message to display when the status of the directory
+    /// is unexpected for a given operation.
+    pub fn error_msg(&self) -> &'static str {
         use DirStatus::*;
-        let msg = match self {
+        match self {
             Encrypted(_) => "Directory already encrypted",
             Unencrypted  => "Directory not encrypted",
             Unsupported  => "Directory using an unsupported encryption mechanism",
             KeyMissing   => "Directory encrypted, key missing",
-        };
-        write!(f, "{}", msg)
+        }
     }
 }
 
@@ -178,7 +180,7 @@ pub fn encrypt_dir(path: &Path, protector: &Protector, protector_key: ProtectorK
                    ks: &Keystore) -> Result<PolicyKeyId> {
     match open_dir(path, ks)? {
         DirStatus::Unencrypted => (),
-        x => bail!("{}", x),
+        x => bail!("{}", x.error_msg()),
     };
 
     if ! util::dir_is_empty(path)? {

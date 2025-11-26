@@ -379,7 +379,7 @@ fn cmd_lock(args: &LockArgs) -> Result<()> {
         DirStatus::Encrypted(d) if d.key_status == fscrypt::KeyStatus::Absent =>
             bail!("The directory {} is already locked", args.dir.display()),
         DirStatus::Encrypted(d) => d,
-        x => bail!("{}", x),
+        x => bail!("{}", x.error_msg()),
     };
 
     let user = if args.all_users {
@@ -405,7 +405,7 @@ fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
         DirStatus::Encrypted(d) if d.key_status == fscrypt::KeyStatus::Present =>
             bail!("The directory {} is already unlocked", args.dir.display()),
         DirStatus::Encrypted(d) => d,
-        x => bail!("{}", x),
+        x => bail!("{}", x.error_msg()),
     };
 
     // If the user selected a protector then use it, otherwise try all of them
@@ -437,7 +437,7 @@ fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
 fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
     let encrypted_dir = match dirlock::open_dir(&args.dir, keystore())? {
         DirStatus::Encrypted(d) => d,
-        x => bail!("{}", x),
+        x => bail!("{}", x.error_msg()),
     };
 
     let protector = get_dir_protector(&encrypted_dir, &args.protector)?;
@@ -448,7 +448,7 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
     let ks = keystore();
     match dirlock::open_dir(&args.dir, ks)? {
         DirStatus::Unencrypted => (),
-        x => bail!("{}", x),
+        x => bail!("{}", x.error_msg()),
     };
 
     let empty_dir = dir_is_empty(&args.dir)?;
@@ -785,7 +785,7 @@ fn cmd_export_master_key(args: &ExportMasterKeyArgs) -> Result<()> {
     use base64::prelude::*;
     let encrypted_dir = match dirlock::open_dir(&args.dir, keystore())? {
         DirStatus::Encrypted(d) => d,
-        x => bail!("{x}"),
+        x => bail!("{}", x.error_msg()),
     };
 
     let protector = get_dir_protector(&encrypted_dir, &args.protector)?;
@@ -934,7 +934,7 @@ fn cmd_status(args: &StatusArgs) -> Result<()> {
     let encrypted_dir = match dirlock::open_dir(dir, ks)? {
         DirStatus::Encrypted(d) => d,
         x => {
-            println!("{x}");
+            println!("{}", x.error_msg());
             return Ok(());
         }
     };
