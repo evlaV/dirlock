@@ -5,14 +5,20 @@
  */
 
 use anyhow::{anyhow, bail};
+use serde::Serialize;
 use zbus::fdo::Result;
 use zbus::fdo::Error;
 use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
-use zbus::{interface, fdo::DBusProxy, zvariant::Value};
+use zbus::{
+    fdo::DBusProxy,
+    interface,
+    zvariant::{self, Value},
+};
 use dirlock::{
     DirStatus,
+    ProtectedPolicyKey,
     fscrypt::{
         self,
         PolicyKeyId,
@@ -30,18 +36,53 @@ struct Manager {
     _proxy: DBusProxy<'static>,
 }
 
-/// In the D-Bus API a [`Protector`] is just a map with the important
-/// public attributes (ID, type, name, etc.).
-type DbusProtectorData = HashMap<&'static str, Value<'static>>;
+/// This is the D-Bus API version of [`DirStatus`]
+#[derive(Serialize, zvariant::Type)]
+struct DbusDirStatus(HashMap<&'static str, Value<'static>>);
 
-fn get_dbus_protector_data(p: &Protector) -> DbusProtectorData {
-    HashMap::from([
-        ("id", Value::from(p.id.to_string())),
-        ("type", Value::from(p.get_type().to_string())),
-        ("name", Value::from(p.get_name().to_string())),
-        ("needs-password", Value::from(p.needs_password())),
-    ])
+impl From<DirStatus> for DbusDirStatus {
+    fn from(dir_status: DirStatus) -> Self {
+        let status_str = Value::from(dir_status.name());
+        let DirStatus::Encrypted(d) = &dir_status else {
+            return DbusDirStatus(HashMap::from([("status", status_str)]));
+        };
+        let prots : Vec<_> = d.protectors.iter()
+            .map(|p| Value::from(DbusProtectorData::from(p).0))
+            .collect();
+        DbusDirStatus(HashMap::from([
+            ("status", status_str),
+            ("policy", Value::from(d.policy.keyid.to_string())),
+            ("protectors", Value::from(&prots)),
+        ]))
+    }
 }
+
+/// This is the D-Bus API version of [`Protector`]
+#[derive(Serialize, zvariant::Type)]
+struct DbusProtectorData(HashMap<&'static str, Value<'static>>);
+
+impl From<&Protector> for DbusProtectorData {
+    fn from(p: &Protector) -> Self {
+        let data = HashMap::from([
+            ("id", Value::from(p.id.to_string())),
+            ("type", Value::from(p.get_type().to_string())),
+            ("name", Value::from(p.get_name().to_string())),
+            ("needs-password", Value::from(p.needs_password())),
+        ]);
+        DbusProtectorData(data)
+    }
+}
+
+impl From<&ProtectedPolicyKey> for DbusProtectorData {
+    fn from(p: &ProtectedPolicyKey) -> Self {
+        DbusProtectorData::from(&p.protector)
+    }
+}
+
+/// This contains the data of a set of policies.
+/// It maps the policy id to a list of protectors.
+#[derive(Serialize, zvariant::Type)]
+struct DbusPolicyData(HashMap<String, Vec<DbusProtectorData>>);
 
 /// Lock a directory
 fn do_lock_dir(dir: &Path) -> anyhow::Result<()> {
@@ -114,34 +155,8 @@ fn do_change_protector_password(
 /// Get the encryption status of a directory
 fn do_get_dir_status(
     dir: &Path,
-) -> anyhow::Result<(&'static str, String, Vec<DbusProtectorData>)> {
-    use dirlock::DirStatus::*;
-    use dirlock::fscrypt::KeyStatus::*;
-
-    let dir_status = dirlock::open_dir(dir, keystore())?;
-
-    // TODO detect when the filesystem does not support encryption
-    let status = match &dir_status {
-        Unencrypted => "unencrypted",
-        Encrypted(d) => match d.key_status {
-            Absent => "locked",
-            Present => "unlocked",
-            IncompletelyRemoved => "partially-locked",
-        },
-        KeyMissing => "key-missing",
-        Unsupported => "unsupported",
-    };
-
-    if let Encrypted(d) = dir_status {
-        let keyid = d.policy.keyid.to_string();
-        let prots : Vec<_> = d.protectors
-            .iter()
-            .map(|p| get_dbus_protector_data(&p.protector))
-            .collect();
-        Ok((status, keyid, prots))
-    } else {
-        Ok((status, String::new(), vec![]))
-    }
+) -> anyhow::Result<DbusDirStatus> {
+    dirlock::open_dir(dir, keystore()).map(DbusDirStatus::from)
 }
 
 /// Encrypt a directory using an existing protector
@@ -199,21 +214,41 @@ fn do_remove_protector(protector_id: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Get a protector
+fn do_get_protector(id: ProtectorId) -> anyhow::Result<DbusProtectorData> {
+    let ks = keystore();
+    let Ok(prot) = ks.load_protector(id) else {
+        bail!("Error reading protector {id}");
+    };
+    Ok(DbusProtectorData::from(&prot))
+}
+
 /// Get all existing protectors
-fn do_get_protectors() -> anyhow::Result<Vec<DbusProtectorData>> {
+fn do_get_all_protectors() -> anyhow::Result<Vec<DbusProtectorData>> {
     let ks = keystore();
     let prot_ids = ks.protector_ids()
         .map_err(|e| anyhow!("Error getting list of protectors: {e}"))?;
 
     let mut prots = vec![];
     for id in prot_ids {
-        match ks.load_protector(id) {
-            Ok(prot) => prots.push(prot),
-            _ => bail!("Error reading protector {id}"),
-        }
+        prots.push(do_get_protector(id)?);
     }
+    Ok(prots)
+}
 
-    Ok(prots.iter().map(get_dbus_protector_data).collect())
+/// Get all existing policies
+fn do_get_all_policies() -> anyhow::Result<DbusPolicyData> {
+    let mut result = HashMap::new();
+    let ks = keystore();
+    for id in ks.policy_key_ids()? {
+        let (prots, unusable) = ks.get_protectors_for_policy(&id)?;
+        if ! unusable.is_empty() {
+            bail!("Error reading protectors for policy {id}");
+        }
+        let prots = prots.iter().map(DbusProtectorData::from).collect();
+        result.insert(id.to_string(), prots);
+    }
+    Ok(DbusPolicyData(result))
 }
 
 /// Add a protector to an encryption policy
@@ -314,7 +349,7 @@ impl Manager {
     async fn get_dir_status(
         &mut self,
         dir: &Path,
-    ) -> Result<(&'static str, String, Vec<DbusProtectorData>)> {
+    ) -> Result<DbusDirStatus> {
         do_get_dir_status(dir)
             .map_err(|e| Error::Failed(e.to_string()))
     }
@@ -347,8 +382,19 @@ impl Manager {
             .map_err(|e| Error::Failed(e.to_string()))
     }
 
-    async fn get_protectors(&self) -> Result<Vec<DbusProtectorData>> {
-        do_get_protectors()
+    async fn get_all_protectors(&self) -> Result<Vec<DbusProtectorData>> {
+        do_get_all_protectors()
+            .map_err(|e| Error::Failed(e.to_string()))
+    }
+
+    async fn get_all_policies(&self) -> Result<DbusPolicyData> {
+        do_get_all_policies()
+            .map_err(|e| Error::Failed(e.to_string()))
+    }
+
+    async fn get_protector(&self, id: &str) -> Result<DbusProtectorData> {
+        ProtectorId::from_str(id)
+            .and_then(do_get_protector)
             .map_err(|e| Error::Failed(e.to_string()))
     }
 
