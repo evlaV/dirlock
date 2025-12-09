@@ -664,7 +664,7 @@ package() {
   cd "$srcdir/$pkgname"
 
   # Data dir
-  install -d -m0700 "$pkgdir/var/lib/dirlock/"
+  install -d -m0711 "$pkgdir/var/lib/dirlock/"
 
   # Main binary
   install -m755 -D "target/release/dirlock" "$pkgdir/usr/bin/dirlock"
