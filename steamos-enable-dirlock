@@ -200,7 +200,7 @@ echo "Use it at your own risk and make a backup first if you have valuable data.
 echo
 echo -n "Do you want to proceed? [y/N] "
 read n
-if [ "$n" != "y" ]; then
+if [ "$n" != "y" ] && [ "$n" != "Y" ]; then
     echo "Aborting"
     exit 0
 fi

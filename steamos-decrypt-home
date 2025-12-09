@@ -156,7 +156,7 @@ echo "Use it at your own risk and make a backup first if you have valuable data.
 echo
 echo -n "Do you want to proceed? [y/N] "
 read n
-if [ "$n" != "y" ]; then
+if [ "$n" != "y" ] && [ "$n" != "Y" ]; then
     echo "Aborting"
     exit 0
 fi
@@ -181,7 +181,7 @@ You can encrypt it again with the following command:
 EOF
 echo -n "Do you want to reboot the system now? [Y/n] "
 read n
-if [ "$n" != "y" ] && [ "$n" != "" ]; then
+if [ "$n" != "y" ] && [ "$n" != "Y" ] && [ "$n" != "" ]; then
     echo "Aborting"
     exit 0
 fi
