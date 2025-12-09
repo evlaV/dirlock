@@ -4,21 +4,38 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
-use anyhow::{bail, ensure, Result};
+use anyhow::{bail, Result};
+use nix::fcntl;
 use std::fs;
+use std::io::Write;
 use std::os::fd::AsRawFd;
 use std::os::linux::fs::MetadataExt;
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
-use std::process::Command;
+use std::path::{Path, PathBuf};
 use tempdir::TempDir;
 use walkdir::WalkDir;
 
 use crate::{
     Keystore,
-    fscrypt,
+    cloner::DirectoryCloner,
+    fscrypt::{self, PolicyKeyId},
     protector::{Protector, ProtectorKey},
 };
+
+/// A background process that converts an unencrypted directory into
+/// an encrypted one.
+pub struct ConvertJob {
+    cloner: DirectoryCloner,
+    keyid: PolicyKeyId,
+    // Original dir to encrypt
+    srcdir: PathBuf,
+    // Temporary work directory.
+    // The top-level tempdir is unencrypted but it contains
+    // an encrypted directory inside, {tempdir}/encrypted
+    tempdir: TempDir,
+    // Encrypted copy of srcdir, located inside {tempdir}/encrypted
+    dstdir: PathBuf,
+}
 
 /// Check if an unencrypted directory can be converted into an encrypted one
 pub fn check_can_convert_dir(dir: &Path) -> Result<()> {
@@ -56,43 +73,90 @@ pub fn check_can_convert_dir(dir: &Path) -> Result<()> {
 
 /// Convert an unencrypted directory into an encrypted one
 pub fn convert_dir(dir: &Path, protector: &Protector, protector_key: ProtectorKey,
-                   ks: &Keystore) -> Result<fscrypt::PolicyKeyId> {
-    let dir = dir.canonicalize()?;
-    let parent = dir.parent().unwrap_or(&dir);
+                   ks: &Keystore) -> Result<PolicyKeyId> {
+    let job = ConvertJob::start(dir, protector, protector_key, ks)?;
+    let mut stdout = std::io::stdout();
+    let mut total = 0;
+    // Display a progress indicator every half a second
+    while ! job.is_finished() {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        let current = job.progress() / 5;
+        if current > total {
+            print!(".{}%", current * 5);
+            total = current;
+        } else {
+            print!(".");
+        }
+        _ = stdout.flush();
+    }
+    println!();
+    job.commit()
+}
 
-    // Create a temporary work dir in the parent directory
-    let tempdir = TempDir::new_in(parent, ".dirlock")?;
-    let workdir = tempdir.path();
-    fs::set_permissions(workdir, {
-        let mut perms = fs::metadata(workdir)?.permissions();
-        perms.set_mode(0o700);
-        perms
-    })?;
-    // Create an encrypted directory inside the work dir
-    let workdir_e = workdir.join("encrypted");
-    fs::create_dir(&workdir_e)?;
-    let keyid = crate::encrypt_dir(&workdir_e, protector, protector_key, ks)?;
+impl ConvertJob {
+    /// Start a new asynchronous job to convert `dir` to an encrypted folder
+    pub fn start(dir: &Path, protector: &Protector, protector_key: ProtectorKey,
+                 ks: &Keystore) -> Result<ConvertJob> {
+        let srcdir = dir.canonicalize()?;
+        let Some(parent) = srcdir.parent() else {
+            bail!("Cannot encrypt the root directory");
+        };
 
-    // Copy the source directory inside the encrypted directory.
-    // This will encrypt the data in the process.
-    let encrypted_dir = workdir_e.join("data");
-    let status = Command::new("cp")
-        .arg("-a")
-        .arg(dir.as_os_str())
-        .arg(encrypted_dir.as_os_str())
-        .status()?;
+        // Create a temporary work dir in the parent directory
+        let tempdir = TempDir::new_in(parent, ".dirlock")?;
+        let workdir = tempdir.path();
+        fs::set_permissions(workdir, {
+            let mut perms = fs::metadata(workdir)?.permissions();
+            perms.set_mode(0o700);
+            perms
+        })?;
+        // Create an encrypted directory inside the work dir
+        let workdir_e = workdir.join("encrypted");
+        fs::create_dir(&workdir_e)?;
+        let keyid = crate::encrypt_dir(&workdir_e, protector, protector_key, ks)?;
 
-    ensure!(status.success(), "Error encrypting data");
+        // Copy the source directory inside the encrypted directory.
+        // This will encrypt the data in the process.
+        let dstdir = workdir_e.join("data");
+        let cloner = DirectoryCloner::start(&srcdir, &dstdir)?;
+        let job = ConvertJob { cloner, keyid, srcdir, tempdir, dstdir };
 
-    // Move the encrypted copy ("data") from workdir/encrypted/ to workdir/
-    let encrypted_dir2 = workdir.join("data");
-    fs::rename(&encrypted_dir, &encrypted_dir2)?;
+        Ok(job)
+    }
 
-    // Sync the filesystem
-    let _ = fs::File::open(&encrypted_dir2).map(|f| nix::unistd::syncfs(f.as_raw_fd()));
+    /// Return the current progress percentage
+    pub fn progress(&self) -> i32 {
+        self.cloner.progress()
+    }
 
-    // Exchange atomically the source directory and its encrypted copy
-    nix::fcntl::renameat2(None, &dir, None, &encrypted_dir2, nix::fcntl::RenameFlags::RENAME_EXCHANGE)?;
+    /// Check is the job is finished
+    pub fn is_finished(&self) -> bool {
+        self.cloner.is_finished()
+    }
 
-    Ok(keyid)
+    /// Cancel the operation
+    pub fn stop(&mut self) -> Result<()> {
+        self.cloner.stop()
+    }
+
+    /// Commit the changes and return the policy ID
+    pub fn commit(self) -> Result<PolicyKeyId> {
+        // Wait until the data is copied
+        if let Err(e) = self.cloner.wait() {
+            bail!("Error encrypting data: {e}");
+        }
+
+        // Move the encrypted copy from workdir/encrypted/ to workdir/
+        let dstdir_2 = self.tempdir.path().join("data");
+        fs::rename(&self.dstdir, &dstdir_2)?;
+
+        // Exchange atomically the source directory and its encrypted copy
+        let syncfd = fs::File::open(self.tempdir.path())?;
+        _ = nix::unistd::syncfs(syncfd.as_raw_fd());
+        fcntl::renameat2(None, &self.srcdir, None, &dstdir_2,
+                         fcntl::RenameFlags::RENAME_EXCHANGE)?;
+        _ = nix::unistd::syncfs(syncfd.as_raw_fd());
+
+        Ok(self.keyid)
+    }
 }
