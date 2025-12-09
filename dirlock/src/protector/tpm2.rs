@@ -13,6 +13,7 @@ use crate::kdf::Kdf;
 use {
     anyhow::anyhow,
     crate::config::Config,
+    crate::crypto::Aes256Key,
     crate::kdf::Pbkdf2,
     rand::{RngCore, rngs::OsRng},
     std::cell::OnceCell,
@@ -62,7 +63,6 @@ use {
 
 use crate::{
     crypto::{
-        Aes256Key,
         AesIv,
         Hmac,
     },
