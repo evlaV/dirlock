@@ -135,8 +135,13 @@ impl ConvertJob {
     }
 
     /// Cancel the operation
-    pub fn stop(&mut self) -> Result<()> {
-        self.cloner.stop()
+    pub fn cancel(&self) -> Result<()> {
+        self.cloner.cancel()
+    }
+
+    /// Wail until the operation is done
+    pub fn wait(&self) -> Result<()> {
+        self.cloner.wait()
     }
 
     /// Commit the changes and return the policy ID

@@ -17,18 +17,27 @@ use std::{
     process::Child,
     process::ChildStdout,
     process::Command,
+    process::ExitStatus,
     process::Stdio,
     sync::Arc,
+    sync::Condvar,
+    sync::Mutex,
+    sync::atomic::AtomicBool,
     sync::atomic::AtomicI32,
     sync::atomic::Ordering::Relaxed,
-    thread::JoinHandle,
 };
 
 /// A background process that clones a directory with all its contents
 pub struct DirectoryCloner {
-    child: Child,
-    progress: Arc<AtomicI32>,
-    thread: Option<JoinHandle<()>>,
+    child_pid: Pid,
+    state: Arc<ClonerState>,
+}
+
+struct ClonerState {
+    progress: AtomicI32,
+    finished: AtomicBool,
+    exit_status: Mutex<Option<std::io::Result<ExitStatus>>>,
+    condvar: Condvar,
 }
 
 impl DirectoryCloner {
@@ -62,37 +71,45 @@ impl DirectoryCloner {
             bail!("Failed to run rsync");
         };
 
-        // Parse the rsync output to get the progress status
-        let progress = Arc::new(AtomicI32::new(0));
-        let progress2 = progress.clone();
-        let thread = Some(std::thread::spawn(move || {
-            Self::parse_rsync_ouput(stdout, progress2, dst_fd)
-        }));
+        let child_pid = Pid::from_raw(child.id() as i32);
 
-        Ok(Self { child, progress, thread })
+        // Parse the rsync output to get the progress status
+        let progress = AtomicI32::new(0);
+        let finished = AtomicBool::new(false);
+        let exit_status = Mutex::new(None);
+        let condvar = Condvar::new();
+        let state = Arc::new(ClonerState { progress, finished, exit_status, condvar });
+        let state2 = state.clone();
+        std::thread::spawn(move || {
+            Self::parse_rsync_ouput(child, stdout, state2, dst_fd)
+        });
+
+        Ok(Self { child_pid, state })
     }
 
-    fn parse_rsync_ouput(stdout: ChildStdout, progress: Arc<AtomicI32>,
-                         syncfd: File) {
+    /// Parse the output of the rsync command and wait until it's done.
+    /// This runs on its own separate thread.
+    fn parse_rsync_ouput(mut child: Child, stdout: ChildStdout,
+                         state: Arc<ClonerState>, syncfd: File) {
         const REGEX : &str = r" *[0-9,]+ *([0-9]{1,3})% .* to-chk=([0-9]+)/";
         let re = regex::bytes::Regex::new(REGEX).unwrap();
         let mut reader = BufReader::new(stdout);
         let mut line = Vec::new();
         let mut to_chk = i32::MAX;
-        progress.store(0, Relaxed);
-        loop {
+        state.progress.store(0, Relaxed);
+        let read_status = loop {
             line.clear();
             // rsync with --info=progress2 separates lines with '\r'
             match reader.read_until(b'\r', &mut line) {
-                Err(_) => break, // Error reading from child process
+                Err(e) => break Err(e), // Error reading from child process
                 Ok(0) => { // EOF
                     // Sync the filesystem before finishing
                     _ = nix::unistd::syncfs(syncfd.as_raw_fd());
                     if to_chk == 0 {
                         // set progress to 100 if rsync doesn't do it
-                        progress.store(100, Relaxed);
+                        state.progress.store(100, Relaxed);
                     }
-                    break;
+                    break Ok(());
                 },
                 Ok(_) => (),
             }
@@ -100,12 +117,12 @@ impl DirectoryCloner {
             // Parse each line to get the progress percentage and the
             // number of files left (&[u8] -> &str -> i32)
             if let Some(capture) = re.captures(&line) {
-                let cur_progress = progress.load(Relaxed);
+                let cur_progress = state.progress.load(Relaxed);
                 let new_progress = std::str::from_utf8(&capture[1]).ok()
                     .and_then(|s| str::parse(s).ok())
                     .unwrap_or(cur_progress);
                 if new_progress > cur_progress {
-                    progress.store(new_progress, Relaxed);
+                    state.progress.store(new_progress, Relaxed);
                 }
 
                 let new_to_chk = std::str::from_utf8(&capture[2]).ok()
@@ -113,50 +130,49 @@ impl DirectoryCloner {
                     .unwrap_or(to_chk);
                 to_chk = std::cmp::min(to_chk, new_to_chk);
             }
-        }
+        };
+
+        let child_status = child.wait();
+        let mut exit_status = state.exit_status.lock().unwrap();
+        *exit_status = match (child_status, read_status) {
+            (Err(e), _     ) => Some(Err(e)),
+            (_     , Err(e)) => Some(Err(e)),
+            (Ok(s),  Ok(())) => Some(Ok(s)),
+        };
+        state.finished.store(true, Relaxed);
+        state.condvar.notify_all();
     }
 
     /// Return the current progress percentage
     pub fn progress(&self) -> i32 {
-        self.progress.load(Relaxed)
+        self.state.progress.load(Relaxed)
     }
 
     /// Check is the copy is finished
     pub fn is_finished(&self) -> bool {
-        match &self.thread {
-            Some(t) => t.is_finished(),
-            None => true,
-        }
+        self.state.finished.load(Relaxed)
     }
 
-    /// Stop the copy operation, killing the child rsync process
-    pub fn stop(&mut self) -> Result<()> {
-        // Kill the child if it's still running
-        if self.child.try_wait().transpose().is_none() {
-            let child_pid = Pid::from_raw(self.child.id() as i32);
-            signal::kill(child_pid, Some(signal::SIGTERM))?;
-        }
-        // Wait for the thread
-        if let Some(t) = self.thread.take() {
-            _ = t.join();
+    /// Cancel the copy operation, killing the child rsync process
+    pub fn cancel(&self) -> Result<()> {
+        if ! self.is_finished() {
+            signal::kill(self.child_pid, Some(signal::SIGTERM))?;
         }
         Ok(())
     }
 
     /// Wait until the copy is finished
-    pub fn wait(mut self) -> Result<()> {
-        if let Some(t) = self.thread.take() {
-            if t.join().is_err() {
-                eprintln!("Thread panicked");
-            }
+    pub fn wait(&self) -> Result<()> {
+        let mut exit_status = self.state.exit_status.lock().unwrap();
+        while exit_status.is_none() {
+            exit_status = self.state.condvar.wait(exit_status).unwrap();
         }
-        // Normallly the child process should have finished before the thread.
-        // If it's still alive, something went wrong, so kill it.
-        self.stop()?;
-        match self.child.wait()?.code() {
-            Some(0) => (),
-            Some(n) => bail!("rsync exited with code {n}"),
-            None => bail!("rsync killed by signal"),
+        let status = exit_status.as_ref().unwrap();
+        match status.as_ref().map(|e| e.code()) {
+            Ok(Some(0)) => (),
+            Ok(Some(n)) => bail!("rsync exited with code {n}"),
+            Ok(None) => bail!("rsync killed by signal"),
+            Err(e) => bail!("{e}"),
         }
         Ok(())
     }
@@ -165,6 +181,6 @@ impl DirectoryCloner {
 impl Drop for DirectoryCloner {
     /// Make sure that the child process is killed on drop
     fn drop(&mut self) {
-        let _ = self.stop();
+        let _ = self.cancel();
     }
 }

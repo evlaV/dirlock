@@ -11,14 +11,19 @@ use zbus::fdo::Error;
 use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
+use std::sync::Arc;
+use tokio::signal::unix::{signal, SignalKind};
+use tokio::sync::mpsc;
 use zbus::{
-    fdo::DBusProxy,
     interface,
+    object_server::InterfaceRef,
+    object_server::SignalEmitter,
     zvariant::{self, Value},
 };
 use dirlock::{
     DirStatus,
     ProtectedPolicyKey,
+    convert::ConvertJob,
     fscrypt::{
         self,
         PolicyKeyId,
@@ -32,8 +37,16 @@ use dirlock::{
     },
 };
 
-struct Manager {
-    _proxy: DBusProxy<'static>,
+/// Events sent by background tasks to the main thread
+enum Event {
+    JobFinished(u32),
+}
+
+/// Global state of the dirlock D-Bus daemon
+struct DirlockDaemon {
+    jobs: HashMap<u32, Arc<ConvertJob>>,
+    last_jobid: u32,
+    tx: mpsc::Sender<Event>,
 }
 
 /// This is the D-Bus API version of [`DirStatus`]
@@ -183,6 +196,29 @@ fn do_encrypt_dir(
     Ok(keyid.to_string())
 }
 
+/// Convert a directory using an existing protector
+fn do_convert_dir(
+    dir: &Path,
+    pass: &str,
+    protector_id: &str,
+) -> anyhow::Result<ConvertJob> {
+    let ks = keystore();
+    let protector_id = ProtectorId::from_str(protector_id)?;
+    let protector = ks.load_protector(protector_id)?;
+
+    match dirlock::open_dir(dir, ks)? {
+        DirStatus::Unencrypted => (),
+        x => bail!("{}", x.error_msg()),
+    }
+
+    let key = match protector.unwrap_key(pass.as_bytes())? {
+        Some(k) => k,
+        None => bail!("Authentication failed"),
+    };
+
+    ConvertJob::start(dir, &protector, key, ks)
+}
+
 /// Create a new protector
 fn do_create_protector(
     ptype: &str,
@@ -306,9 +342,26 @@ fn do_remove_protector_from_policy(
     Ok(())
 }
 
+impl DirlockDaemon {
+    /// Handle events sent by background tasks
+    async fn handle_event(&mut self, emitter: &SignalEmitter<'_>, ev: Event) -> zbus::Result<()> {
+        match ev {
+            Event::JobFinished(jobid) => {
+                let Some(job) = self.jobs.remove(&jobid) else {
+                    return Err(zbus::Error::Failure(format!("Job {jobid} not found")));
+                };
+                match Arc::into_inner(job).unwrap().commit() {
+                    Ok(keyid) => Self::job_finished(emitter, jobid, keyid.to_string()).await,
+                    Err(e) => Self::job_failed(emitter, jobid, e.to_string()).await,
+                }
+            }
+        }
+    }
+}
+
 /// D-Bus API
 #[interface(name = "com.valvesoftware.Dirlock")]
-impl Manager {
+impl DirlockDaemon {
     async fn lock_dir(
         &self,
         dir: &Path
@@ -347,7 +400,7 @@ impl Manager {
     }
 
     async fn get_dir_status(
-        &mut self,
+        &self,
         dir: &Path,
     ) -> Result<DbusDirStatus> {
         do_get_dir_status(dir)
@@ -355,7 +408,7 @@ impl Manager {
     }
 
     async fn encrypt_dir(
-        &mut self,
+        &self,
         dir: &Path,
         pass: &str,
         protector_id: &str,
@@ -364,8 +417,78 @@ impl Manager {
             .map_err(|e| Error::Failed(e.to_string()))
     }
 
-    async fn create_protector(
+    async fn convert_dir(
         &mut self,
+        dir: &Path,
+        pass: &str,
+        protector_id: &str,
+        #[zbus(signal_emitter)]
+        emitter: SignalEmitter<'_>,
+    ) -> Result<u32> {
+        // Create a new ConvertJob and store it in self.jobs
+        let job = do_convert_dir(dir, pass, protector_id)
+            .map(Arc::new)
+            .map_err(|e| Error::Failed(e.to_string()))?;
+        self.last_jobid += 1;
+        let jobid = self.last_jobid;
+        self.jobs.insert(jobid, job.clone());
+
+        // Launch a task that reports the status of the job
+        let emitter = emitter.into_owned();
+        let tx = self.tx.clone();
+        tokio::task::spawn(async move {
+            let duration = std::time::Duration::new(2, 0);
+            let mut progress = 0;
+            while ! job.is_finished() {
+                tokio::time::sleep(duration).await;
+                let new_progress = job.progress();
+                if new_progress > progress {
+                    progress = new_progress;
+                    _ = Self::job_progress(&emitter, jobid, progress).await;
+                }
+            }
+            // Once the job is finished, drop this reference and emit
+            // the JobFinished signal.
+            _ = job.wait();
+            drop(job);
+            _ = tx.send(Event::JobFinished(jobid)).await;
+        });
+
+        // Return the job ID to the caller
+        Ok(jobid)
+    }
+
+    async fn cancel_job(
+        &self,
+        jobn: u32,
+    ) -> Result<()> {
+        match self.jobs.get(&jobn) {
+            Some(job) => job.cancel().map_err(|e| Error::Failed(e.to_string())),
+            None => Err(Error::Failed(format!("Job {jobn} not found"))),
+        }
+    }
+
+    async fn job_status(
+        &self,
+        jobn: u32,
+    ) -> Result<i32> {
+        match self.jobs.get(&jobn) {
+            Some(job) => Ok(job.progress()),
+            None => Err(Error::Failed(format!("Job {jobn} not found"))),
+        }
+    }
+
+    #[zbus(signal)]
+    async fn job_finished(e: &SignalEmitter<'_>, jobid: u32, keyid: String) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn job_failed(e: &SignalEmitter<'_>, jobid: u32, error: String) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn job_progress(e: &SignalEmitter<'_>, jobid: u32, progress: i32) -> zbus::Result<()>;
+
+    async fn create_protector(
+        &self,
         ptype: &str,
         name: &str,
         pass: &str,
@@ -375,7 +498,7 @@ impl Manager {
     }
 
     async fn remove_protector(
-        &mut self,
+        &self,
         protector_id: &str,
     ) -> Result<()> {
         do_remove_protector(protector_id)
@@ -423,18 +546,51 @@ impl Manager {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dirlock::init()?;
+    let (tx, mut rx) = mpsc::channel::<Event>(2);
     let builder = zbus::connection::Builder::session()?;
     let conn = builder.name("com.valvesoftware.Dirlock")?
         .build()
         .await?;
-    let proxy = DBusProxy::new(&conn).await?;
-    let manager = Manager { _proxy: proxy };
+    let daemon = DirlockDaemon {
+        jobs: HashMap::new(),
+        last_jobid: 0,
+        tx,
+    };
 
     conn.object_server()
-        .at("/com/valvesoftware/Dirlock", manager)
+        .at("/com/valvesoftware/Dirlock", daemon)
         .await?;
 
-    std::future::pending::<()>().await;
+    let iface : InterfaceRef<DirlockDaemon> =
+        conn.object_server().interface("/com/valvesoftware/Dirlock").await?;
 
-    Ok(())
+    loop {
+        let mut sigquit = signal(SignalKind::quit())?;
+        let mut sigterm = signal(SignalKind::terminate())?;
+        let r = tokio::select! {
+            e = rx.recv() => match e {
+                Some(ev) => {
+                    let emitter = iface.signal_emitter();
+                    _ = iface.get_mut().await.handle_event(emitter, ev).await;
+                    Ok(())
+                },
+                None => Err(anyhow!("Event channel unexpectedly closed")),
+            },
+            _ = tokio::signal::ctrl_c() => {
+                eprintln!("Got SIGINT, shutting down");
+                break Ok(());
+            },
+            _ = sigquit.recv() => Err(anyhow!("Got SIGQUIT")),
+            e = sigterm.recv() => match e {
+                Some(()) => {
+                    eprintln!("Got SIGTERM, shutting down");
+                    break Ok(());
+                }
+                None => Err(anyhow!("SIGTERM pipe broke")),
+            },
+        };
+        if r.is_err() {
+            break r;
+        }
+    }
 }
