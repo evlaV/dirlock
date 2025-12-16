@@ -49,6 +49,17 @@ struct DirlockDaemon {
     tx: mpsc::Sender<Event>,
 }
 
+/// Convert a Result into a zbus::fdo::Result
+trait IntoDbusResult<T> {
+    fn into_dbus(self) -> zbus::fdo::Result<T>;
+}
+
+impl<T> IntoDbusResult<T> for anyhow::Result<T> {
+    fn into_dbus(self) -> zbus::fdo::Result<T> {
+        self.map_err(|e| Error::Failed(e.to_string()))
+    }
+}
+
 /// This is the D-Bus API version of [`DirStatus`]
 #[derive(Serialize, zvariant::Type)]
 struct DbusDirStatus(HashMap<&'static str, Value<'static>>);
@@ -366,8 +377,7 @@ impl DirlockDaemon {
         &self,
         dir: &Path
     ) -> Result<()> {
-        do_lock_dir(dir)
-            .map_err(|e| Error::Failed(e.to_string()))
+        do_lock_dir(dir).into_dbus()
     }
 
     async fn unlock_dir(
@@ -376,8 +386,7 @@ impl DirlockDaemon {
         pass: &str,
         protector_id: &str,
     ) -> Result<()> {
-        do_unlock_dir(dir, pass, protector_id)
-            .map_err(|e| Error::Failed(e.to_string()))
+        do_unlock_dir(dir, pass, protector_id).into_dbus()
     }
 
     async fn verify_protector_password(
@@ -385,8 +394,7 @@ impl DirlockDaemon {
         pass: &str,
         protector_id: &str,
     ) -> Result<bool> {
-        do_verify_protector_password(pass, protector_id)
-            .map_err(|e| Error::Failed(e.to_string()))
+        do_verify_protector_password(pass, protector_id).into_dbus()
     }
 
     async fn change_protector_password(
@@ -395,16 +403,14 @@ impl DirlockDaemon {
         newpass: &str,
         protector_id: &str,
     ) -> Result<()> {
-        do_change_protector_password(pass, newpass, protector_id)
-            .map_err(|e| Error::Failed(e.to_string()))
+        do_change_protector_password(pass, newpass, protector_id).into_dbus()
     }
 
     async fn get_dir_status(
         &self,
         dir: &Path,
     ) -> Result<DbusDirStatus> {
-        do_get_dir_status(dir)
-            .map_err(|e| Error::Failed(e.to_string()))
+        do_get_dir_status(dir).into_dbus()
     }
 
     async fn encrypt_dir(
@@ -413,8 +419,7 @@ impl DirlockDaemon {
         pass: &str,
         protector_id: &str,
     ) -> Result<String> {
-        do_encrypt_dir(dir, pass, protector_id)
-            .map_err(|e| Error::Failed(e.to_string()))
+        do_encrypt_dir(dir, pass, protector_id).into_dbus()
     }
 
     async fn convert_dir(
@@ -428,7 +433,7 @@ impl DirlockDaemon {
         // Create a new ConvertJob and store it in self.jobs
         let job = do_convert_dir(dir, pass, protector_id)
             .map(Arc::new)
-            .map_err(|e| Error::Failed(e.to_string()))?;
+            .into_dbus()?;
         self.last_jobid += 1;
         let jobid = self.last_jobid;
         self.jobs.insert(jobid, job.clone());
@@ -463,7 +468,7 @@ impl DirlockDaemon {
         jobn: u32,
     ) -> Result<()> {
         match self.jobs.get(&jobn) {
-            Some(job) => job.cancel().map_err(|e| Error::Failed(e.to_string())),
+            Some(job) => job.cancel().into_dbus(),
             None => Err(Error::Failed(format!("Job {jobn} not found"))),
         }
     }
@@ -493,32 +498,28 @@ impl DirlockDaemon {
         name: &str,
         pass: &str,
     ) -> Result<String> {
-        do_create_protector(ptype, name, pass)
-            .map_err(|e| Error::Failed(e.to_string()))
+        do_create_protector(ptype, name, pass).into_dbus()
     }
 
     async fn remove_protector(
         &self,
         protector_id: &str,
     ) -> Result<()> {
-        do_remove_protector(protector_id)
-            .map_err(|e| Error::Failed(e.to_string()))
+        do_remove_protector(protector_id).into_dbus()
     }
 
     async fn get_all_protectors(&self) -> Result<Vec<DbusProtectorData>> {
-        do_get_all_protectors()
-            .map_err(|e| Error::Failed(e.to_string()))
+        do_get_all_protectors().into_dbus()
     }
 
     async fn get_all_policies(&self) -> Result<DbusPolicyData> {
-        do_get_all_policies()
-            .map_err(|e| Error::Failed(e.to_string()))
+        do_get_all_policies().into_dbus()
     }
 
     async fn get_protector(&self, id: &str) -> Result<DbusProtectorData> {
         ProtectorId::from_str(id)
             .and_then(do_get_protector)
-            .map_err(|e| Error::Failed(e.to_string()))
+            .into_dbus()
     }
 
     async fn add_protector_to_policy(
@@ -530,7 +531,7 @@ impl DirlockDaemon {
         unlock_with_pass: &str,
     ) -> Result<()> {
         do_add_protector_to_policy(policy, protector, protector_pass, unlock_with, unlock_with_pass)
-            .map_err(|e| Error::Failed(e.to_string()))
+            .into_dbus()
     }
 
     async fn remove_protector_from_policy(
@@ -539,7 +540,7 @@ impl DirlockDaemon {
         protector: &str,
     ) -> Result<()> {
         do_remove_protector_from_policy(policy, protector)
-            .map_err(|e| Error::Failed(e.to_string()))
+            .into_dbus()
     }
 }
 
