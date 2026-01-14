@@ -183,7 +183,8 @@ bitflags::bitflags! {
     }
 }
 
-#[derive(TryFromPrimitive, Debug, PartialEq)]
+#[derive(TryFromPrimitive, Debug, PartialEq, derive_more::Display)]
+#[display(rename_all = "kebab-case")]
 #[repr(u32)]
 /// Indicates the presence of an encryption key in the kernel (for a given filesystem).
 pub enum KeyStatus {

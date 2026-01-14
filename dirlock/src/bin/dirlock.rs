@@ -133,6 +133,7 @@ enum PolicyCommand {
     List(PolicyListArgs),
     Create(PolicyCreateArgs),
     Remove(PolicyRemoveArgs),
+    Status(PolicyStatusArgs),
     AddProtector(PolicyAddProtectorArgs),
     RemoveProtector(PolicyRemoveProtectorArgs),
 }
@@ -161,6 +162,18 @@ struct PolicyRemoveArgs {
     /// don't ask for confirmation
     #[argh(switch)]
     force: bool,
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "status")]
+/// Show if an encryption key is present in memory
+struct PolicyStatusArgs {
+    /// ID of the policy to display (default: all known to dirlock)
+    #[argh(option)]
+    policy: Option<PolicyKeyId>,
+    /// mount point of the filesystem to be checked
+    #[argh(positional)]
+    mntpoint: PathBuf,
 }
 
 #[derive(FromArgs)]
@@ -639,6 +652,25 @@ fn cmd_remove_policy(args: &PolicyRemoveArgs) -> Result<()> {
     Ok(())
 }
 
+fn cmd_policy_status(args: &PolicyStatusArgs) -> Result<()> {
+    let policies = match &args.policy {
+        Some(policy) => vec![policy.clone()],
+        None => keystore().policy_key_ids()?,
+    };
+    if policies.is_empty() {
+        return Ok(());
+    }
+    println!("Policy                              Status");
+    println!("------------------------------------------");
+    for id in &policies {
+        match fscrypt::get_key_status(&args.mntpoint, id) {
+            Ok((status, _)) => println!("{id}    {status}"),
+            Err(e) => println!("{id}    error ({e})"),
+        }
+    }
+    Ok(())
+}
+
 fn cmd_policy_add_protector(args: &PolicyAddProtectorArgs) -> Result<()> {
     let Some(policy_id) = &args.policy else {
         bail!("You must specify the ID of the encryption policy.");
@@ -957,6 +989,7 @@ fn main() -> Result<()> {
             PolicyCommand::List(_) => cmd_list_policies(),
             PolicyCommand::Create(args) => cmd_create_policy(args),
             PolicyCommand::Remove(args) => cmd_remove_policy(args),
+            PolicyCommand::Status(args) => cmd_policy_status(args),
             PolicyCommand::AddProtector(args) => cmd_policy_add_protector(args),
             PolicyCommand::RemoveProtector(args) => cmd_policy_remove_protector(args),
         }
