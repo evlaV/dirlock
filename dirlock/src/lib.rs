@@ -35,7 +35,7 @@ use std::path::{Path, PathBuf};
 pub enum DirStatus {
     Unencrypted,
     Encrypted(EncryptedDir),
-    KeyMissing,
+    KeyMissing(PolicyKeyId),
     Unsupported,
 }
 
@@ -47,7 +47,7 @@ impl DirStatus {
         match &self {
             Unencrypted => "unencrypted",
             Unsupported => "unsupported",
-            KeyMissing => "key-missing",
+            KeyMissing(_) => "key-missing",
             Encrypted(d) => match d.key_status {
                 Absent => "locked",
                 Present => "unlocked",
@@ -58,13 +58,13 @@ impl DirStatus {
 
     /// The error message to display when the status of the directory
     /// is unexpected for a given operation.
-    pub fn error_msg(&self) -> &'static str {
+    pub fn error_msg(&self) -> String {
         use DirStatus::*;
         match self {
-            Encrypted(_) => "Directory already encrypted",
-            Unencrypted  => "Directory not encrypted",
-            Unsupported  => "Directory using an unsupported encryption mechanism",
-            KeyMissing   => "Directory encrypted, key missing",
+            Encrypted(_) => "Directory already encrypted".into(),
+            Unencrypted  => "Directory not encrypted".into(),
+            Unsupported  => "Directory using an unsupported encryption mechanism".into(),
+            KeyMissing(id)   => format!("Directory encrypted, key missing ({id})"),
         }
     }
 }
@@ -106,7 +106,7 @@ pub fn open_dir(path: &Path, ks: &Keystore) -> Result<DirStatus> {
 
     let (protectors, unusable) = ks.get_protectors_for_policy(&policy.keyid)?;
     if protectors.is_empty() {
-        return Ok(DirStatus::KeyMissing);
+        return Ok(DirStatus::KeyMissing(policy.keyid));
     };
 
     let (key_status, key_flags) = fscrypt::get_key_status(path, &policy.keyid)
