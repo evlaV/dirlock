@@ -134,6 +134,7 @@ enum PolicyCommand {
     Create(PolicyCreateArgs),
     Remove(PolicyRemoveArgs),
     Status(PolicyStatusArgs),
+    Purge(PolicyPurgeArgs),
     AddProtector(PolicyAddProtectorArgs),
     RemoveProtector(PolicyRemoveProtectorArgs),
 }
@@ -172,6 +173,18 @@ struct PolicyStatusArgs {
     #[argh(option)]
     policy: Option<PolicyKeyId>,
     /// mount point of the filesystem to be checked
+    #[argh(positional)]
+    mntpoint: PathBuf,
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "purge")]
+/// Purge an encryption key from memory (locking all files)
+struct PolicyPurgeArgs {
+    /// ID of the policy to purge (default: all known to dirlock)
+    #[argh(option)]
+    policy: Option<PolicyKeyId>,
+    /// mount point of the filesystem to purge
     #[argh(positional)]
     mntpoint: PathBuf,
 }
@@ -671,6 +684,43 @@ fn cmd_policy_status(args: &PolicyStatusArgs) -> Result<()> {
     Ok(())
 }
 
+fn cmd_policy_purge(args: &PolicyPurgeArgs) -> Result<()> {
+    let policies = match &args.policy {
+        Some(policy) => vec![policy.clone()],
+        None => keystore().policy_key_ids()?,
+    };
+    if policies.is_empty() {
+        return Ok(());
+    }
+    println!("Policy                              Action");
+    println!("------------------------------------------");
+    for id in &policies {
+        use fscrypt::{KeyStatus::*, RemoveKeyUsers, RemovalStatusFlags};
+        match fscrypt::get_key_status(&args.mntpoint, id) {
+            Ok((Present, _)) | Ok((IncompletelyRemoved, _)) => {
+                match fscrypt::remove_key(&args.mntpoint, id, RemoveKeyUsers::CurrentUser) {
+                    Ok(flags) if flags.contains(RemovalStatusFlags::FilesBusy) => {
+                        println!("{id}    partially removed (still in use)");
+                    },
+                    Ok(_) => {
+                        println!("{id}    removed");
+                    },
+                    Err(e) => {
+                        println!("{id}    none (error: {e})");
+                    },
+                }
+            },
+            Ok((Absent, _)) => {
+                println!("{id}    none (key not present)");
+            },
+            Err(e) => {
+                println!("{id}    none (error: {e})");
+            },
+        }
+    }
+    Ok(())
+}
+
 fn cmd_policy_add_protector(args: &PolicyAddProtectorArgs) -> Result<()> {
     let Some(policy_id) = &args.policy else {
         bail!("You must specify the ID of the encryption policy.");
@@ -990,6 +1040,7 @@ fn main() -> Result<()> {
             PolicyCommand::Create(args) => cmd_create_policy(args),
             PolicyCommand::Remove(args) => cmd_remove_policy(args),
             PolicyCommand::Status(args) => cmd_policy_status(args),
+            PolicyCommand::Purge(args) => cmd_policy_purge(args),
             PolicyCommand::AddProtector(args) => cmd_policy_add_protector(args),
             PolicyCommand::RemoveProtector(args) => cmd_policy_remove_protector(args),
         }
