@@ -285,11 +285,19 @@ pub fn keystore() -> &'static keystore::Keystore {
 
 /// Initialize the dirlock library
 pub fn init() -> Result<()> {
+    use config::Config;
     use std::sync::Once;
     static DIRLOCK_INIT: Once = Once::new();
     DIRLOCK_INIT.call_once(|| {
         // Disable log messages from the TPM2 library
         std::env::set_var("TSS2_LOG", "all+NONE");
     });
-    config::Config::check()
+    Config::check()?;
+    // Make sure that /run exists
+    let rt_dir = Config::runtime_dir();
+    if ! rt_dir.is_dir() {
+        std::fs::create_dir(rt_dir)
+            .map_err(|e| anyhow!("Error creating runtime dir: {e}"))?;
+    }
+    Ok(())
 }

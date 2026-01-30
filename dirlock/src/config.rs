@@ -19,6 +19,7 @@ const DEFAULT_TPM2_TCTI: &str = "device:/dev/tpm0";
 // If this variable is set use this keystore dir instead of the default one
 const KEYSTORE_DIR_ENV_VAR : &str = "DIRLOCK_KEYSTORE";
 const DEFAULT_KEYSTORE_DIR : &str = "/var/lib/dirlock";
+const RUNTIME_DATA_DIR : &str = "/run";
 
 #[derive(Deserialize)]
 pub struct Config {
@@ -72,6 +73,10 @@ impl Config {
 
     pub fn keystore_dir() -> &'static Path {
         Config::get().unwrap().keystore_dir.as_path()
+    }
+
+    pub fn runtime_dir() -> &'static Path {
+        Path::new(RUNTIME_DATA_DIR)
     }
 
     pub fn check() -> Result<()> {

@@ -1,17 +1,19 @@
 /*
- * Copyright © 2025 Valve Corporation
+ * Copyright © 2025-2026 Valve Corporation
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
 use anyhow::{anyhow, bail, Result};
+use nix::libc;
 use std::io::ErrorKind;
-use std::fs::File;
-use std::os::fd::FromRawFd;
+use std::fs::{File, OpenOptions};
+use std::os::fd::{AsRawFd, FromRawFd};
 use std::os::unix::fs::{self, MetadataExt};
 use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
 
+use crate::config::Config;
 use crate::protector::{Protector, ProtectorType};
 
 /// Get the user's home dir, or None if the user does not exist
@@ -150,6 +152,52 @@ impl Drop for SafeFile {
         }
     }
 }
+
+
+/// A lock file that uses flock() internally
+pub struct LockFile {
+    _file: File,
+}
+
+impl LockFile {
+    const GLOBAL_LOCKFILE : &str = "dirlock.lock";
+
+    /// Acquire a lock file.
+    /// Blocks until the file is available.
+    pub fn new(path: &Path) -> std::io::Result<Self> {
+        Self::new_full(path, libc::LOCK_EX)
+    }
+
+    /// Acquire a lock file. This function does not block, it returns
+    /// Ok(None) if the lock is being held.
+    pub fn try_new(path: &Path) -> std::io::Result<Option<Self>> {
+        match Self::new_full(path, libc::LOCK_EX | libc::LOCK_NB) {
+            Ok(lockfile) => Ok(Some(lockfile)),
+            Err(e) if e.kind() == ErrorKind::WouldBlock => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Acquire a global, system-wide lockfile.
+    /// Blocks until the file is available.
+    pub fn global() -> std::io::Result<Self> {
+        let lockfile = Config::runtime_dir().join(Self::GLOBAL_LOCKFILE);
+        Self::new(&lockfile)
+    }
+
+    // Actual constructor, private
+    fn new_full(path: &Path, flags: std::ffi::c_int) -> std::io::Result<Self> {
+        // Open the file if it already exists, else create it
+        let _file = OpenOptions::new().create(true).write(true).truncate(false)
+            .open(path)?;
+        if unsafe { libc::flock(_file.as_raw_fd(), flags) } == 0 {
+            Ok(LockFile { _file })
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
