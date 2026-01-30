@@ -24,7 +24,6 @@ const RUNTIME_DATA_DIR : &str = "/run";
 #[derive(Deserialize)]
 pub struct Config {
     #[serde(default = "default_tpm2_tcti")]
-    #[allow(dead_code)]
     tpm2_tcti: String,
     #[serde(default = "default_keystore_dir")]
     keystore_dir: PathBuf,
@@ -66,7 +65,7 @@ impl Config {
         }).as_ref().map_err(|e| anyhow!("failed to read {CONFIG_FILE_PATH}: {e}"))
     }
 
-    #[allow(dead_code)]
+    #[cfg_attr(not(feature = "tpm2"), allow(dead_code))]
     pub fn tpm2_tcti() -> &'static str {
         Config::get().unwrap().tpm2_tcti.as_str()
     }
