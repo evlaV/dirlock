@@ -28,6 +28,23 @@ pub fn dir_is_empty(dir: &Path) -> std::io::Result<bool> {
     Ok(empty)
 }
 
+/// Like [`Path::is_dir`] but does not follow symlinks
+pub fn is_real_dir(dir: &Path) -> bool {
+    std::fs::symlink_metadata(dir)
+        .map(|md| md.is_dir())
+        .unwrap_or(false)
+}
+
+/// Create a directory but don't fail if it already exists.
+/// This fails if `dir` is a symlink to a directory.
+pub fn create_dir_if_needed(dir: &Path) -> std::io::Result<()> {
+    if is_real_dir(dir) {
+        Ok(())
+    } else {
+        std::fs::create_dir(dir)
+    }
+}
+
 /// Prompt the user for a new protector password (with confirmation) and return it
 pub fn read_new_password_for_protector(ptype: ProtectorType) -> Result<Zeroizing<String>> {
     // For FIDO2 protectors we need the existing PIN of the token, not a new one

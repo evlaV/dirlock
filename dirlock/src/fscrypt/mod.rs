@@ -371,7 +371,7 @@ pub fn get_key_status(dir: &Path, keyid: &PolicyKeyId) -> Result<(KeyStatus, Key
 
 
 /// Get the mount point of the file system that contains `dir`
-fn get_mountpoint(dir: &Path) -> Result<PathBuf> {
+pub fn get_mountpoint(dir: &Path) -> std::io::Result<PathBuf> {
     let mut current = dir.canonicalize()?;
     loop {
         // Compare a directory's metadata with its parent's

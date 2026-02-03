@@ -27,6 +27,8 @@ use std::{
     sync::atomic::Ordering::Relaxed,
 };
 
+use crate::util;
+
 /// A background process that clones a directory with all its contents
 pub struct DirectoryCloner {
     child_pid: Pid,
@@ -42,6 +44,7 @@ struct ClonerState {
 
 impl DirectoryCloner {
     /// Create a new [`DirectoryCloner`] to copy of `src` as `dst`.
+    /// If `dst` exists, its contents will be replaced. Use with caution.
     /// This returns immediately, the copy happens in the background.
     pub fn start(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<Self> {
         // Canonicalize src and check if it's the root directory
@@ -50,7 +53,7 @@ impl DirectoryCloner {
             bail!("The source path cannot be the root directory");
         }
         // Create the destination directory and canonicalize it
-        std::fs::create_dir(&dst)?;
+        util::create_dir_if_needed(dst.as_ref())?;
         let dst_fd = std::fs::File::open(&dst)?;
         let mut dst = dst.as_ref().canonicalize()?.into_os_string();
         dst.push(std::path::MAIN_SEPARATOR_STR);
@@ -58,7 +61,7 @@ impl DirectoryCloner {
         // What we do here in practice is ( cd $src ; rsync -aAXH ./ $dst/ )
         let mut child = Command::new("rsync")
             // This preserves ACLs (A), extended attributes (X) and hard links (H)
-            .args(["-aAXH", "--info=progress2", "--no-inc-recursive"])
+            .args(["-aAXH", "--info=progress2", "--no-inc-recursive", "--delete"])
             .args([OsStr::new("./"), &dst])
             .current_dir(&src)
             .stdout(Stdio::piped())

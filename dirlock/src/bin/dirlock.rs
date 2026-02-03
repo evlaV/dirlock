@@ -484,6 +484,7 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
     }
 
     if args.force && !empty_dir {
+        use dirlock::convert::*;
         println!("You are about to encrypt a directory that contains data.\n\
                   This feature is *experimental*. Make sure that you are not\n\
                   accessing the files while they are being encrypted in order\n\
@@ -496,7 +497,16 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
         if s.trim() != "y" {
             return Ok(());
         }
-        dirlock::convert::check_can_convert_dir(&args.dir)?;
+
+        match conversion_status(&args.dir)? {
+            ConversionStatus::None => (),
+            ConversionStatus::Ongoing(_) => bail!("This directory is already being encrypted"),
+            ConversionStatus::Interrupted(_) => {
+                println!("Will resume encryption of partially encrypted directory");
+            },
+        }
+
+        check_can_convert_dir(&args.dir, args.protector.as_ref(), ks)?;
     } else if !empty_dir {
         bail!("The directory is not empty. Use --force to override");
     }
