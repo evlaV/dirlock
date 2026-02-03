@@ -195,7 +195,23 @@ pub(crate) fn unlock_dir_with_key(dir: &Path, master_key: &PolicyKey) -> Result<
     Ok(())
 }
 
-/// Encrypts a directory
+/// Encrypts a directory with an existing encryption key.
+pub fn encrypt_dir_with_key(path: &Path, master_key: &PolicyKey) -> Result<()> {
+    let keyid = master_key.get_id();
+    fscrypt::add_key(path, master_key.secret())
+        .and_then(|id| {
+            if id == keyid {
+                fscrypt::set_policy(path, &id)
+            } else {
+                // This should never happen, it means that the kernel and
+                // PolicyKey::get_id() use a different algorithm.
+                Err(anyhow!("fscrypt::add_key() returned an unexpected ID!!"))
+            }
+        })
+}
+
+/// Encrypts a directory generating a new master encryption key.
+/// The key is stored to disk using the given [`Protector`].
 pub fn encrypt_dir(path: &Path, protector: &Protector, protector_key: ProtectorKey,
                    ks: &Keystore) -> Result<PolicyKeyId> {
     match open_dir(path, ks)? {
@@ -213,16 +229,7 @@ pub fn encrypt_dir(path: &Path, protector: &Protector, protector_key: ProtectorK
                                     CreateOpts::CreateAndSave, ks)?;
 
     // Add the key to the kernel and encrypt the directory
-    fscrypt::add_key(path, master_key.secret())
-        .and_then(|id| {
-            if id == policy.id {
-                fscrypt::set_policy(path, &id)
-            } else {
-                // This should never happen, it means that the kernel and
-                // PolicyKey::get_id() use a different algorithm.
-                Err(anyhow!("fscrypt::add_key() returned an unexpected ID!!"))
-            }
-        })
+    encrypt_dir_with_key(path, &master_key)
         .map_err(|e| {
             let user = RemoveKeyUsers::CurrentUser;
             let _ = fscrypt::remove_key(path, &policy.id, user);
