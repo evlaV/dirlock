@@ -1,5 +1,5 @@
 /*
- * Copyright © 2025 Valve Corporation
+ * Copyright © 2025-2026 Valve Corporation
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
@@ -145,9 +145,7 @@ impl EncryptedDir {
     pub fn unlock(&self, password: &[u8], protector_id: &ProtectorId) -> Result<bool> {
         let p = self.get_protected_policy_key(protector_id)?;
         if let Some(k) = p.protector.unwrap_policy_key(&p.policy_key, password)? {
-            if let Err(e) = fscrypt::add_key(&self.path, k.secret()) {
-                bail!("Unable to unlock directory with master key: {}", e);
-            }
+            unlock_dir_with_key(&self.path, &k)?;
             return Ok(true);
         }
 
@@ -159,9 +157,7 @@ impl EncryptedDir {
         let protector_id = protector_key.get_id();
         let p = self.get_protected_policy_key(&protector_id)?;
         if let Some(k) = p.policy_key.unwrap_key(protector_key) {
-            if let Err(e) = fscrypt::add_key(&self.path, k.secret()) {
-                bail!("Unable to unlock directory with master key: {}", e);
-            }
+            unlock_dir_with_key(&self.path, &k)?;
             return Ok(true);
         }
 
@@ -191,6 +187,13 @@ impl EncryptedDir {
     }
 }
 
+/// Unlocks a directory with a encryption key.
+pub(crate) fn unlock_dir_with_key(dir: &Path, master_key: &PolicyKey) -> Result<()> {
+    if let Err(e) = fscrypt::add_key(dir, master_key.secret()) {
+        bail!("Unable to unlock directory with master key: {}", e);
+    }
+    Ok(())
+}
 
 /// Encrypts a directory
 pub fn encrypt_dir(path: &Path, protector: &Protector, protector_key: ProtectorKey,
