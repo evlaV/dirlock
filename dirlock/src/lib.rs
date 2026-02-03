@@ -281,7 +281,7 @@ pub fn create_policy_data(protector: &Protector, protector_key: ProtectorKey,
                           ks: &Keystore) -> Result<PolicyData> {
     let master_key = policy_key.unwrap_or_else(PolicyKey::new_random);
     let mut policy = PolicyData::new(master_key.get_id(), protector.uid, protector.gid);
-    policy.add_protector(&protector_key, master_key).unwrap(); // This must always succeed
+    policy.add_protector(&protector_key, master_key)?;
     if matches!(create, CreateOpts::CreateAndSave) {
         ks.save_policy_data(&policy)?;
     }
