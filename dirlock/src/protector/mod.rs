@@ -35,7 +35,7 @@ const PROTECTOR_ID_LEN: usize = 8;
 
 /// A raw encryption key used to unwrap the master [`PolicyKey`]
 /// used by fscrypt.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ProtectorKey(Aes256Key);
 
 impl From<&[u8; PROTECTOR_KEY_LEN]> for ProtectorKey {

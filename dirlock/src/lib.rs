@@ -11,8 +11,10 @@ pub(crate) mod crypto;
 pub mod fscrypt;
 pub(crate) mod kdf;
 mod keystore;
+pub mod modhex;
 pub mod policy;
 pub mod protector;
+pub mod recovery;
 pub mod util;
 
 use anyhow::{anyhow, bail, Result};
@@ -29,6 +31,7 @@ use protector::{
     ProtectorKey,
     opts::ProtectorOpts
 };
+use recovery::RecoveryKey;
 use std::path::{Path, PathBuf};
 
 /// The encryption status of an existing directory
@@ -89,6 +92,7 @@ pub struct EncryptedDir {
     pub key_flags: fscrypt::KeyStatusFlags,
     pub protectors: Vec<ProtectedPolicyKey>,
     pub unusable: Vec<UnusableProtector>,
+    pub recovery: Option<WrappedPolicyKey>,
 }
 
 /// Gets the encryption status of a directory.
@@ -104,15 +108,17 @@ pub fn open_dir(path: &Path, ks: &Keystore) -> Result<DirStatus> {
         None    => return Ok(DirStatus::Unencrypted),
     };
 
+    let recovery = WrappedPolicyKey::load_xattr(path);
+
     let (protectors, unusable) = ks.get_protectors_for_policy(&policy.keyid)?;
-    if protectors.is_empty() {
+    if protectors.is_empty() && recovery.is_none() {
         return Ok(DirStatus::KeyMissing(policy.keyid));
     };
 
     let (key_status, key_flags) = fscrypt::get_key_status(path, &policy.keyid)
         .map_err(|e| anyhow!("Failed to get key status: {e}"))?;
 
-    Ok(DirStatus::Encrypted(EncryptedDir { path: path.into(), policy, key_status, key_flags, protectors, unusable }))
+    Ok(DirStatus::Encrypted(EncryptedDir { path: path.into(), policy, key_status, key_flags, protectors, unusable, recovery }))
 }
 
 /// Convenience function to call `open_dir` on a user's home directory
@@ -137,12 +143,50 @@ impl EncryptedDir {
         Ok(None)
     }
 
+    /// Get a directory's master encryption key using a protector key
+    fn get_master_key_with_protkey(&self, protector_key: &ProtectorKey) -> Result<Option<PolicyKey>> {
+        let protector_id = protector_key.get_id();
+        let p = self.get_protected_policy_key(&protector_id)?;
+        if let Some(k) = p.policy_key.unwrap_key(protector_key) {
+            return Ok(Some(k));
+        }
+        Ok(None)
+    }
+
+    /// Add a recovery key to an encrypted directory (deleting the previous one).
+    /// `protector_key` is used to unlock the master encryption key.
+    /// Returns a new, random [`RecoveryKey`].
+    pub fn add_recovery_key(&mut self, protector_key: &ProtectorKey) -> Result<RecoveryKey> {
+        let Ok(Some(master_key)) = self.get_master_key_with_protkey(protector_key) else {
+            bail!("Cannot unlock directory with the protector key");
+        };
+        let recovery_key = RecoveryKey::new_random();
+        let wrapped_key = WrappedPolicyKey::new(master_key, recovery_key.protector_key());
+        wrapped_key.write_xattr(&self.path)?;
+        self.recovery = Some(wrapped_key);
+        Ok(recovery_key)
+    }
+
+    /// Remove a recovery key from an encrypted directory
+    pub fn remove_recovery_key(&mut self) -> Result<()> {
+        if self.recovery.is_none() {
+            bail!("This directory does not have a recovery key");
+        };
+        WrappedPolicyKey::remove_xattr(&self.path)?;
+        self.recovery = None;
+        Ok(())
+    }
+
     /// Unlocks a directory with the given password
     ///
     /// Returns true on success, false if the password is incorrect.
     /// This call also succeeds if the directory is already unlocked
     /// as long as the password is correct.
     pub fn unlock(&self, password: &[u8], protector_id: &ProtectorId) -> Result<bool> {
+        // If password looks like a recovery key, try it first
+        if self.unlock_with_recovery_key(password).unwrap_or(true) {
+            return Ok(true);
+        }
         let p = self.get_protected_policy_key(protector_id)?;
         if let Some(k) = p.protector.unwrap_policy_key(&p.policy_key, password)? {
             unlock_dir_with_key(&self.path, &k)?;
@@ -155,13 +199,33 @@ impl EncryptedDir {
     /// Unlocks a directory using the protector key directly
     pub fn unlock_with_protkey(&self, protector_key: &ProtectorKey) -> Result<bool> {
         let protector_id = protector_key.get_id();
-        let p = self.get_protected_policy_key(&protector_id)?;
-        if let Some(k) = p.policy_key.unwrap_key(protector_key) {
+        let p = self.get_protected_policy_key(&protector_id)
+            .map(|p| &p.policy_key)
+            // If there is no protector with this key's ID then maybe
+            // it is a recovery key.
+            .or_else(|e| self.recovery.as_ref().ok_or(e))?;
+        if let Some(k) = p.unwrap_key(protector_key) {
             unlock_dir_with_key(&self.path, &k)?;
             return Ok(true);
         }
 
         Ok(false)
+    }
+
+    /// Unlocks a directory using a [`RecoveryKey`].
+    /// `pass` contains the bytes of the modhex-encoded recovery key.
+    pub fn unlock_with_recovery_key(&self, pass: &[u8]) -> Result<bool> {
+        let Some(recovery) = &self.recovery else {
+            return Ok(false);
+        };
+        let Ok(key) = RecoveryKey::from_ascii_bytes(pass) else {
+            return Ok(false);
+        };
+        let Some(master_key) = recovery.unwrap_key(key.protector_key()) else {
+            return Ok(false);
+        };
+        unlock_dir_with_key(&self.path, &master_key)?;
+        Ok(true)
     }
 
     /// Locks a directory

@@ -1,5 +1,5 @@
 /*
- * Copyright © 2025 Valve Corporation
+ * Copyright © 2025-2026 Valve Corporation
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
@@ -13,6 +13,7 @@ use std::collections::{
     HashMap,
     hash_map::Entry,
 };
+use std::path::Path;
 
 use crate::{
     fscrypt::{
@@ -136,12 +137,76 @@ pub struct WrappedPolicyKey {
 }
 
 impl WrappedPolicyKey {
+    const RECOVERY_KEY_XATTR: &str = "trusted.dirlock";
+
     /// Creates a new [`WrappedPolicyKey`] that wraps a [`PolicyKey`] with a [`ProtectorKey`]
     pub fn new(mut raw_key: PolicyKey, protector_key: &ProtectorKey) -> Self {
         let mut iv = AesIv::default();
         OsRng.fill_bytes(&mut iv.0);
         let hmac = protector_key.key().encrypt(&iv, raw_key.secret_mut());
         WrappedPolicyKey{ wrapped_key: *raw_key.secret(), iv, hmac }
+    }
+
+    /// Load a [`WrappedPolicyKey`] to be used for recovery from `path`
+    pub fn load_xattr(path: &Path) -> Option<Self> {
+        use base64::prelude::*;
+
+        // Read the xattr containing the wrapped encryption key
+        let attr = match xattr::get(path, Self::RECOVERY_KEY_XATTR) {
+            Ok(Some(v)) => String::from_utf8_lossy(&v).into_owned(),
+            _ => return None,
+        };
+        let values: Vec<&str> = attr.split(':').collect();
+
+        // Check the version and number of fields
+        if values[0] != "1" || values.len() != 4 {
+            return None;
+        }
+
+        // Parse the wrapped master key
+        let mut wrapped_key = [0u8; POLICY_KEY_LEN];
+        match BASE64_STANDARD.decode_slice(values[1], &mut wrapped_key) {
+            Ok(len) if len == POLICY_KEY_LEN => (),
+            _ => return None,
+        }
+
+        // Parse the IV
+        let mut iv = AesIv::default();
+        match BASE64_STANDARD.decode_slice(values[2], &mut iv.0) {
+            Ok(len) if len == iv.0.len() => (),
+            _ => return None,
+        }
+
+        // Parse the HMAC
+        let mut hmac = Hmac::default();
+        match BASE64_STANDARD.decode_slice(values[3], &mut hmac.0) {
+            Ok(len) if len == hmac.0.len() => (),
+            _ => return None,
+        }
+
+        Some(WrappedPolicyKey { wrapped_key, iv, hmac })
+    }
+
+    /// Write this [`WrappedPolicyKey`] to an xattr in `path` so it can be used for recovery
+    pub fn write_xattr(&self, path: &Path) -> Result<()> {
+        use base64::prelude::*;
+
+        let value = [
+            "1", // Entry version
+            &BASE64_STANDARD.encode(self.wrapped_key),
+            &BASE64_STANDARD.encode(self.iv.0),
+            &BASE64_STANDARD.encode(self.hmac.0),
+        ].join(":");
+
+        xattr::set(path, Self::RECOVERY_KEY_XATTR, value.as_bytes())?;
+
+        Ok(())
+    }
+
+    /// Remove the recovery key xattr from `path`
+    pub fn remove_xattr(path: &Path) -> Result<()> {
+        xattr::remove(path, Self::RECOVERY_KEY_XATTR)?;
+        Ok(())
     }
 
     /// Unwraps a [`PolicyKey`] with a [`ProtectorKey`]

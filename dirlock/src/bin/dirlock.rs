@@ -1,5 +1,5 @@
 /*
- * Copyright © 2025 Valve Corporation
+ * Copyright © 2025-2026 Valve Corporation
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
@@ -34,6 +34,7 @@ use dirlock::{
         fs_supports_encryption,
         read_password_for_protector,
         read_new_password_for_protector,
+        read_recovery_key,
     },
 };
 
@@ -54,6 +55,7 @@ enum Command {
     ChangePass(ChangePassArgs),
     Policy(PolicyArgs),
     Protector(ProtectorArgs),
+    Recovery(RecoveryArgs),
     Tpm2Test(Tpm2TestArgs),
     ExportMasterKey(ExportMasterKeyArgs),
     ImportMasterKey(ImportMasterKeyArgs),
@@ -78,6 +80,9 @@ struct UnlockArgs {
     /// ID of the protector used to unlock this directory
     #[argh(option)]
     protector: Option<ProtectorId>,
+    /// unlock using a recovery key
+    #[argh(switch)]
+    recovery: bool,
     /// directory
     #[argh(positional)]
     dir: PathBuf,
@@ -288,6 +293,42 @@ struct ProtectorChangePassArgs {
 }
 
 #[derive(FromArgs)]
+#[argh(subcommand, name = "recovery")]
+/// Commands to manage recovery keys
+struct RecoveryArgs {
+    #[argh(subcommand)]
+    command: RecoveryCommand,
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand)]
+enum RecoveryCommand {
+    Add(RecoveryAddArgs),
+    Remove(RecoveryRemoveArgs),
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "add")]
+/// Add a recovery key to a directory
+struct RecoveryAddArgs {
+    /// ID of the protector used to unlock the directory
+    #[argh(option)]
+    protector: Option<ProtectorId>,
+    /// directory
+    #[argh(positional)]
+    dir: PathBuf,
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "remove")]
+/// Remove a recovery key from a directory
+struct RecoveryRemoveArgs {
+    /// directory
+    #[argh(positional)]
+    dir: PathBuf,
+}
+
+#[derive(FromArgs)]
 #[argh(subcommand, name = "tpm2-test")]
 /// Test if a TPM2 is available and is usable
 struct Tpm2TestArgs { }
@@ -427,6 +468,10 @@ fn cmd_lock(args: &LockArgs) -> Result<()> {
 }
 
 fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
+    if args.recovery && args.protector.is_some() {
+        bail!("Cannot use --protector and --recovery at the same time");
+    }
+
     let encrypted_dir = match dirlock::open_dir(&args.dir, keystore())? {
         DirStatus::Encrypted(d) if d.key_status == fscrypt::KeyStatus::Present =>
             bail!("The directory {} is already unlocked", args.dir.display()),
@@ -440,6 +485,19 @@ fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
     } else {
         encrypted_dir.protectors.iter().map(|p| &p.protector).collect()
     };
+
+    // Try with a recovery key if the user requested it (or if there are no protectors)
+    if args.recovery || prots.is_empty() {
+        if encrypted_dir.recovery.is_none() {
+            bail!("The directory does not have a recovery key");
+        }
+        let pass = read_recovery_key()?;
+        if encrypted_dir.unlock_with_recovery_key(pass.as_bytes()).unwrap_or(false) {
+            return Ok(());
+        } else {
+            bail!("Unable to unlock directory");
+        }
+    }
 
     for p in &prots {
         if let Err(e) = p.get_prompt() {
@@ -873,6 +931,42 @@ fn cmd_change_protector_pass(args: &ProtectorChangePassArgs) -> Result<()> {
     do_change_verify_protector_password(args.protector, false)
 }
 
+fn cmd_recovery_add(args: &RecoveryAddArgs) -> Result<()> {
+    let mut encrypted_dir = match dirlock::open_dir(&args.dir, keystore())? {
+        DirStatus::Encrypted(d) => d,
+        x => bail!("{}", x.error_msg()),
+    };
+
+    if encrypted_dir.recovery.is_some() {
+        bail!("This directory already has a recovery key");
+    }
+
+    let prot = if let Some(id) = args.protector {
+        encrypted_dir.get_protector_by_id(&id)?
+    } else if encrypted_dir.protectors.len() == 1 {
+        &encrypted_dir.protectors[0].protector
+    } else {
+        bail!("You must specify the ID of the protector");
+    };
+
+    let pass = read_password_for_protector(prot)?;
+    let Some(protkey) = prot.unwrap_key(pass.as_bytes())? else {
+        bail!("Failed to unlock protector {}: wrong key", prot.id);
+    };
+
+    let recovery = encrypted_dir.add_recovery_key(&protkey)?;
+    println!("Recovery key added: {recovery}");
+
+    Ok(())
+}
+
+fn cmd_recovery_remove(args: &RecoveryRemoveArgs) -> Result<()> {
+    match dirlock::open_dir(&args.dir, keystore())? {
+        DirStatus::Encrypted(mut d) => d.remove_recovery_key(),
+        x => bail!("{}", x.error_msg()),
+    }
+}
+
 fn cmd_export_master_key(args: &ExportMasterKeyArgs) -> Result<()> {
     use base64::prelude::*;
     let encrypted_dir = match dirlock::open_dir(&args.dir, keystore())? {
@@ -1029,6 +1123,7 @@ fn cmd_status(args: &StatusArgs) -> Result<()> {
         println!("Flags: {}", encrypted_dir.policy.flags.flags);
     }
 
+    println!("Recovery: {}", if encrypted_dir.recovery.is_some() { "yes" } else { "no" });
     display_protectors_from_dir(encrypted_dir);
     Ok(())
 }
@@ -1060,6 +1155,10 @@ fn main() -> Result<()> {
             ProtectorCommand::Remove(args) => cmd_remove_protector(args),
             ProtectorCommand::VerifyPass(args) => cmd_verify_protector(args),
             ProtectorCommand::ChangePass(args) => cmd_change_protector_pass(args),
+        },
+        Recovery(args) => match &args.command {
+            RecoveryCommand::Add(args) => cmd_recovery_add(args),
+            RecoveryCommand::Remove(args) => cmd_recovery_remove(args),
         },
         Tpm2Test(_) => cmd_tpm2_test(),
         ExportMasterKey(args) => cmd_export_master_key(args),
