@@ -10,6 +10,8 @@ use pamsm::{LogLvl, Pam, PamError, PamFlags, PamLibExt, PamMsgStyle, PamServiceM
 use dirlock::{DirStatus, EncryptedDir, keystore, protector::ProtectorKey, recovery::RecoveryKey};
 use std::ffi::c_int;
 
+type Result<T> = std::result::Result<T, PamError>;
+
 const PAM_UPDATE_AUTHTOK : c_int = 0x2000;
 const PAM_PRELIM_CHECK   : c_int = 0x4000;
 
@@ -38,7 +40,7 @@ impl AuthData {
 
     /// Store a [`ProtectorKey`] in the PAM session so it can later be
     /// used to unlock the home directory in `pam_open_session()`.
-    fn store_in_session(pamh: &Pam, protkey: ProtectorKey) -> Result<(), PamError> {
+    fn store_in_session(pamh: &Pam, protkey: ProtectorKey) -> Result<()> {
         let authtok_data = AuthData::new(protkey);
         unsafe { pamh.send_data(Self::PAM_NAME, authtok_data)? };
         Ok(())
@@ -73,7 +75,7 @@ fn pam_init(pamh: &Pam) -> bool {
 }
 
 /// Get the user name and check that it's an ASCII string
-fn get_user(pamh: &Pam) -> Result<&str, PamError> {
+fn get_user(pamh: &Pam) -> Result<&str> {
     match pamh.get_user(None)?.ok_or(PamError::AUTH_ERR)?.to_str() {
         Ok(s) if s.is_ascii() => Ok(s),
         _ => Err(PamError::AUTH_ERR),
@@ -84,7 +86,7 @@ fn get_user(pamh: &Pam) -> Result<&str, PamError> {
 ///
 /// If it's not encrypted by dirlock then return PAM_USER_UNKNOWN so
 /// other PAM modules can try to handle it.
-fn get_home_data(user: &str) -> Result<EncryptedDir, PamError> {
+fn get_home_data(user: &str) -> Result<EncryptedDir> {
     match dirlock::open_home(user, keystore()) {
         Ok(Some(DirStatus::Encrypted(d))) => Ok(d),
         Ok(Some(_)) => Err(PamError::USER_UNKNOWN), // The home directory is not encrypted with dirlock
@@ -100,7 +102,7 @@ fn get_home_data(user: &str) -> Result<EncryptedDir, PamError> {
 /// Returns `true` on success (storing the key in the PAM session),
 /// `false` if the directory cannot be unlocked with `pass`, or an
 /// error if PAM returns one.
-fn try_recovery_key(pamh: &Pam, dir: &EncryptedDir, pass: Option<&[u8]>) -> Result<bool, PamError> {
+fn try_recovery_key(pamh: &Pam, dir: &EncryptedDir, pass: Option<&[u8]>) -> Result<bool> {
     let Some(recovery) = &dir.recovery else {
         return Ok(false);
     };
@@ -122,7 +124,7 @@ fn try_recovery_key(pamh: &Pam, dir: &EncryptedDir, pass: Option<&[u8]>) -> Resu
 /// Implementation of pam_sm_authenticate().
 ///
 /// Used for authentication.
-fn do_authenticate(pamh: Pam) -> Result<(), PamError> {
+fn do_authenticate(pamh: Pam) -> Result<()> {
     let user = get_user(&pamh)?;
     let homedir = get_home_data(user)?;
 
@@ -190,7 +192,7 @@ fn do_authenticate(pamh: Pam) -> Result<(), PamError> {
 /// Implementation of pam_sm_chauthtok
 ///
 /// Used for changing passwords (with 'passwd' or similar)
-fn do_chauthtok(pamh: Pam, flags: PamFlags) -> Result<(), PamError> {
+fn do_chauthtok(pamh: Pam, flags: PamFlags) -> Result<()> {
     let user = get_user(&pamh)?;
     let mut homedir = get_home_data(user)?;
 
@@ -272,7 +274,7 @@ fn do_chauthtok(pamh: Pam, flags: PamFlags) -> Result<(), PamError> {
     Err(PamError::AUTH_ERR)
 }
 
-fn do_open_session(pamh: Pam) -> Result<(), PamError> {
+fn do_open_session(pamh: Pam) -> Result<()> {
     let user = get_user(&pamh)?;
     let homedir = get_home_data(user)?;
     // If the home directory is already unlocked then we are done
@@ -281,7 +283,7 @@ fn do_open_session(pamh: Pam) -> Result<(), PamError> {
         return Ok(());
     }
     // Otherwise we need to unlock it using the protector key stored in the session
-    let Ok(data) : Result<AuthData, _> = (unsafe { pamh.retrieve_data(AuthData::PAM_NAME) }) else {
+    let Ok(data) : Result<AuthData> = (unsafe { pamh.retrieve_data(AuthData::PAM_NAME) }) else {
         log_warning(&pamh, format!("error retrieving auth token from session for user {user}"));
         return Err(PamError::SESSION_ERR);
     };
@@ -301,7 +303,7 @@ fn do_open_session(pamh: Pam) -> Result<(), PamError> {
     }
 }
 
-fn do_close_session(pamh: Pam) -> Result<(), PamError> {
+fn do_close_session(pamh: Pam) -> Result<()> {
     let user = get_user(&pamh)?;
     let _homedir = get_home_data(user)?;
     log_info(&pamh, format!("session closed for user {user}"));
