@@ -1,5 +1,5 @@
 /*
- * Copyright © 2025 Valve Corporation
+ * Copyright © 2025-2026 Valve Corporation
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
@@ -7,7 +7,7 @@
 mod pamlib;
 
 use pamsm::{LogLvl, Pam, PamError, PamFlags, PamLibExt, PamMsgStyle, PamServiceModule, pam_module};
-use dirlock::{DirStatus, EncryptedDir, keystore, protector::ProtectorKey};
+use dirlock::{DirStatus, EncryptedDir, keystore, protector::ProtectorKey, recovery::RecoveryKey};
 use std::ffi::c_int;
 
 const PAM_UPDATE_AUTHTOK : c_int = 0x2000;
@@ -34,6 +34,14 @@ impl AuthData {
 
     fn protector_key(&self) -> &ProtectorKey {
         &self.0
+    }
+
+    /// Store a [`ProtectorKey`] in the PAM session so it can later be
+    /// used to unlock the home directory in `pam_open_session()`.
+    fn store_in_session(pamh: &Pam, protkey: ProtectorKey) -> Result<(), PamError> {
+        let authtok_data = AuthData::new(protkey);
+        unsafe { pamh.send_data(Self::PAM_NAME, authtok_data)? };
+        Ok(())
     }
 }
 
@@ -85,6 +93,32 @@ fn get_home_data(user: &str) -> Result<EncryptedDir, PamError> {
     }
 }
 
+/// Try the modhex-encoded recovery key `pass` on `dir`.
+///
+/// If `pass` is unset, the user will be prompted for one.
+///
+/// Returns `true` on success (storing the key in the PAM session),
+/// `false` if the directory cannot be unlocked with `pass`, or an
+/// error if PAM returns one.
+fn try_recovery_key(pamh: &Pam, dir: &EncryptedDir, pass: Option<&[u8]>) -> Result<bool, PamError> {
+    let Some(recovery) = &dir.recovery else {
+        return Ok(false);
+    };
+    let pass = match pass {
+        Some(p) => p,
+        None => pamh.conv(Some("Enter recovery key: "), PamMsgStyle::PROMPT_ECHO_OFF)?
+            .map(|p| p.to_bytes())
+            .ok_or(PamError::AUTH_ERR)?
+    };
+    if let Ok(key) = RecoveryKey::from_ascii_bytes(pass) {
+        if recovery.unwrap_key(key.protector_key()).is_some() {
+            AuthData::store_in_session(pamh, key.into_protector_key())?;
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Implementation of pam_sm_authenticate().
 ///
 /// Used for authentication.
@@ -119,15 +153,16 @@ fn do_authenticate(pamh: Pam) -> Result<(), PamError> {
             b""
         };
 
+        // If the user entered something that resembles a recovery key, try it first
+        if try_recovery_key(&pamh, &homedir, Some(pass))? {
+            return Ok(());
+        }
+
         // Check if the password can unlock the home directory (but don't actually unlock it)
         let protid = &p.protector.id;
         match p.protector.unwrap_key(pass) {
             Ok(Some(protkey)) => {
-                // Store the protector key in the PAM session in order
-                // to unlock the home directory in pam_open_session().
-                let authtok_data = AuthData::new(protkey);
-                unsafe { pamh.send_data(AuthData::PAM_NAME, authtok_data)? };
-                return Ok(());
+                return AuthData::store_in_session(&pamh, protkey);
             },
             Ok(None) => log_notice(&pamh, format!("authentication failure; user={user} protector={protid}")),
             Err(e) => log_warning(&pamh, format!("authentication failure; user={user} protector={protid} error={e}")),
@@ -137,7 +172,15 @@ fn do_authenticate(pamh: Pam) -> Result<(), PamError> {
     }
 
     if !available_protectors {
-        _ = pamh.conv(Some("Cannot authenticate: no available protectors"), PamMsgStyle::ERROR_MSG);
+        // If there were no available protectors maybe we can still use a recovery key
+        if homedir.recovery.is_some() {
+            if try_recovery_key(&pamh, &homedir, None)? {
+                return Ok(());
+            }
+            _ = pamh.conv(Some("Authentication failed"), PamMsgStyle::ERROR_MSG);
+        } else {
+            _ = pamh.conv(Some("Cannot authenticate: no available protectors"), PamMsgStyle::ERROR_MSG);
+        }
     }
 
     Err(PamError::AUTH_ERR)
