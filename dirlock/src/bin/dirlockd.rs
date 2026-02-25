@@ -392,10 +392,11 @@ impl DirlockDaemon {
     async fn unlock_dir(
         &self,
         dir: &Path,
-        pass: &str,
-        protector_id: &str,
+        options: HashMap<String, Value<'_>>,
     ) -> Result<()> {
-        do_unlock_dir(dir, pass, protector_id).into_dbus()
+        let pass = get_str(&options, "password")?;
+        let protector = get_str(&options, "protector")?;
+        do_unlock_dir(dir, &pass, &protector).into_dbus()
     }
 
     async fn verify_protector_password(
@@ -426,22 +427,24 @@ impl DirlockDaemon {
     async fn encrypt_dir(
         &self,
         dir: &Path,
-        pass: &str,
-        protector_id: &str,
+        options: HashMap<String, Value<'_>>,
     ) -> Result<String> {
-        do_encrypt_dir(dir, pass, protector_id).into_dbus()
+        let pass = get_str(&options, "password")?;
+        let protector = get_str(&options, "protector")?;
+        do_encrypt_dir(dir, &pass, &protector).into_dbus()
     }
 
     async fn convert_dir(
         &mut self,
         dir: &Path,
-        pass: &str,
-        protector_id: &str,
+        options: HashMap<String, Value<'_>>,
         #[zbus(signal_emitter)]
         emitter: SignalEmitter<'_>,
     ) -> Result<u32> {
+        let pass = get_str(&options, "password")?;
+        let protector = get_str(&options, "protector")?;
         // Create a new ConvertJob and store it in self.jobs
-        let job = do_convert_dir(dir, pass, protector_id)
+        let job = do_convert_dir(dir, &pass, &protector)
             .map(Arc::new)
             .into_dbus()?;
         self.last_jobid += 1;
