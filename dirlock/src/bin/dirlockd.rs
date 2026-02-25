@@ -401,10 +401,11 @@ impl DirlockDaemon {
 
     async fn verify_protector_password(
         &self,
-        pass: &str,
-        protector_id: &str,
+        options: HashMap<String, Value<'_>>,
     ) -> Result<bool> {
-        do_verify_protector_password(pass, protector_id).into_dbus()
+        let pass = get_str(&options, "password")?;
+        let protector = get_str(&options, "protector")?;
+        do_verify_protector_password(&pass, &protector).into_dbus()
     }
 
     async fn change_protector_password(
