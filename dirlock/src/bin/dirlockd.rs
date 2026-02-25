@@ -408,11 +408,12 @@ impl DirlockDaemon {
 
     async fn change_protector_password(
         &self,
-        pass: &str,
-        newpass: &str,
-        protector_id: &str,
+        options: HashMap<String, Value<'_>>,
     ) -> Result<()> {
-        do_change_protector_password(pass, newpass, protector_id).into_dbus()
+        let pass = get_str(&options, "old-password")?;
+        let newpass = get_str(&options, "new-password")?;
+        let protector = get_str(&options, "protector")?;
+        do_change_protector_password(&pass, &newpass, &protector).into_dbus()
     }
 
     async fn get_dir_status(
