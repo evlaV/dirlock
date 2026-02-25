@@ -86,6 +86,7 @@ impl From<DirStatus> for DbusDirStatus {
             ("status", status_str),
             ("policy", Value::from(d.policy.keyid.to_string())),
             ("protectors", Value::from(&prots)),
+            ("has-recovery-key", Value::from(d.recovery.is_some())),
         ]))
     }
 }
