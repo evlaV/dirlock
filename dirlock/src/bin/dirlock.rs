@@ -23,6 +23,7 @@ use dirlock::{
     protector::{
         Protector,
         ProtectorId,
+        ProtectorKey,
         ProtectorType,
         opts::{
             PROTECTOR_NAME_MAX_LEN,
@@ -549,6 +550,54 @@ fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
     do_change_verify_protector_password(Some(protector.id), false)
 }
 
+/// Get an existing protector or create a new one for encrypting a directory.
+///
+/// Returns `(protector, protector_key, protector_is_new)`.
+fn get_or_create_protector(
+    id: Option<ProtectorId>,
+    type_: Option<ProtectorType>,
+    name: Option<&str>,
+    user: Option<&str>,
+    dir: &Path,
+) -> Result<(Protector, ProtectorKey, bool)> {
+    let ks = keystore();
+
+    if id.is_some() && (name.is_some() || type_.is_some()) {
+        bail!("Cannot set protector options for an existing protector");
+    }
+
+    if let Some(id) = id {
+        if user.is_some() {
+            bail!("Cannot set the user to an existing protector");
+        }
+        let protector = ks.load_protector(id)?;
+        let pass = read_password_for_protector(&protector)?;
+        let Some(protector_key) = protector.unwrap_key(pass.as_bytes())? else {
+            bail!("Invalid {}", protector.get_type().credential_name());
+        };
+        Ok((protector, protector_key, false))
+    } else {
+        let name = name.map(str::to_owned).unwrap_or_else(|| {
+            let mut n = format!("Protector for {}", dir.display());
+            if n.len() > PROTECTOR_NAME_MAX_LEN {
+                n.truncate(PROTECTOR_NAME_MAX_LEN - 4);
+                n.push_str(" ...");
+            }
+            n
+        });
+
+        let opts = ProtectorOptsBuilder::new()
+            .with_type(type_)
+            .with_name(name)
+            .with_user(user.map(str::to_owned))
+            .build()?;
+        let pass = read_new_password_for_protector(opts.get_type())?;
+        let (protector, protector_key) =
+            dirlock::create_protector(opts, pass.as_bytes(), CreateOpts::CreateAndSave, ks)?;
+        Ok((protector, protector_key, true))
+    }
+}
+
 fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
     let ks = keystore();
     match dirlock::open_dir(&args.dir, ks)? {
@@ -557,10 +606,6 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
     };
 
     let empty_dir = dir_is_empty(&args.dir)?;
-
-    if args.protector.is_some() && (args.protector_name.is_some() || args.protector_type.is_some()) {
-        bail!("Cannot set protector options for an existing protector");
-    }
 
     if args.force && !empty_dir {
         use dirlock::convert::*;
@@ -590,35 +635,10 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
         bail!("The directory is not empty. Use --force to override");
     }
 
-    let protector_is_new = args.protector.is_none();
-    let (protector, protector_key) = if let Some(id) = args.protector {
-        if args.user.is_some() {
-            bail!("Cannot set --user with an existing protector");
-        }
-        let protector = ks.load_protector(id)?;
-        let pass = read_password_for_protector(&protector)?;
-        let Some(protector_key) = protector.unwrap_key(pass.as_bytes())? else {
-            bail!("Invalid {}", protector.get_type().credential_name());
-        };
-        (protector, protector_key)
-    } else {
-        let name = args.protector_name.clone().unwrap_or_else(|| {
-            let mut n = format!("Protector for {}", args.dir.display());
-            if n.len() > PROTECTOR_NAME_MAX_LEN {
-                n.truncate(PROTECTOR_NAME_MAX_LEN - 4);
-                n.push_str(" ...");
-            }
-            n
-        });
-
-        let opts = ProtectorOptsBuilder::new()
-            .with_type(args.protector_type)
-            .with_name(name)
-            .with_user(args.user.clone())
-            .build()?;
-        let pass = read_new_password_for_protector(opts.get_type())?;
-        dirlock::create_protector(opts, pass.as_bytes(), CreateOpts::CreateAndSave, ks)?
-    };
+    let (protector, protector_key, protector_is_new) = get_or_create_protector(
+        args.protector, args.protector_type, args.protector_name.as_deref(), args.user.as_deref(),
+        &args.dir,
+    )?;
 
     let protector_id = protector_key.get_id();
     let keyid = if args.force && !empty_dir {
