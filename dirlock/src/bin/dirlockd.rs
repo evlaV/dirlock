@@ -565,9 +565,10 @@ async fn main() -> anyhow::Result<()> {
     let iface : InterfaceRef<DirlockDaemon> =
         conn.object_server().interface("/com/valvesoftware/Dirlock").await?;
 
+    let mut sigquit = signal(SignalKind::quit())?;
+    let mut sigterm = signal(SignalKind::terminate())?;
+
     loop {
-        let mut sigquit = signal(SignalKind::quit())?;
-        let mut sigterm = signal(SignalKind::terminate())?;
         let r = tokio::select! {
             e = rx.recv() => match e {
                 Some(ev) => {
