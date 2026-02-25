@@ -53,9 +53,23 @@ enum Command {
     Lock(LockArgs),
     Unlock(UnlockArgs),
     ChangePass(ChangePassArgs),
+    Recovery(RecoveryArgs),
+    Admin(AdminArgs),
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "admin")]
+/// Advanced administrative commands
+struct AdminArgs {
+    #[argh(subcommand)]
+    command: AdminCommand,
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand)]
+enum AdminCommand {
     Policy(PolicyArgs),
     Protector(ProtectorArgs),
-    Recovery(RecoveryArgs),
     Tpm2Test(Tpm2TestArgs),
     ExportMasterKey(ExportMasterKeyArgs),
     ImportMasterKey(ImportMasterKeyArgs),
@@ -1140,29 +1154,31 @@ fn main() -> Result<()> {
         Unlock(args) => cmd_unlock(args),
         ChangePass(args) => cmd_change_pass(args),
         Encrypt(args) => cmd_encrypt(args),
-        Policy(args) => match &args.command {
-            PolicyCommand::List(_) => cmd_list_policies(),
-            PolicyCommand::Create(args) => cmd_create_policy(args),
-            PolicyCommand::Remove(args) => cmd_remove_policy(args),
-            PolicyCommand::Status(args) => cmd_policy_status(args),
-            PolicyCommand::Purge(args) => cmd_policy_purge(args),
-            PolicyCommand::AddProtector(args) => cmd_policy_add_protector(args),
-            PolicyCommand::RemoveProtector(args) => cmd_policy_remove_protector(args),
-        }
-        Protector(args) => match &args.command {
-            ProtectorCommand::List(_) => display_protector_list(),
-            ProtectorCommand::Create(args) => cmd_create_protector(args),
-            ProtectorCommand::Remove(args) => cmd_remove_protector(args),
-            ProtectorCommand::VerifyPass(args) => cmd_verify_protector(args),
-            ProtectorCommand::ChangePass(args) => cmd_change_protector_pass(args),
-        },
         Recovery(args) => match &args.command {
             RecoveryCommand::Add(args) => cmd_recovery_add(args),
             RecoveryCommand::Remove(args) => cmd_recovery_remove(args),
         },
-        Tpm2Test(_) => cmd_tpm2_test(),
-        ExportMasterKey(args) => cmd_export_master_key(args),
-        ImportMasterKey(_) => cmd_import_master_key(),
         Status(args) => cmd_status(args),
+        Admin(args) => match &args.command {
+            AdminCommand::Policy(args) => match &args.command {
+                PolicyCommand::List(_) => cmd_list_policies(),
+                PolicyCommand::Create(args) => cmd_create_policy(args),
+                PolicyCommand::Remove(args) => cmd_remove_policy(args),
+                PolicyCommand::Status(args) => cmd_policy_status(args),
+                PolicyCommand::Purge(args) => cmd_policy_purge(args),
+                PolicyCommand::AddProtector(args) => cmd_policy_add_protector(args),
+                PolicyCommand::RemoveProtector(args) => cmd_policy_remove_protector(args),
+            },
+            AdminCommand::Protector(args) => match &args.command {
+                ProtectorCommand::List(_) => display_protector_list(),
+                ProtectorCommand::Create(args) => cmd_create_protector(args),
+                ProtectorCommand::Remove(args) => cmd_remove_protector(args),
+                ProtectorCommand::VerifyPass(args) => cmd_verify_protector(args),
+                ProtectorCommand::ChangePass(args) => cmd_change_protector_pass(args),
+            },
+            AdminCommand::Tpm2Test(_) => cmd_tpm2_test(),
+            AdminCommand::ExportMasterKey(args) => cmd_export_master_key(args),
+            AdminCommand::ImportMasterKey(_) => cmd_import_master_key(),
+        },
     }
 }
