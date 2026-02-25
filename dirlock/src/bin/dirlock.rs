@@ -73,6 +73,7 @@ enum AdminCommand {
     Tpm2Test(Tpm2TestArgs),
     ExportMasterKey(ExportMasterKeyArgs),
     ImportMasterKey(ImportMasterKeyArgs),
+    FscryptEnabled(FscryptEnabledArgs),
 }
 
 #[derive(FromArgs)]
@@ -365,15 +366,21 @@ struct ExportMasterKeyArgs {
 struct ImportMasterKeyArgs { }
 
 #[derive(FromArgs)]
+#[argh(subcommand, name = "fscrypt-enabled")]
+/// Check if fscrypt is supported on a filesystem
+struct FscryptEnabledArgs {
+    /// directory
+    #[argh(positional)]
+    dir: PathBuf,
+}
+
+#[derive(FromArgs)]
 #[argh(subcommand, name = "status")]
 /// Show the status of the system or a directory
 struct StatusArgs {
     /// brief output
     #[argh(switch, short = 'b')]
     brief: bool,
-    /// report if encryption is enabled on the filesystem
-    #[argh(switch, short = 'e')]
-    enabled: bool,
     /// directory (default: show global status)
     #[argh(positional)]
     dir: Option<PathBuf>,
@@ -1081,18 +1088,17 @@ fn cmd_tpm2_test() -> Result<()> {
     Ok(())
 }
 
-fn cmd_status(args: &StatusArgs) -> Result<()> {
-    if args.enabled && args.brief {
-        bail!("Cannot use --brief and --enabled at the same time");
-    }
+fn cmd_fscrypt_enabled(args: &FscryptEnabledArgs) -> Result<()> {
+    let id = PolicyKeyId::default();
+    fscrypt::get_key_status(&args.dir, &id)?;
+    println!("enabled");
+    Ok(())
+}
 
+fn cmd_status(args: &StatusArgs) -> Result<()> {
     let Some(dir) = &args.dir else {
         if args.brief {
             bail!("The --brief option can only be used on a directory");
-        }
-
-        if args.enabled {
-            bail!("The --enabled option can only be used on a directory");
         }
 
         display_protector_list()?;
@@ -1105,13 +1111,6 @@ fn cmd_status(args: &StatusArgs) -> Result<()> {
 
         return Ok(());
     };
-
-    if args.enabled {
-        let id = PolicyKeyId::default();
-        fscrypt::get_key_status(dir, &id)?;
-        println!("enabled");
-        return Ok(());
-    }
 
     let ks = keystore();
     let dir_status = dirlock::open_dir(dir, ks)?;
@@ -1179,6 +1178,7 @@ fn main() -> Result<()> {
             AdminCommand::Tpm2Test(_) => cmd_tpm2_test(),
             AdminCommand::ExportMasterKey(args) => cmd_export_master_key(args),
             AdminCommand::ImportMasterKey(_) => cmd_import_master_key(),
+            AdminCommand::FscryptEnabled(args) => cmd_fscrypt_enabled(args),
         },
     }
 }
