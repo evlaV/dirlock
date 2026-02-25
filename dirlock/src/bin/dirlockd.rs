@@ -552,10 +552,11 @@ impl DirlockDaemon {
 
     async fn remove_protector_from_policy(
         &self,
-        policy: &str,
-        protector: &str,
+        options: HashMap<String, Value<'_>>,
     ) -> Result<()> {
-        do_remove_protector_from_policy(policy, protector)
+        let policy = get_str(&options, "policy")?;
+        let protector = get_str(&options, "protector")?;
+        do_remove_protector_from_policy(&policy, &protector)
             .into_dbus()
     }
 }
