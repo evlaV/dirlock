@@ -538,13 +538,14 @@ impl DirlockDaemon {
 
     async fn add_protector_to_policy(
         &self,
-        policy: &str,
-        protector: &str,
-        protector_pass: &str,
-        unlock_with: &str,
-        unlock_with_pass: &str,
+        options: HashMap<String, Value<'_>>,
     ) -> Result<()> {
-        do_add_protector_to_policy(policy, protector, protector_pass, unlock_with, unlock_with_pass)
+        let policy = get_str(&options, "policy")?;
+        let protector = get_str(&options, "protector")?;
+        let protector_pass = get_str(&options, "protector-password")?;
+        let unlock_with = get_str(&options, "unlock-with")?;
+        let unlock_with_pass = get_str(&options, "unlock-with-password")?;
+        do_add_protector_to_policy(&policy, &protector, &protector_pass, &unlock_with, &unlock_with_pass)
             .into_dbus()
     }
 
