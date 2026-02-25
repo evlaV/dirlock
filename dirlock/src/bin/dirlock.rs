@@ -14,6 +14,7 @@ use dirlock::{
     CreateOpts,
     DirStatus,
     EncryptedDir,
+    recovery::RecoveryKey,
     fscrypt::{
         PolicyKeyId,
         self,
@@ -340,6 +341,7 @@ struct RecoveryArgs {
 enum RecoveryCommand {
     Add(RecoveryAddArgs),
     Remove(RecoveryRemoveArgs),
+    Restore(RecoveryRestoreArgs),
 }
 
 #[derive(FromArgs)]
@@ -358,6 +360,27 @@ struct RecoveryAddArgs {
 #[argh(subcommand, name = "remove")]
 /// Remove a recovery key from a directory
 struct RecoveryRemoveArgs {
+    /// directory
+    #[argh(positional)]
+    dir: PathBuf,
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "restore")]
+/// Restore access to a directory using its recovery key
+struct RecoveryRestoreArgs {
+    /// create a new protector of this type (default: password)
+    #[argh(option)]
+    protector_type: Option<ProtectorType>,
+    /// name of the new protector (default: name of the directory)
+    #[argh(option)]
+    protector_name: Option<String>,
+    /// restore using an existing protector
+    #[argh(option)]
+    protector: Option<ProtectorId>,
+    /// owner of the protector and policy (default: current user)
+    #[argh(option)]
+    user: Option<String>,
     /// directory
     #[argh(positional)]
     dir: PathBuf,
@@ -1044,6 +1067,44 @@ fn cmd_recovery_remove(args: &RecoveryRemoveArgs) -> Result<()> {
     }
 }
 
+fn cmd_recovery_restore(args: &RecoveryRestoreArgs) -> Result<()> {
+    let ks = keystore();
+    let encrypted_dir = match dirlock::open_dir(&args.dir, ks)? {
+        DirStatus::Encrypted(d) => d,
+        DirStatus::KeyMissing(_) => bail!("No recovery key found for this directory"),
+        x => bail!("{}", x.error_msg()),
+    };
+
+    if let Some(protid) = &args.protector {
+        if encrypted_dir.get_protector_by_id(protid).is_ok() {
+            bail!("This directory is already protected with that protector");
+        }
+    }
+
+    let Some(recovery) = &encrypted_dir.recovery else {
+        bail!("This directory does not have a recovery key");
+    };
+
+    let pass = read_recovery_key()?;
+    let Ok(recovery_key) = RecoveryKey::from_ascii_bytes(pass.as_bytes()) else {
+        bail!("Invalid recovery key");
+    };
+
+    let Some(master_key) = recovery.unwrap_key(recovery_key.protector_key()) else {
+        bail!("Wrong recovery key");
+    };
+
+    let (protector, protector_key, _) = get_or_create_protector(
+        args.protector, args.protector_type, args.protector_name.as_deref(),
+        args.user.as_deref(), &args.dir,
+    )?;
+
+    let _ = dirlock::create_policy_data(&protector, protector_key, Some(master_key),
+                                        CreateOpts::CreateAndSave, ks)?;
+    println!("The directory can now be unlocked with protector {}", protector.id);
+    Ok(())
+}
+
 fn cmd_export_master_key(args: &ExportMasterKeyArgs) -> Result<()> {
     use base64::prelude::*;
     let encrypted_dir = match dirlock::open_dir(&args.dir, keystore())? {
@@ -1213,6 +1274,7 @@ fn main() -> Result<()> {
         Recovery(args) => match &args.command {
             RecoveryCommand::Add(args) => cmd_recovery_add(args),
             RecoveryCommand::Remove(args) => cmd_recovery_remove(args),
+            RecoveryCommand::Restore(args) => cmd_recovery_restore(args),
         },
         Status(args) => cmd_status(args),
         Admin(args) => match &args.command {
