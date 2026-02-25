@@ -51,6 +51,7 @@ struct Args {
 enum Command {
     Status(StatusArgs),
     Encrypt(EncryptArgs),
+    Convert(ConvertArgs),
     Lock(LockArgs),
     Unlock(UnlockArgs),
     ChangePass(ChangePassArgs),
@@ -118,7 +119,7 @@ struct ChangePassArgs {
 
 #[derive(FromArgs)]
 #[argh(subcommand, name = "encrypt")]
-/// Encrypt a directory
+/// Encrypt an empty directory
 struct EncryptArgs {
     /// create a new protector of this type (default: password)
     #[argh(option)]
@@ -129,9 +130,27 @@ struct EncryptArgs {
     /// encrypt the directory using an existing protector
     #[argh(option)]
     protector: Option<ProtectorId>,
-    /// force encrypting a directory with data
-    #[argh(switch)]
-    force: bool,
+    /// owner of the protector and policy (default: current user)
+    #[argh(option)]
+    user: Option<String>,
+    /// directory
+    #[argh(positional)]
+    dir: PathBuf,
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "convert")]
+/// Encrypt a directory that already contains data
+struct ConvertArgs {
+    /// create a new protector of this type (default: password)
+    #[argh(option)]
+    protector_type: Option<ProtectorType>,
+    /// name of the new protector (default: name of the directory)
+    #[argh(option)]
+    protector_name: Option<String>,
+    /// encrypt the directory using an existing protector
+    #[argh(option)]
+    protector: Option<ProtectorId>,
     /// owner of the protector and policy (default: current user)
     #[argh(option)]
     user: Option<String>,
@@ -605,34 +624,8 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
         x => bail!("{}", x.error_msg()),
     };
 
-    let empty_dir = dir_is_empty(&args.dir)?;
-
-    if args.force && !empty_dir {
-        use dirlock::convert::*;
-        println!("You are about to encrypt a directory that contains data.\n\
-                  This feature is *experimental*. Make sure that you are not\n\
-                  accessing the files while they are being encrypted in order\n\
-                  to avoid unexpected behaviors. If this is a home directory\n\
-                  the user should be ideally logged out.\n");
-        print!("Do you want to continue? [y/N] ");
-        io::stdout().flush().unwrap();
-        let mut s = String::new();
-        let _ = io::stdin().read_line(&mut s)?;
-        if s.trim() != "y" {
-            return Ok(());
-        }
-
-        match conversion_status(&args.dir)? {
-            ConversionStatus::None => (),
-            ConversionStatus::Ongoing(_) => bail!("This directory is already being encrypted"),
-            ConversionStatus::Interrupted(_) => {
-                println!("Will resume encryption of partially encrypted directory");
-            },
-        }
-
-        check_can_convert_dir(&args.dir, args.protector.as_ref(), ks)?;
-    } else if !empty_dir {
-        bail!("The directory is not empty. Use --force to override");
+    if ! dir_is_empty(&args.dir)? {
+        bail!("The directory is not empty. Use 'convert' to encrypt a directory with data");
     }
 
     let (protector, protector_key, protector_is_new) = get_or_create_protector(
@@ -640,28 +633,71 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
         &args.dir,
     )?;
 
-    let protector_id = protector_key.get_id();
-    let keyid = if args.force && !empty_dir {
-        println!("\nEncrypting the contents of {}, this can take a while", args.dir.display());
-        let k = dirlock::convert::convert_dir(&args.dir, &protector, protector_key, ks)
-            .inspect_err(|_| {
-                if protector_is_new {
-                    let _ = ks.remove_protector_if_unused(&protector_id);
-                }
-            })?;
-        println!("\nThe directory is now encrypted. If this was a home directory\n\
-                  and you plan to log in using PAM you need to use the encryption\n\
-                  password from now on. The old password in /etc/shadow is no longer\n\
-                  used and you can disable it with usermod -p '*' USERNAME\n");
-        k
-    } else {
-        dirlock::encrypt_dir(&args.dir, &protector, protector_key, ks)
-            .inspect_err(|_| {
-                if protector_is_new {
-                    let _ = ks.remove_protector_if_unused(&protector_id);
-                }
-            })?
+    let protector_id = protector.id;
+    let keyid = dirlock::encrypt_dir(&args.dir, &protector, protector_key, ks)
+        .inspect_err(|_| {
+            if protector_is_new {
+                let _ = ks.remove_protector_if_unused(&protector_id);
+            }
+        })?;
+    println!("Directory encrypted with new policy id {}", keyid);
+
+    Ok(())
+}
+
+fn cmd_convert(args: &ConvertArgs) -> Result<()> {
+    use dirlock::convert::*;
+
+    let ks = keystore();
+    match dirlock::open_dir(&args.dir, ks)? {
+        DirStatus::Unencrypted => (),
+        x => bail!("{}", x.error_msg()),
     };
+
+    if dir_is_empty(&args.dir)? {
+        bail!("The directory is empty. Use the 'encrypt' command instead");
+    }
+
+    println!("You are about to encrypt a directory that contains data.\n\
+              This feature is *experimental*. Make sure that you are not\n\
+              accessing the files while they are being encrypted in order\n\
+              to avoid unexpected behaviors. If this is a home directory\n\
+              the user should be ideally logged out.\n");
+    print!("Do you want to continue? [y/N] ");
+    io::stdout().flush().unwrap();
+    let mut s = String::new();
+    let _ = io::stdin().read_line(&mut s)?;
+    if s.trim() != "y" {
+        return Ok(());
+    }
+
+    match conversion_status(&args.dir)? {
+        ConversionStatus::None => (),
+        ConversionStatus::Ongoing(_) => bail!("This directory is already being encrypted"),
+        ConversionStatus::Interrupted(_) => {
+            println!("Will resume encryption of partially encrypted directory");
+        },
+    }
+
+    check_can_convert_dir(&args.dir, args.protector.as_ref(), ks)?;
+
+    let (protector, protector_key, protector_is_new) = get_or_create_protector(
+        args.protector, args.protector_type, args.protector_name.as_deref(), args.user.as_deref(),
+        &args.dir,
+    )?;
+
+    let protector_id = protector.id;
+    println!("\nEncrypting the contents of {}, this can take a while", args.dir.display());
+    let keyid = convert_dir(&args.dir, &protector, protector_key, ks)
+        .inspect_err(|_| {
+            if protector_is_new {
+                let _ = ks.remove_protector_if_unused(&protector_id);
+            }
+        })?;
+    println!("\nThe directory is now encrypted. If this was a home directory\n\
+              and you plan to log in using PAM you need to use the encryption\n\
+              password from now on. The old password in /etc/shadow is no longer\n\
+              used and you can disable it with usermod -p '*' USERNAME\n");
     println!("Directory encrypted with new policy id {}", keyid);
 
     Ok(())
@@ -1173,6 +1209,7 @@ fn main() -> Result<()> {
         Unlock(args) => cmd_unlock(args),
         ChangePass(args) => cmd_change_pass(args),
         Encrypt(args) => cmd_encrypt(args),
+        Convert(args) => cmd_convert(args),
         Recovery(args) => match &args.command {
             RecoveryCommand::Add(args) => cmd_recovery_add(args),
             RecoveryCommand::Remove(args) => cmd_recovery_remove(args),
