@@ -60,6 +60,15 @@ impl<T> IntoDbusResult<T> for anyhow::Result<T> {
     }
 }
 
+/// Extract a required string value from an a{sv} options dict
+fn get_str(options: &HashMap<String, Value<'_>>, key: &str) -> zbus::fdo::Result<String> {
+    match options.get(key) {
+        Some(Value::Str(s)) => Ok(s.to_string()),
+        Some(_) => Err(Error::InvalidArgs(format!("'{key}' must be a string"))),
+        None => Err(Error::InvalidArgs(format!("Missing required option '{key}'"))),
+    }
+}
+
 /// This is the D-Bus API version of [`DirStatus`]
 #[derive(Serialize, zvariant::Type)]
 struct DbusDirStatus(HashMap<&'static str, Value<'static>>);
@@ -494,11 +503,12 @@ impl DirlockDaemon {
 
     async fn create_protector(
         &self,
-        ptype: &str,
-        name: &str,
-        pass: &str,
+        options: HashMap<String, Value<'_>>,
     ) -> Result<String> {
-        do_create_protector(ptype, name, pass).into_dbus()
+        let ptype = get_str(&options, "type")?;
+        let name = get_str(&options, "name")?;
+        let pass = get_str(&options, "password")?;
+        do_create_protector(&ptype, &name, &pass).into_dbus()
     }
 
     async fn remove_protector(
