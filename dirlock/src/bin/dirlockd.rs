@@ -21,6 +21,7 @@ use zbus::{
     zvariant::{self, Value},
 };
 use dirlock::{
+    CreateOpts,
     DirStatus,
     ProtectedPolicyKey,
     convert::ConvertJob,
@@ -35,6 +36,7 @@ use dirlock::{
         ProtectorType,
         opts::ProtectorOptsBuilder,
     },
+    recovery::RecoveryKey,
 };
 
 /// Events sent by background tasks to the main thread
@@ -375,6 +377,45 @@ fn do_recovery_remove(dir: &Path) -> anyhow::Result<()> {
     }
 }
 
+/// Restore keystore access to a directory using its recovery key
+fn do_recovery_restore(
+    dir: &Path,
+    recovery_key_str: &str,
+    protector_id: &str,
+    pass: &str,
+) -> anyhow::Result<()> {
+    let encrypted_dir = match dirlock::open_dir(dir, keystore())? {
+        DirStatus::Encrypted(d) => d,
+        x => bail!("{}", x.error_msg()),
+    };
+
+    let Some(recovery) = &encrypted_dir.recovery else {
+        bail!("This directory does not have a recovery key");
+    };
+
+    let Ok(recovery_key) = RecoveryKey::from_ascii_bytes(recovery_key_str.as_bytes()) else {
+        bail!("Invalid recovery key");
+    };
+
+    let Some(master_key) = recovery.unwrap_key(recovery_key.protector_key()) else {
+        bail!("Wrong recovery key");
+    };
+
+    let protector_id = ProtectorId::from_str(protector_id)?;
+    if encrypted_dir.get_protector_by_id(&protector_id).is_ok() {
+        bail!("This directory is already protected with that protector");
+    }
+
+    let protector = keystore().load_protector(protector_id)?;
+    let Some(protector_key) = protector.unwrap_key(pass.as_bytes())? else {
+        bail!("Authentication failed");
+    };
+
+    dirlock::create_policy_data(&protector, protector_key, Some(master_key),
+                                CreateOpts::CreateAndSave, keystore())?;
+    Ok(())
+}
+
 /// Remove a protector from an encryption policy
 fn do_remove_protector_from_policy(
     policy: &str,
@@ -609,6 +650,17 @@ impl DirlockDaemon {
         dir: &Path,
     ) -> Result<()> {
         do_recovery_remove(dir).into_dbus()
+    }
+
+    async fn recovery_restore(
+        &self,
+        dir: &Path,
+        options: HashMap<String, Value<'_>>,
+    ) -> Result<()> {
+        let recovery_key = get_str(&options, "recovery-key")?;
+        let protector = get_str(&options, "protector")?;
+        let pass = get_str(&options, "password")?;
+        do_recovery_restore(dir, &recovery_key, &protector, &pass).into_dbus()
     }
 }
 
