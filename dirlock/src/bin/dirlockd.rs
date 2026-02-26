@@ -342,6 +342,31 @@ fn do_add_protector_to_policy(
     Ok(())
 }
 
+/// Add a recovery key to an encrypted directory
+fn do_recovery_add(
+    dir: &Path,
+    protector_id: &str,
+    pass: &str,
+) -> anyhow::Result<String> {
+    let protector_id = ProtectorId::from_str(protector_id)?;
+    let mut encrypted_dir = match dirlock::open_dir(dir, keystore())? {
+        DirStatus::Encrypted(d) => d,
+        x => bail!("{}", x.error_msg()),
+    };
+
+    if encrypted_dir.recovery.is_some() {
+        bail!("This directory already has a recovery key");
+    }
+
+    let prot = encrypted_dir.get_protector_by_id(&protector_id)?;
+    let Some(protkey) = prot.unwrap_key(pass.as_bytes())? else {
+        bail!("Authentication failed");
+    };
+
+    let recovery = encrypted_dir.add_recovery_key(&protkey)?;
+    Ok(recovery.to_string())
+}
+
 /// Remove a protector from an encryption policy
 fn do_remove_protector_from_policy(
     policy: &str,
@@ -559,6 +584,16 @@ impl DirlockDaemon {
         let protector = get_str(&options, "protector")?;
         do_remove_protector_from_policy(&policy, &protector)
             .into_dbus()
+    }
+
+    async fn recovery_add(
+        &self,
+        dir: &Path,
+        options: HashMap<String, Value<'_>>,
+    ) -> Result<String> {
+        let protector = get_str(&options, "protector")?;
+        let pass = get_str(&options, "password")?;
+        do_recovery_add(dir, &protector, &pass).into_dbus()
     }
 }
 
