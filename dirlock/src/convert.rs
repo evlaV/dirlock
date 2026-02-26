@@ -16,7 +16,6 @@ use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 use crate::{
-    CreateOpts,
     DirStatus,
     Keystore,
     create_policy_data,
@@ -215,8 +214,7 @@ impl ConvertJob {
             },
             // If not, generate a new policy key and save it to disk
             None => {
-                let (policy, key) = create_policy_data(protector, &protector_key,
-                                                       CreateOpts::CreateAndSave, ks)?;
+                let (policy, key) = create_policy_data(protector, &protector_key, ks)?;
                 let id = policy.id;
                 db.insert(&dirs.src_rel, id.clone());
                 db.commit()?;

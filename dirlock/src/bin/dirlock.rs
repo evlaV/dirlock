@@ -774,8 +774,7 @@ fn cmd_create_policy(args: &PolicyCreateArgs) -> Result<()> {
     let Some(protector_key) = protector.unwrap_key(pass.as_bytes())? else {
         bail!("Invalid {} for protector {id}", protector.get_type().credential_name());
     };
-    let (policy, _) = dirlock::create_policy_data(&protector, &protector_key,
-                                                  CreateOpts::CreateAndSave, ks)?;
+    let (policy, _) = dirlock::create_policy_data(&protector, &protector_key, ks)?;
     println!("Created encryption policy {}", policy.id);
     Ok(())
 }
