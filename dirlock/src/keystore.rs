@@ -138,10 +138,12 @@ impl Keystore {
             })
     }
 
-    /// Load a policy from disk, or return an empty one if the file is missing
-    fn load_or_create_policy_data(&self, id: &PolicyKeyId) -> std::io::Result<PolicyData> {
+    /// Load a policy from disk, or return an empty one if the file is missing.
+    /// If the policy is new then it will be owned by `uid` / `gid`.
+    pub fn load_or_create_policy_data(&self, id: &PolicyKeyId,
+                                      uid: Option<u32>, gid: Option<u32>) -> std::io::Result<PolicyData> {
         match self.load_policy_data(id) {
-            Err(e) if e.kind() == ErrorKind::NotFound => Ok(PolicyData::new(id.clone(), None, None)),
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(PolicyData::new(id.clone(), uid, gid)),
             x => x,
         }
     }
@@ -178,7 +180,7 @@ impl Keystore {
     /// Removes a protector if it's not being used in any policy
     pub fn remove_protector_if_unused(&self, protector_id: &ProtectorId) -> Result<bool> {
         for policy_id in self.policy_key_ids()? {
-            if self.load_or_create_policy_data(&policy_id)?.keys.contains_key(protector_id) {
+            if self.load_or_create_policy_data(&policy_id, None, None)?.keys.contains_key(protector_id) {
                 return Ok(false);
             }
         }
@@ -194,7 +196,7 @@ impl Keystore {
     pub fn get_protectors_for_policy(&self, id: &PolicyKeyId) -> std::io::Result<(Vec<ProtectedPolicyKey>, Vec<UnusableProtector>)> {
         let mut prots = vec![];
         let mut unusable = vec![];
-        let policy = self.load_or_create_policy_data(id)?;
+        let policy = self.load_or_create_policy_data(id, None, None)?;
         for (protector_id, policy_key) in policy.keys {
             match self.load_protector(protector_id) {
                 Ok(protector) => {
@@ -252,7 +254,7 @@ mod tests {
             bail!("Found unexpected policy");
         };
         assert_eq!(err.kind(), ErrorKind::NotFound);
-        assert!(ks.load_or_create_policy_data(&polid)?.keys.is_empty());
+        assert!(ks.load_or_create_policy_data(&polid, None, None)?.keys.is_empty());
 
         // Try removing a nonexistent policy
         let Err(err) = ks.remove_policy(&polid) else {

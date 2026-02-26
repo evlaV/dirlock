@@ -21,7 +21,6 @@ use zbus::{
     zvariant::{self, Value},
 };
 use dirlock::{
-    CreateOpts,
     DirStatus,
     EncryptedDir,
     LockState,
@@ -363,7 +362,8 @@ fn do_recovery_restore(
     protector_id: &str,
     pass: &str,
 ) -> anyhow::Result<()> {
-    let encrypted_dir = EncryptedDir::open(dir, keystore(), LockState::Any)?;
+    let ks = keystore();
+    let encrypted_dir = EncryptedDir::open(dir, ks, LockState::Any)?;
 
     let Some(recovery) = &encrypted_dir.recovery else {
         bail!("This directory does not have a recovery key");
@@ -382,13 +382,15 @@ fn do_recovery_restore(
         bail!("This directory is already protected with that protector");
     }
 
-    let protector = keystore().load_protector(protector_id)?;
+    let protector = ks.load_protector(protector_id)?;
     let Some(protector_key) = protector.unwrap_key(pass.as_bytes())? else {
         bail!("Authentication failed");
     };
 
-    dirlock::create_policy_data(&protector, protector_key, Some(master_key),
-                                CreateOpts::CreateAndSave, keystore())?;
+    let mut policy = ks.load_or_create_policy_data(&encrypted_dir.policy.keyid,
+                                                   protector.uid, protector.gid)?;
+    policy.add_protector(&protector_key, master_key)?;
+    ks.save_policy_data(&policy)?;
     Ok(())
 }
 

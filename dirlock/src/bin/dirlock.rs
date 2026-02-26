@@ -1072,8 +1072,10 @@ fn cmd_recovery_restore(args: &RecoveryRestoreArgs) -> Result<()> {
         args.user.as_deref(), &args.dir,
     )?;
 
-    let _ = dirlock::create_policy_data(&protector, protector_key, Some(master_key),
-                                        CreateOpts::CreateAndSave, ks)?;
+    let mut policy = ks.load_or_create_policy_data(&encrypted_dir.policy.keyid,
+                                                   protector.uid, protector.gid)?;
+    policy.add_protector(&protector_key, master_key)?;
+    ks.save_policy_data(&policy)?;
     println!("The directory can now be unlocked with protector {}", protector.id);
     Ok(())
 }
