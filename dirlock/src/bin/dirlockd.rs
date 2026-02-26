@@ -387,7 +387,7 @@ fn do_recovery_restore(
         bail!("Authentication failed");
     };
 
-    dirlock::protect_policy_key(&protector, protector_key, master_key, ks)?;
+    dirlock::protect_policy_key(&protector, &protector_key, master_key, ks)?;
     Ok(())
 }
 

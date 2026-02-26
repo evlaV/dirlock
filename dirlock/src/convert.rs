@@ -215,7 +215,7 @@ impl ConvertJob {
             },
             // If not, generate a new policy key and save it to disk
             None => {
-                let (policy, key) = create_policy_data(protector, protector_key,
+                let (policy, key) = create_policy_data(protector, &protector_key,
                                                        CreateOpts::CreateAndSave, ks)?;
                 let id = policy.id;
                 db.insert(&dirs.src_rel, id.clone());

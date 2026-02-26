@@ -774,7 +774,7 @@ fn cmd_create_policy(args: &PolicyCreateArgs) -> Result<()> {
     let Some(protector_key) = protector.unwrap_key(pass.as_bytes())? else {
         bail!("Invalid {} for protector {id}", protector.get_type().credential_name());
     };
-    let (policy, _) = dirlock::create_policy_data(&protector, protector_key,
+    let (policy, _) = dirlock::create_policy_data(&protector, &protector_key,
                                                   CreateOpts::CreateAndSave, ks)?;
     println!("Created encryption policy {}", policy.id);
     Ok(())
@@ -1072,7 +1072,7 @@ fn cmd_recovery_restore(args: &RecoveryRestoreArgs) -> Result<()> {
         args.user.as_deref(), &args.dir,
     )?;
 
-    dirlock::protect_policy_key(&protector, protector_key, master_key, ks)?;
+    dirlock::protect_policy_key(&protector, &protector_key, master_key, ks)?;
     println!("The directory can now be unlocked with protector {}", protector.id);
     Ok(())
 }
@@ -1134,7 +1134,7 @@ fn cmd_import_master_key() -> Result<()> {
         .build()?;
     let pass = read_new_password_for_protector(opts.get_type())?;
     let (protector, protector_key) = dirlock::create_protector(opts, pass.as_bytes(), CreateOpts::CreateAndSave, ks)?;
-    dirlock::protect_policy_key(&protector, protector_key, master_key, ks)?;
+    dirlock::protect_policy_key(&protector, &protector_key, master_key, ks)?;
     println!("Imported key for policy {keyid}");
     Ok(())
 }
