@@ -328,13 +328,13 @@ pub fn encrypt_dir(path: &Path, protector: &Protector, protector_key: ProtectorK
     Ok(policy.id)
 }
 
-/// Whether to save a protector or policy when creating it
+/// Whether to save a protector to disk when creating it
 pub enum CreateOpts {
     CreateAndSave,
     CreateOnly,
 }
 
-/// Create a new protector (without saving it to disk)
+/// Create a new protector (optionally saving it to disk)
 pub fn create_protector(opts: ProtectorOpts, pass: &[u8],
                         create: CreateOpts, ks: &Keystore) -> Result<(Protector, ProtectorKey)> {
     let protector_key = ProtectorKey::new_random();
