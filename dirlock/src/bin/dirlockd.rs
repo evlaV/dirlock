@@ -367,6 +367,14 @@ fn do_recovery_add(
     Ok(recovery.to_string())
 }
 
+/// Remove the recovery key from an encrypted directory
+fn do_recovery_remove(dir: &Path) -> anyhow::Result<()> {
+    match dirlock::open_dir(dir, keystore())? {
+        DirStatus::Encrypted(mut d) => d.remove_recovery_key(),
+        x => bail!("{}", x.error_msg()),
+    }
+}
+
 /// Remove a protector from an encryption policy
 fn do_remove_protector_from_policy(
     policy: &str,
@@ -594,6 +602,13 @@ impl DirlockDaemon {
         let protector = get_str(&options, "protector")?;
         let pass = get_str(&options, "password")?;
         do_recovery_add(dir, &protector, &pass).into_dbus()
+    }
+
+    async fn recovery_remove(
+        &self,
+        dir: &Path,
+    ) -> Result<()> {
+        do_recovery_remove(dir).into_dbus()
     }
 }
 
