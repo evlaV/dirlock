@@ -202,10 +202,7 @@ impl ConvertJob {
         let mut db = ConvertDb::load(&dirs.base)?;
 
         // Check the status of the source dir. It should not be encrypted
-        match crate::open_dir(&dirs.src, ks)? {
-            DirStatus::Unencrypted => (),
-            status => bail!(status.error_msg()),
-        }
+        crate::ensure_unencrypted(&dirs.src, ks)?;
 
         // Check if we tried to convert this directory already
         let (policy_key, keyid) = match db.get(&dirs.src_rel) {

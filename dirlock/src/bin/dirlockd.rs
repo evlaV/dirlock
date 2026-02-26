@@ -205,10 +205,7 @@ fn do_encrypt_dir(
     let protector_id = ProtectorId::from_str(protector_id)?;
     let protector = ks.load_protector(protector_id)?;
 
-    match dirlock::open_dir(dir, ks)? {
-        DirStatus::Unencrypted => (),
-        x => bail!("{}", x.error_msg()),
-    }
+    dirlock::ensure_unencrypted(dir, ks)?;
 
     let key = match protector.unwrap_key(pass.as_bytes())? {
         Some(k) => k,
@@ -229,10 +226,7 @@ fn do_convert_dir(
     let protector_id = ProtectorId::from_str(protector_id)?;
     let protector = ks.load_protector(protector_id)?;
 
-    match dirlock::open_dir(dir, ks)? {
-        DirStatus::Unencrypted => (),
-        x => bail!("{}", x.error_msg()),
-    }
+    dirlock::ensure_unencrypted(dir, ks)?;
 
     let key = match protector.unwrap_key(pass.as_bytes())? {
         Some(k) => k,

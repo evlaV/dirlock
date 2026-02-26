@@ -133,6 +133,14 @@ pub fn open_home(user: &str, ks: &Keystore) -> Result<Option<DirStatus>> {
     }
 }
 
+/// Return an error if the directory is encrypted or uses an unsupported mechanism.
+pub fn ensure_unencrypted(path: &Path, ks: &Keystore) -> Result<()> {
+    match open_dir(path, ks)? {
+        DirStatus::Unencrypted => Ok(()),
+        x => bail!("{}", x.error_msg()),
+    }
+}
+
 impl EncryptedDir {
     /// Get a directory's master encryption key using the password of one of its protectors
     pub fn get_master_key(&self, pass: &[u8], protector_id: &ProtectorId) -> Result<Option<PolicyKey>> {
@@ -278,11 +286,7 @@ pub fn encrypt_dir_with_key(path: &Path, master_key: &PolicyKey) -> Result<()> {
 /// The key is stored to disk using the given [`Protector`].
 pub fn encrypt_dir(path: &Path, protector: &Protector, protector_key: ProtectorKey,
                    ks: &Keystore) -> Result<PolicyKeyId> {
-    match open_dir(path, ks)? {
-        DirStatus::Unencrypted => (),
-        x => bail!("{}", x.error_msg()),
-    };
-
+    ensure_unencrypted(path, ks)?;
     if ! util::dir_is_empty(path)? {
         bail!("Cannot encrypt a non-empty directory");
     }

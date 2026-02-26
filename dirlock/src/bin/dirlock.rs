@@ -642,10 +642,7 @@ fn get_or_create_protector(
 
 fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
     let ks = keystore();
-    match dirlock::open_dir(&args.dir, ks)? {
-        DirStatus::Unencrypted => (),
-        x => bail!("{}", x.error_msg()),
-    };
+    dirlock::ensure_unencrypted(&args.dir, ks)?;
 
     if ! dir_is_empty(&args.dir)? {
         bail!("The directory is not empty. Use 'convert' to encrypt a directory with data");
@@ -672,10 +669,7 @@ fn cmd_convert(args: &ConvertArgs) -> Result<()> {
     use dirlock::convert::*;
 
     let ks = keystore();
-    match dirlock::open_dir(&args.dir, ks)? {
-        DirStatus::Unencrypted => (),
-        x => bail!("{}", x.error_msg()),
-    };
+    dirlock::ensure_unencrypted(&args.dir, ks)?;
 
     if dir_is_empty(&args.dir)? {
         bail!("The directory is empty. Use the 'encrypt' command instead");
