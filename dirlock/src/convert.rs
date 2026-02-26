@@ -22,7 +22,6 @@ use crate::{
     create_policy_data,
     cloner::DirectoryCloner,
     fscrypt::{self, KeyStatus, PolicyKeyId},
-    policy::PolicyKey,
     protector::{Protector, ProtectorId, ProtectorKey},
     unlock_dir_with_key,
     util::{
@@ -216,10 +215,9 @@ impl ConvertJob {
             },
             // If not, generate a new policy key and save it to disk
             None => {
-                let key = PolicyKey::new_random();
-                let id = key.get_id();
-                _ = create_policy_data(protector, protector_key, Some(key.clone()),
-                                       CreateOpts::CreateAndSave, ks)?;
+                let (policy, key) = create_policy_data(protector, protector_key,
+                                                       CreateOpts::CreateAndSave, ks)?;
+                let id = policy.id;
                 db.insert(&dirs.src_rel, id.clone());
                 db.commit()?;
                 (key, id)

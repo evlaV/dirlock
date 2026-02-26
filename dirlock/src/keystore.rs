@@ -140,7 +140,7 @@ impl Keystore {
 
     /// Load a policy from disk, or return an empty one if the file is missing.
     /// If the policy is new then it will be owned by `uid` / `gid`.
-    pub fn load_or_create_policy_data(&self, id: &PolicyKeyId,
+    pub(crate) fn load_or_create_policy_data(&self, id: &PolicyKeyId,
                                       uid: Option<u32>, gid: Option<u32>) -> std::io::Result<PolicyData> {
         match self.load_policy_data(id) {
             Err(e) if e.kind() == ErrorKind::NotFound => Ok(PolicyData::new(id.clone(), uid, gid)),

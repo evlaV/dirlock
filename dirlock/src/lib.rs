@@ -315,10 +315,8 @@ pub fn encrypt_dir(path: &Path, protector: &Protector, protector_key: ProtectorK
     }
 
     // Generate a master key
-    let master_key = PolicyKey::new_random();
-    let policy = create_policy_data(protector, protector_key, Some(master_key.clone()),
-                                    CreateOpts::CreateAndSave, ks)?;
-
+    let (policy, master_key) = create_policy_data(protector, protector_key,
+                                                  CreateOpts::CreateAndSave, ks)?;
     // Add the key to the kernel and encrypt the directory
     encrypt_dir_with_key(path, &master_key)
         .map_err(|e| {
@@ -366,17 +364,26 @@ pub fn wrap_and_save_protector_key(protector: &mut Protector, key: ProtectorKey,
     ks.save_protector(protector)
 }
 
-/// Create a new policy with the given key (or a random one if not provided).
+/// Create a new policy with a freshly generated key, returning both the policy and the key.
 pub fn create_policy_data(protector: &Protector, protector_key: ProtectorKey,
-                          policy_key: Option<PolicyKey>, create: CreateOpts,
-                          ks: &Keystore) -> Result<PolicyData> {
-    let master_key = policy_key.unwrap_or_else(PolicyKey::new_random);
+                          create: CreateOpts, ks: &Keystore) -> Result<(PolicyData, PolicyKey)> {
+    let master_key = PolicyKey::new_random();
     let mut policy = PolicyData::new(master_key.get_id(), protector.uid, protector.gid);
-    policy.add_protector(&protector_key, master_key)?;
+    policy.add_protector(&protector_key, master_key.clone())?;
     if matches!(create, CreateOpts::CreateAndSave) {
         ks.save_policy_data(&policy)?;
     }
-    Ok(policy)
+    Ok((policy, master_key))
+}
+
+/// Add a protector to an policy, loading it from disk if it exists.
+pub fn protect_policy_key(protector: &Protector, protector_key: ProtectorKey,
+                          master_key: PolicyKey, ks: &Keystore) -> Result<()> {
+    let id = master_key.get_id();
+    let mut policy = ks.load_or_create_policy_data(&id, protector.uid, protector.gid)?;
+    policy.add_protector(&protector_key, master_key)?;
+    ks.save_policy_data(&policy)?;
+    Ok(())
 }
 
 /// Get the default [`Keystore`]

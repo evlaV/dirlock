@@ -387,10 +387,7 @@ fn do_recovery_restore(
         bail!("Authentication failed");
     };
 
-    let mut policy = ks.load_or_create_policy_data(&encrypted_dir.policy.keyid,
-                                                   protector.uid, protector.gid)?;
-    policy.add_protector(&protector_key, master_key)?;
-    ks.save_policy_data(&policy)?;
+    dirlock::protect_policy_key(&protector, protector_key, master_key, ks)?;
     Ok(())
 }
 
