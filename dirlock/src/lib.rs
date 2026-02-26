@@ -19,7 +19,7 @@ pub mod util;
 
 use anyhow::{anyhow, bail, Result};
 use keystore::Keystore;
-use fscrypt::{Policy, PolicyKeyId, RemoveKeyUsers, RemovalStatusFlags};
+use fscrypt::{KeyStatus, Policy, PolicyKeyId, RemoveKeyUsers, RemovalStatusFlags};
 use policy::{
     PolicyData,
     PolicyKey,
@@ -46,7 +46,7 @@ impl DirStatus {
     /// A stringified version of the enum value, in lower case and without spaces
     pub fn name(&self) -> &'static str {
         use DirStatus::*;
-        use fscrypt::KeyStatus::*;
+        use KeyStatus::*;
         match &self {
             Unencrypted => "unencrypted",
             Unsupported => "unsupported",
@@ -72,6 +72,13 @@ impl DirStatus {
     }
 }
 
+/// Expected lock state when opening an encrypted directory with [`EncryptedDir::open`]
+pub enum LockState {
+    Any,
+    Locked,
+    Unlocked,
+}
+
 /// A wrapped [`PolicyKey`] together with a [`Protector`] that can unwrap it
 pub struct ProtectedPolicyKey {
     pub protector: Protector,
@@ -88,7 +95,7 @@ pub struct UnusableProtector {
 pub struct EncryptedDir {
     pub path: PathBuf,
     pub policy: fscrypt::PolicyV2,
-    pub key_status: fscrypt::KeyStatus,
+    pub key_status: KeyStatus,
     pub key_flags: fscrypt::KeyStatusFlags,
     pub protectors: Vec<ProtectedPolicyKey>,
     pub unusable: Vec<UnusableProtector>,
@@ -142,6 +149,22 @@ pub fn ensure_unencrypted(path: &Path, ks: &Keystore) -> Result<()> {
 }
 
 impl EncryptedDir {
+    /// Open an encrypted directory with an expected [`LockState`].
+    /// Return an error if the directory is not encrypted or in an unexpected state.
+    /// [`KeyStatus::IncompletelyRemoved`] never returns an error, it's considered
+    /// locked or unlocked if that's what we're expecting.
+    pub fn open(path: &Path, ks: &Keystore, state: LockState) -> Result<Self> {
+        let dir = match open_dir(path, ks)? {
+            DirStatus::Encrypted(d) => d,
+            e => bail!("{}", e.error_msg()),
+        };
+        match (state, &dir.key_status) {
+            (LockState::Locked, KeyStatus::Present) => bail!("Already unlocked"),
+            (LockState::Unlocked, KeyStatus::Absent) => bail!("Already locked"),
+            _ => Ok(dir),
+        }
+    }
+
     /// Get a directory's master encryption key using the password of one of its protectors
     pub fn get_master_key(&self, pass: &[u8], protector_id: &ProtectorId) -> Result<Option<PolicyKey>> {
         let p = self.get_protected_policy_key(protector_id)?;
@@ -238,7 +261,7 @@ impl EncryptedDir {
 
     /// Locks a directory
     pub fn lock(&self, user: RemoveKeyUsers) -> Result<RemovalStatusFlags> {
-        if self.key_status == fscrypt::KeyStatus::Absent {
+        if self.key_status == KeyStatus::Absent {
             bail!("The directory {} is already locked", self.path.display());
         }
 

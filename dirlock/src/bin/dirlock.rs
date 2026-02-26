@@ -14,6 +14,7 @@ use dirlock::{
     CreateOpts,
     DirStatus,
     EncryptedDir,
+    LockState,
     recovery::RecoveryKey,
     fscrypt::{
         PolicyKeyId,
@@ -506,12 +507,7 @@ fn get_dir_protector<'a>(dir: &'a EncryptedDir, prot: &Option<ProtectorId>) -> R
 }
 
 fn cmd_lock(args: &LockArgs) -> Result<()> {
-    let encrypted_dir = match dirlock::open_dir(&args.dir, keystore())? {
-        DirStatus::Encrypted(d) if d.key_status == fscrypt::KeyStatus::Absent =>
-            bail!("The directory {} is already locked", args.dir.display()),
-        DirStatus::Encrypted(d) => d,
-        x => bail!("{}", x.error_msg()),
-    };
+    let encrypted_dir = EncryptedDir::open(&args.dir, keystore(), LockState::Unlocked)?;
 
     let user = if args.all_users {
         fscrypt::RemoveKeyUsers::AllUsers
@@ -536,12 +532,7 @@ fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
         bail!("Cannot use --protector and --recovery at the same time");
     }
 
-    let encrypted_dir = match dirlock::open_dir(&args.dir, keystore())? {
-        DirStatus::Encrypted(d) if d.key_status == fscrypt::KeyStatus::Present =>
-            bail!("The directory {} is already unlocked", args.dir.display()),
-        DirStatus::Encrypted(d) => d,
-        x => bail!("{}", x.error_msg()),
-    };
+    let encrypted_dir = EncryptedDir::open(&args.dir, keystore(), LockState::Locked)?;
 
     // If the user selected a protector then use it, otherwise try all of them
     let prots = if let Some(id) = &args.protector {
@@ -583,10 +574,7 @@ fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
 }
 
 fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
-    let encrypted_dir = match dirlock::open_dir(&args.dir, keystore())? {
-        DirStatus::Encrypted(d) => d,
-        x => bail!("{}", x.error_msg()),
-    };
+    let encrypted_dir = EncryptedDir::open(&args.dir, keystore(), LockState::Any)?;
 
     let protector = get_dir_protector(&encrypted_dir, &args.protector)?;
     do_change_verify_protector_password(Some(protector.id), false)
@@ -1026,10 +1014,7 @@ fn cmd_change_protector_pass(args: &ProtectorChangePassArgs) -> Result<()> {
 }
 
 fn cmd_recovery_add(args: &RecoveryAddArgs) -> Result<()> {
-    let mut encrypted_dir = match dirlock::open_dir(&args.dir, keystore())? {
-        DirStatus::Encrypted(d) => d,
-        x => bail!("{}", x.error_msg()),
-    };
+    let mut encrypted_dir = EncryptedDir::open(&args.dir, keystore(), LockState::Any)?;
 
     if encrypted_dir.recovery.is_some() {
         bail!("This directory already has a recovery key");
@@ -1055,19 +1040,13 @@ fn cmd_recovery_add(args: &RecoveryAddArgs) -> Result<()> {
 }
 
 fn cmd_recovery_remove(args: &RecoveryRemoveArgs) -> Result<()> {
-    match dirlock::open_dir(&args.dir, keystore())? {
-        DirStatus::Encrypted(mut d) => d.remove_recovery_key(),
-        x => bail!("{}", x.error_msg()),
-    }
+    let mut encrypted_dir = EncryptedDir::open(&args.dir, keystore(), LockState::Any)?;
+    encrypted_dir.remove_recovery_key()
 }
 
 fn cmd_recovery_restore(args: &RecoveryRestoreArgs) -> Result<()> {
     let ks = keystore();
-    let encrypted_dir = match dirlock::open_dir(&args.dir, ks)? {
-        DirStatus::Encrypted(d) => d,
-        DirStatus::KeyMissing(_) => bail!("No recovery key found for this directory"),
-        x => bail!("{}", x.error_msg()),
-    };
+    let encrypted_dir = EncryptedDir::open(&args.dir, ks, LockState::Any)?;
 
     if let Some(protid) = &args.protector {
         if encrypted_dir.get_protector_by_id(protid).is_ok() {
@@ -1101,10 +1080,7 @@ fn cmd_recovery_restore(args: &RecoveryRestoreArgs) -> Result<()> {
 
 fn cmd_export_master_key(args: &ExportMasterKeyArgs) -> Result<()> {
     use base64::prelude::*;
-    let encrypted_dir = match dirlock::open_dir(&args.dir, keystore())? {
-        DirStatus::Encrypted(d) => d,
-        x => bail!("{}", x.error_msg()),
-    };
+    let encrypted_dir = EncryptedDir::open(&args.dir, keystore(), LockState::Any)?;
 
     let protector = get_dir_protector(&encrypted_dir, &args.protector)?;
 

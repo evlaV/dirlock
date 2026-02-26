@@ -23,6 +23,8 @@ use zbus::{
 use dirlock::{
     CreateOpts,
     DirStatus,
+    EncryptedDir,
+    LockState,
     ProtectedPolicyKey,
     convert::ConvertJob,
     fscrypt::{
@@ -122,14 +124,7 @@ struct DbusPolicyData(HashMap<String, Vec<DbusProtectorData>>);
 
 /// Lock a directory
 fn do_lock_dir(dir: &Path) -> anyhow::Result<()> {
-    let encrypted_dir = match dirlock::open_dir(dir, keystore()) {
-        Ok(DirStatus::Encrypted(d)) if d.key_status == fscrypt::KeyStatus::Absent =>
-            Err(anyhow!("Already locked")),
-        Ok(DirStatus::Encrypted(d)) => Ok(d),
-        Ok(x) => Err(anyhow!("{}", x.error_msg())),
-        Err(e) => Err(e),
-    }?;
-
+    let encrypted_dir = EncryptedDir::open(dir, keystore(), LockState::Unlocked)?;
     encrypted_dir.lock(fscrypt::RemoveKeyUsers::CurrentUser)
         .and(Ok(())) // TODO: check removal status flags
 }
@@ -141,14 +136,7 @@ fn do_unlock_dir(
     protector_id: &str,
 ) -> anyhow::Result<()> {
     let protector_id = ProtectorId::from_str(protector_id)?;
-
-    let encrypted_dir = match dirlock::open_dir(dir, keystore()) {
-        Ok(DirStatus::Encrypted(d)) if d.key_status == fscrypt::KeyStatus::Present =>
-            Err(anyhow!("Already unlocked")),
-        Ok(DirStatus::Encrypted(d)) => Ok(d),
-        Ok(x) => Err(anyhow!("{}", x.error_msg())),
-        Err(e) => Err(e),
-    }?;
+    let encrypted_dir = EncryptedDir::open(dir, keystore(), LockState::Locked)?;
 
     if encrypted_dir.unlock(pass.as_bytes(), &protector_id)? {
         Ok(())
@@ -345,10 +333,7 @@ fn do_recovery_add(
     pass: &str,
 ) -> anyhow::Result<String> {
     let protector_id = ProtectorId::from_str(protector_id)?;
-    let mut encrypted_dir = match dirlock::open_dir(dir, keystore())? {
-        DirStatus::Encrypted(d) => d,
-        x => bail!("{}", x.error_msg()),
-    };
+    let mut encrypted_dir = EncryptedDir::open(dir, keystore(), LockState::Any)?;
 
     if encrypted_dir.recovery.is_some() {
         bail!("This directory already has a recovery key");
@@ -378,10 +363,7 @@ fn do_recovery_restore(
     protector_id: &str,
     pass: &str,
 ) -> anyhow::Result<()> {
-    let encrypted_dir = match dirlock::open_dir(dir, keystore())? {
-        DirStatus::Encrypted(d) => d,
-        x => bail!("{}", x.error_msg()),
-    };
+    let encrypted_dir = EncryptedDir::open(dir, keystore(), LockState::Any)?;
 
     let Some(recovery) = &encrypted_dir.recovery else {
         bail!("This directory does not have a recovery key");
