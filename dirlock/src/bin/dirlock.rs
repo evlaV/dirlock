@@ -237,10 +237,10 @@ struct PolicyPurgeArgs {
 struct PolicyAddProtectorArgs {
     /// ID of the policy to modify
     #[argh(option)]
-    policy: Option<PolicyKeyId>,
+    policy: PolicyKeyId,
     /// ID of the protector to add
     #[argh(option)]
-    protector: Option<ProtectorId>,
+    protector: ProtectorId,
     /// ID of the protector used to unlock the policy
     #[argh(option)]
     unlock_with: Option<ProtectorId>,
@@ -871,31 +871,20 @@ fn cmd_policy_purge(args: &PolicyPurgeArgs) -> Result<()> {
 }
 
 fn cmd_policy_add_protector(args: &PolicyAddProtectorArgs) -> Result<()> {
-    let Some(policy_id) = &args.policy else {
-        bail!("You must specify the ID of the encryption policy.");
-    };
     let ks = keystore();
-    let protector = if let Some(id) = &args.protector {
-        ks.load_protector(*id)?
-    } else {
-        bail!("You must specify the ID of the protector to add.");
-    };
-
-    let mut policy = ks.load_policy_data(policy_id)?;
-    if policy.keys.contains_key(&protector.id) {
-        bail!("Policy {policy_id} is already protected with protector {}", protector.id);
-    }
+    let policy_id = &args.policy;
+    let protector = ks.load_protector(args.protector)?;
 
     let unlock_with = if let Some(id) = args.unlock_with {
         ks.load_protector(id)?
-    } else if policy.keys.len() == 1 {
-        let id = policy.keys.keys().next().unwrap();
-        ks.load_protector(*id)?
     } else {
-        bail!("You must specify the ID of the protector to unlock this policy.");
-    };
-    let Some(wrapped_policy_key) = policy.keys.get(&unlock_with.id) else {
-        bail!("Policy {policy_id} cannot be unlocked with protector {}", unlock_with.id);
+        let policy = ks.load_policy_data(policy_id)?;
+        if policy.keys.len() == 1 {
+            let id = *policy.keys.keys().next().unwrap();
+            ks.load_protector(id)?
+        } else {
+            bail!("You must specify the ID of the protector to unlock this policy.");
+        }
     };
 
     println!("Unlocking new protector {} (\"{}\")", protector.id, protector.get_name());
@@ -906,12 +895,7 @@ fn cmd_policy_add_protector(args: &PolicyAddProtectorArgs) -> Result<()> {
 
     println!("Unlocking existing protector {} (\"{}\")", unlock_with.id, unlock_with.get_name());
     let pass = read_password_for_protector(&unlock_with)?;
-    let Some(policy_key) = unlock_with.unwrap_policy_key(wrapped_policy_key, pass.as_bytes())? else {
-        bail!("Invalid {}", unlock_with.get_type().credential_name());
-    };
-
-    policy.add_protector(&protector_key, policy_key)?;
-    ks.save_policy_data(&policy)?;
+    dirlock::add_protector_to_policy(policy_id, &protector_key, &unlock_with, pass.as_bytes(), ks)?;
     println!("Protector {} added to policy {policy_id}", protector.id);
 
     Ok(())

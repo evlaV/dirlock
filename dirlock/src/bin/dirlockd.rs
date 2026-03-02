@@ -306,23 +306,11 @@ fn do_add_protector_to_policy(
     let unlock_with = ProtectorId::from_str(unlock_with)
         .and_then(|id| ks.load_protector(id).map_err(|e| e.into()))?;
 
-    let mut policy = ks.load_policy_data(&policy_id)?;
-    let Some(wrapped_policy_key) = policy.keys.get(&unlock_with.id) else {
-        bail!("Policy {policy_id} cannot be unlocked with protector {}", unlock_with.id);
-    };
-
     let Some(protector_key) = protector.unwrap_key(protector_pass.as_bytes())? else {
         bail!("Invalid {} for protector {}", protector.get_type().credential_name(), protector.id);
     };
 
-    let Some(policy_key) = unlock_with.unwrap_policy_key(wrapped_policy_key, unlock_with_pass.as_bytes())? else {
-        bail!("Invalid {} for protector {}", unlock_with.get_type().credential_name(), unlock_with.id);
-    };
-
-    policy.add_protector(&protector_key, policy_key)?;
-    keystore().save_policy_data(&policy)?;
-
-    Ok(())
+    dirlock::add_protector_to_policy(&policy_id, &protector_key, &unlock_with, unlock_with_pass.as_bytes(), ks)
 }
 
 /// Add a recovery key to an encrypted directory

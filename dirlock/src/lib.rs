@@ -397,6 +397,24 @@ pub fn remove_protector_from_policy(policy_id: &PolicyKeyId, protector_id: &Prot
     Ok(())
 }
 
+/// Add a protector to a policy, using `unlock_with` to obtain the policy key.
+///
+/// `protector_key` is the [`ProtectorKey`].
+/// `unlock_with` is a [`Protector`] already in the policy, and `pass` its credential.
+pub fn add_protector_to_policy(policy_id: &PolicyKeyId, protector_key: &ProtectorKey,
+                               unlock_with: &Protector, pass: &[u8], ks: &Keystore) -> Result<()> {
+    let mut policy = ks.load_policy_data(policy_id)?;
+    let Some(wrapped_policy_key) = policy.keys.get(&unlock_with.id) else {
+        bail!("Policy {policy_id} cannot be unlocked with protector {}", unlock_with.id);
+    };
+    let Some(policy_key) = unlock_with.unwrap_policy_key(wrapped_policy_key, pass)? else {
+        bail!("Invalid {} for protector {}", unlock_with.get_type().credential_name(), unlock_with.id);
+    };
+    policy.add_protector(protector_key, policy_key)?;
+    ks.save_policy_data(&policy)?;
+    Ok(())
+}
+
 /// Get the default [`Keystore`]
 pub fn keystore() -> &'static keystore::Keystore {
     Keystore::default()
