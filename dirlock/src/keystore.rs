@@ -14,12 +14,10 @@ use std::{
     os::unix::fs::MetadataExt,
     path::Path,
     path::PathBuf,
-    sync::OnceLock,
 };
 use crate::{
     ProtectedPolicyKey,
     UnusableProtector,
-    config::Config,
     fscrypt::PolicyKeyId,
     policy::PolicyData,
     protector::{
@@ -35,6 +33,7 @@ pub struct Keystore {
 }
 
 impl Keystore {
+    /// Return a new [`Keystore`] with `dir` as its base path
     pub fn from_path(dir: &Path) -> Self {
         let base_dir = PathBuf::from(dir);
         let policy_dir = base_dir.join("policies");
@@ -42,12 +41,6 @@ impl Keystore {
         Keystore { policy_dir, protector_dir }
     }
 
-    pub fn default() -> &'static Self {
-        static DEFAULT_KEYSTORE : OnceLock<Keystore> = OnceLock::new();
-        DEFAULT_KEYSTORE.get_or_init(|| {
-            Keystore::from_path(Config::keystore_dir())
-        })
-    }
 
     /// Return an iterator to the IDs of all policy keys available in the key store
     pub fn policy_key_ids(&self) -> std::io::Result<Vec<PolicyKeyId>> {
