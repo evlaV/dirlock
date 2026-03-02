@@ -252,10 +252,10 @@ struct PolicyAddProtectorArgs {
 struct PolicyRemoveProtectorArgs {
     /// ID of the policy to modify
     #[argh(option)]
-    policy: Option<PolicyKeyId>,
+    policy: PolicyKeyId,
     /// ID of the protector to remove
     #[argh(option)]
-    protector: Option<ProtectorId>,
+    protector: ProtectorId,
 }
 
 #[derive(FromArgs)]
@@ -918,28 +918,8 @@ fn cmd_policy_add_protector(args: &PolicyAddProtectorArgs) -> Result<()> {
 }
 
 fn cmd_policy_remove_protector(args: &PolicyRemoveProtectorArgs) -> Result<()> {
-    let Some(policy_id) = &args.policy else {
-        bail!("You must specify the ID of the encryption policy.");
-    };
-    let ks = keystore();
-    let protector = if let Some(id) = args.protector {
-        ks.load_protector(id)?
-    } else {
-        bail!("You must specify the ID of the protector to remove.");
-    };
-
-    let mut policy = ks.load_policy_data(policy_id)?;
-    if ! policy.keys.contains_key(&protector.id) {
-        bail!("Protector {} is not used in this policy", protector.id);
-    }
-    if policy.keys.len() == 1 {
-        bail!("Cannot remove the last protector. Use the 'policy remove' command instead.");
-    }
-
-    policy.remove_protector(&protector.id)?;
-    ks.save_policy_data(&policy)?;
-    println!("Protector {} removed from policy {policy_id}", protector.id);
-
+    dirlock::remove_protector_from_policy(&args.policy, &args.protector, keystore())?;
+    println!("Protector {} removed from policy {}", &args.protector, &args.policy);
     Ok(())
 }
 

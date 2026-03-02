@@ -398,18 +398,7 @@ fn do_remove_protector_from_policy(
 ) -> anyhow::Result<()> {
     let policy_id = PolicyKeyId::from_str(policy)?;
     let protector_id = ProtectorId::from_str(protector)?;
-    let ks = keystore();
-    let mut policy = ks.load_policy_data(&policy_id)?;
-    if ! policy.keys.contains_key(&protector_id) {
-        bail!("Protector {} is not used in this policy", protector_id);
-    }
-    if policy.keys.len() == 1 {
-        bail!("Cannot remove the last protector");
-    }
-    policy.remove_protector(&protector_id)?;
-    ks.save_policy_data(&policy)?;
-
-    Ok(())
+    dirlock::remove_protector_from_policy(&policy_id, &protector_id, keystore())
 }
 
 impl DirlockDaemon {

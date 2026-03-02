@@ -383,6 +383,20 @@ pub fn protect_policy_key(protector: &Protector, protector_key: &ProtectorKey,
     Ok(())
 }
 
+/// Remove a protector from a policy.
+///
+/// Fails if the protector is not in the policy, or if it is the last one.
+pub fn remove_protector_from_policy(policy_id: &PolicyKeyId, protector_id: &ProtectorId,
+                                    ks: &Keystore) -> Result<()> {
+    let mut policy = ks.load_policy_data(policy_id)?;
+    if policy.keys.len() == 1 {
+        bail!("Cannot remove the last protector");
+    }
+    policy.remove_protector(protector_id)?;
+    ks.save_policy_data(&policy)?;
+    Ok(())
+}
+
 /// Get the default [`Keystore`]
 pub fn keystore() -> &'static keystore::Keystore {
     Keystore::default()
