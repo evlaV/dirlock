@@ -170,9 +170,10 @@ fn do_change_protector_password(
     let mut prot = ProtectorId::from_str(protector_id)
         .and_then(|id| ks.load_protector(id).map_err(|e| e.into()))?;
 
-    prot.unwrap_key(pass.as_bytes())
-        .and_then(|k| k.ok_or_else(|| anyhow!("Invalid password")))
-        .and_then(|key| dirlock::wrap_and_save_protector_key(&mut prot, key, newpass.as_bytes(), ks))
+    if ! dirlock::update_protector_password(&mut prot, pass.as_bytes(), newpass.as_bytes(), ks)? {
+        bail!("Invalid password");
+    }
+    Ok(())
 }
 
 /// Get the encryption status of a directory
