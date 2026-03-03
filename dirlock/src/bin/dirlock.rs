@@ -507,8 +507,8 @@ fn get_dir_protector<'a>(dir: &'a EncryptedDir, prot: &Option<ProtectorId>) -> R
     }
 }
 
-fn cmd_lock(args: &LockArgs) -> Result<()> {
-    let encrypted_dir = EncryptedDir::open(&args.dir, keystore(), LockState::Unlocked)?;
+fn cmd_lock(args: &LockArgs, ks: &Keystore) -> Result<()> {
+    let encrypted_dir = EncryptedDir::open(&args.dir, ks, LockState::Unlocked)?;
 
     let user = if args.all_users {
         fscrypt::RemoveKeyUsers::AllUsers
@@ -528,12 +528,12 @@ fn cmd_lock(args: &LockArgs) -> Result<()> {
     Ok(())
 }
 
-fn cmd_unlock(args: &UnlockArgs) -> Result<()> {
+fn cmd_unlock(args: &UnlockArgs, ks: &Keystore) -> Result<()> {
     if args.recovery && args.protector.is_some() {
         bail!("Cannot use --protector and --recovery at the same time");
     }
 
-    let encrypted_dir = EncryptedDir::open(&args.dir, keystore(), LockState::Locked)?;
+    let encrypted_dir = EncryptedDir::open(&args.dir, ks, LockState::Locked)?;
 
     // If the user selected a protector then use it, otherwise try all of them
     let prots = if let Some(id) = &args.protector {
@@ -1196,8 +1196,8 @@ fn main() -> Result<()> {
     dirlock::init()?;
 
     match &args.command {
-        Lock(args) => cmd_lock(args),
-        Unlock(args) => cmd_unlock(args),
+        Lock(args) => cmd_lock(args, keystore()),
+        Unlock(args) => cmd_unlock(args, keystore()),
         ChangePass(args) => cmd_change_pass(args),
         Encrypt(args) => cmd_encrypt(args, keystore()),
         Convert(args) => cmd_convert(args),
@@ -1278,6 +1278,37 @@ mod tests {
         let status = encrypted_dir.lock(RemoveKeyUsers::CurrentUser)?;
         assert!(!status.contains(RemovalStatusFlags::FilesBusy));
         assert!(!status.contains(RemovalStatusFlags::OtherUsers));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_lock_unlock() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let ks_dir = TempDir::new("keystore")?;
+        let ks = Keystore::from_path(ks_dir.path());
+
+        let password = "1234";
+
+        // Encrypt the directory
+        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        push_test_password(password);
+        cmd_encrypt(&test_encrypt_args(dir.path()), &ks)?;
+
+        // Lock it and verify that it's locked
+        let lock_args = LockArgs { dir: dir.path().into(), all_users: false };
+        cmd_lock(&lock_args, &ks)?;
+        EncryptedDir::open(dir.path(), &ks, LockState::Locked)?;
+
+        // Unlock it and verify that it's unlocked
+        push_test_password(password);
+        let unlock_args = UnlockArgs { dir: dir.path().into(), protector: None, recovery: false };
+        cmd_unlock(&unlock_args, &ks)?;
+        EncryptedDir::open(dir.path(), &ks, LockState::Unlocked)?;
+
+        // Lock it again
+        cmd_lock(&lock_args, &ks)?;
 
         Ok(())
     }
