@@ -867,8 +867,7 @@ fn cmd_policy_purge(args: &PolicyPurgeArgs, ks: &Keystore) -> Result<()> {
     Ok(())
 }
 
-fn cmd_policy_add_protector(args: &PolicyAddProtectorArgs) -> Result<()> {
-    let ks = keystore();
+fn cmd_policy_add_protector(args: &PolicyAddProtectorArgs, ks: &Keystore) -> Result<()> {
     let policy_id = &args.policy;
     let protector = ks.load_protector(args.protector)?;
 
@@ -1208,7 +1207,7 @@ fn main() -> Result<()> {
                 PolicyCommand::Remove(args) => cmd_remove_policy(args, keystore()),
                 PolicyCommand::Status(args) => cmd_policy_status(args),
                 PolicyCommand::Purge(args) => cmd_policy_purge(args, keystore()),
-                PolicyCommand::AddProtector(args) => cmd_policy_add_protector(args),
+                PolicyCommand::AddProtector(args) => cmd_policy_add_protector(args, keystore()),
                 PolicyCommand::RemoveProtector(args) => cmd_policy_remove_protector(args),
             },
             AdminCommand::Protector(args) => match &args.command {
@@ -1543,6 +1542,41 @@ mod tests {
         }, &ks)?;
         let encrypted_dir = EncryptedDir::open(dir.path(), &ks, LockState::Locked)?;
         assert_eq!(encrypted_dir.key_status, fscrypt::KeyStatus::Absent);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_admin_policy_add_protector() -> Result<()> {
+        let ks_dir = TempDir::new("keystore")?;
+        let ks = Keystore::from_path(ks_dir.path());
+
+        let pass1 = "1234";
+        let pass2 = "5678";
+
+        // Create two protectors
+        let prot1_id = create_test_protector(&ks, "prot1", pass1)?;
+        let prot2_id = create_test_protector(&ks, "prot2", pass2)?;
+
+        // Create a policy using prot1
+        push_test_password(pass1);
+        cmd_create_policy(&PolicyCreateArgs { protector: Some(prot1_id) }, &ks)?;
+        let policy_id = ks.policy_key_ids()?[0].clone();
+
+        // Add prot2 to the policy
+        push_test_password(pass2); // 'policy add-protector' asks for pass2 first
+        push_test_password(pass1);
+        cmd_policy_add_protector(&PolicyAddProtectorArgs {
+            policy: policy_id.clone(),
+            protector: prot2_id,
+            unlock_with: Some(prot1_id),
+        }, &ks)?;
+
+        // Check that both protectors are in the policy
+        let policy = ks.load_policy_data(&policy_id)?;
+        assert_eq!(policy.keys.len(), 2);
+        assert!(policy.keys.contains_key(&prot1_id));
+        assert!(policy.keys.contains_key(&prot2_id));
 
         Ok(())
     }
