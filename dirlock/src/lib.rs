@@ -18,7 +18,7 @@ pub mod recovery;
 pub mod util;
 
 use anyhow::{anyhow, bail, Result};
-use keystore::Keystore;
+pub use keystore::Keystore;
 use fscrypt::{KeyStatus, Policy, PolicyKeyId, RemoveKeyUsers, RemovalStatusFlags};
 use policy::{
     PolicyData,

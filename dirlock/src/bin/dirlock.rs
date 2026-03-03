@@ -14,6 +14,7 @@ use dirlock::{
     CreateOpts,
     DirStatus,
     EncryptedDir,
+    Keystore,
     LockState,
     recovery::RecoveryKey,
     fscrypt::{
@@ -589,9 +590,8 @@ fn get_or_create_protector(
     name: Option<&str>,
     user: Option<&str>,
     dir: &Path,
+    ks: &Keystore,
 ) -> Result<(Protector, ProtectorKey, bool)> {
-    let ks = keystore();
-
     if id.is_some() && (name.is_some() || type_.is_some()) {
         bail!("Cannot set protector options for an existing protector");
     }
@@ -628,8 +628,7 @@ fn get_or_create_protector(
     }
 }
 
-fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
-    let ks = keystore();
+fn cmd_encrypt(args: &EncryptArgs, ks: &Keystore) -> Result<()> {
     dirlock::ensure_unencrypted(&args.dir, ks)?;
 
     if ! dir_is_empty(&args.dir)? {
@@ -638,7 +637,7 @@ fn cmd_encrypt(args: &EncryptArgs) -> Result<()> {
 
     let (protector, protector_key, protector_is_new) = get_or_create_protector(
         args.protector, args.protector_type, args.protector_name.as_deref(), args.user.as_deref(),
-        &args.dir,
+        &args.dir, ks,
     )?;
 
     let protector_id = protector.id;
@@ -688,7 +687,7 @@ fn cmd_convert(args: &ConvertArgs) -> Result<()> {
 
     let (protector, protector_key, protector_is_new) = get_or_create_protector(
         args.protector, args.protector_type, args.protector_name.as_deref(), args.user.as_deref(),
-        &args.dir,
+        &args.dir, ks,
     )?;
 
     let protector_id = protector.id;
@@ -1032,7 +1031,7 @@ fn cmd_recovery_restore(args: &RecoveryRestoreArgs) -> Result<()> {
 
     let (protector, protector_key, _) = get_or_create_protector(
         args.protector, args.protector_type, args.protector_name.as_deref(),
-        args.user.as_deref(), &args.dir,
+        args.user.as_deref(), &args.dir, ks,
     )?;
 
     dirlock::protect_policy_key(&protector, &protector_key, master_key, ks)?;
@@ -1200,7 +1199,7 @@ fn main() -> Result<()> {
         Lock(args) => cmd_lock(args),
         Unlock(args) => cmd_unlock(args),
         ChangePass(args) => cmd_change_pass(args),
-        Encrypt(args) => cmd_encrypt(args),
+        Encrypt(args) => cmd_encrypt(args, keystore()),
         Convert(args) => cmd_convert(args),
         Recovery(args) => match &args.command {
             RecoveryCommand::Add(args) => cmd_recovery_add(args),
@@ -1230,5 +1229,56 @@ fn main() -> Result<()> {
             AdminCommand::ImportMasterKey(_) => cmd_import_master_key(),
             AdminCommand::FscryptEnabled(args) => cmd_fscrypt_enabled(args),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dirlock::util::push_test_password;
+    use fscrypt::{RemoveKeyUsers, RemovalStatusFlags};
+    use tempdir::TempDir;
+
+    // Filesystem where to run the tests. It must support fscrypt.
+    // Set to 'skip' to skip these tests.
+    const MNTPOINT_ENV_VAR: &str = "DIRLOCK_TEST_FS";
+
+    fn get_mntpoint() -> Result<Option<PathBuf>> {
+        match std::env::var(MNTPOINT_ENV_VAR) {
+            Ok(x) if x == "skip" => Ok(None),
+            Ok(x) => Ok(Some(PathBuf::from(x))),
+            _ => bail!("Environment variable '{MNTPOINT_ENV_VAR}' not set"),
+        }
+    }
+
+    fn test_encrypt_args(dir: &Path) -> EncryptArgs {
+        EncryptArgs {
+            protector_type: None,
+            protector_name: Some("test".into()),
+            protector: None,
+            user: None,
+            dir: dir.into(),
+        }
+    }
+
+    #[test]
+    fn test_encrypt() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let ks_dir = TempDir::new("keystore")?;
+        let ks = Keystore::from_path(ks_dir.path());
+
+        // Encrypt the directory
+        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        push_test_password("1234");
+        cmd_encrypt(&test_encrypt_args(dir.path()), &ks)?;
+
+        // encrypt leaves the directory unlocked, so lock it
+        let encrypted_dir = EncryptedDir::open(dir.path(), &ks, LockState::Unlocked)?;
+        let status = encrypted_dir.lock(RemoveKeyUsers::CurrentUser)?;
+        assert!(!status.contains(RemovalStatusFlags::FilesBusy));
+        assert!(!status.contains(RemovalStatusFlags::OtherUsers));
+
+        Ok(())
     }
 }
