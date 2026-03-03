@@ -906,7 +906,7 @@ fn cmd_policy_remove_protector(args: &PolicyRemoveProtectorArgs) -> Result<()> {
     Ok(())
 }
 
-fn cmd_create_protector(args: &ProtectorCreateArgs) -> Result<()> {
+fn cmd_create_protector(args: &ProtectorCreateArgs, ks: &Keystore) -> Result<()> {
     let opts = ProtectorOptsBuilder::new()
         .with_type(Some(args.type_))
         .with_kdf_iter(args.kdf_iter)
@@ -916,7 +916,6 @@ fn cmd_create_protector(args: &ProtectorCreateArgs) -> Result<()> {
         .build()?;
 
     let pass = read_new_password_for_protector(opts.get_type())?;
-    let ks = keystore();
     let (protector, _) = dirlock::create_protector(opts, pass.as_bytes(), CreateOpts::CreateAndSave, ks)?;
 
     println!("Created protector {}", protector.id);
@@ -924,13 +923,12 @@ fn cmd_create_protector(args: &ProtectorCreateArgs) -> Result<()> {
     Ok(())
 }
 
-fn cmd_remove_protector(args: &ProtectorRemoveArgs) -> Result<()> {
+fn cmd_remove_protector(args: &ProtectorRemoveArgs, ks: &Keystore) -> Result<()> {
     let Some(id) = args.protector else {
         println!("You must specify the ID of the protector.");
         return display_protector_list()
     };
     let id_str = id.to_string();
-    let ks = keystore();
     let protector = ks.load_protector(id)?;
     if ks.remove_protector_if_unused(&protector.id)? {
         println!("Protector {id_str} removed");
@@ -1217,8 +1215,8 @@ fn main() -> Result<()> {
             },
             AdminCommand::Protector(args) => match &args.command {
                 ProtectorCommand::List(_) => display_protector_list(),
-                ProtectorCommand::Create(args) => cmd_create_protector(args),
-                ProtectorCommand::Remove(args) => cmd_remove_protector(args),
+                ProtectorCommand::Create(args) => cmd_create_protector(args, keystore()),
+                ProtectorCommand::Remove(args) => cmd_remove_protector(args, keystore()),
                 ProtectorCommand::VerifyPass(args) => cmd_verify_protector(args),
                 ProtectorCommand::ChangePass(args) => cmd_change_protector_pass(args),
             },
@@ -1257,6 +1255,24 @@ mod tests {
             user: None,
             dir: dir.into(),
         }
+    }
+
+    fn create_test_protector(ks: &Keystore, name: &str, password: &str) -> Result<ProtectorId> {
+        let old_protlist = ks.protector_ids()?;
+        push_test_password(password);
+        cmd_create_protector(&ProtectorCreateArgs {
+            type_: ProtectorType::Password,
+            name: name.into(),
+            kdf_iter: NonZeroU32::new(1),
+            use_pin: None,
+            user: None,
+        }, ks)?;
+        let new_protlist = ks.protector_ids()?;
+        // Find the new protector
+        let newprot = new_protlist.into_iter()
+            .find(|id| !old_protlist.contains(id))
+            .unwrap();
+        Ok(newprot)
     }
 
     #[test]
@@ -1432,6 +1448,23 @@ mod tests {
         cmd_unlock(&unlock_args, &ks)?;
         EncryptedDir::open(dir.path(), &ks, LockState::Unlocked)?;
         cmd_lock(&lock_args, &ks)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_admin_protector_create_remove() -> Result<()> {
+        let ks_dir = TempDir::new("keystore")?;
+        let ks = Keystore::from_path(ks_dir.path());
+
+        let password = "1234";
+
+        // Create a protector
+        assert!(ks.protector_ids()?.is_empty());
+        let id = create_test_protector(&ks, "test", password)?;
+        assert_eq!(ks.protector_ids()?.len(), 1);
+        cmd_remove_protector(&ProtectorRemoveArgs { protector: Some(id) }, &ks)?;
+        assert!(ks.protector_ids()?.is_empty());
 
         Ok(())
     }
