@@ -968,8 +968,8 @@ fn cmd_verify_protector(args: &ProtectorVerifyPassArgs, ks: &Keystore) -> Result
     do_change_verify_protector_password(args.protector, true, ks)
 }
 
-fn cmd_change_protector_pass(args: &ProtectorChangePassArgs) -> Result<()> {
-    do_change_verify_protector_password(args.protector, false, keystore())
+fn cmd_change_protector_pass(args: &ProtectorChangePassArgs, ks: &Keystore) -> Result<()> {
+    do_change_verify_protector_password(args.protector, false, ks)
 }
 
 fn cmd_recovery_add(args: &RecoveryAddArgs, ks: &Keystore) -> Result<()> {
@@ -1218,7 +1218,7 @@ fn main() -> Result<()> {
                 ProtectorCommand::Create(args) => cmd_create_protector(args, keystore()),
                 ProtectorCommand::Remove(args) => cmd_remove_protector(args, keystore()),
                 ProtectorCommand::VerifyPass(args) => cmd_verify_protector(args, keystore()),
-                ProtectorCommand::ChangePass(args) => cmd_change_protector_pass(args),
+                ProtectorCommand::ChangePass(args) => cmd_change_protector_pass(args, keystore()),
             },
             AdminCommand::Tpm2Test(_) => cmd_tpm2_test(),
             AdminCommand::ExportMasterKey(args) => cmd_export_master_key(args),
@@ -1458,6 +1458,7 @@ mod tests {
         let ks = Keystore::from_path(ks_dir.path());
 
         let password = "1234";
+        let new_password = "5678";
 
         // Create a protector
         assert!(ks.protector_ids()?.is_empty());
@@ -1469,7 +1470,20 @@ mod tests {
         cmd_verify_protector(&ProtectorVerifyPassArgs { protector: Some(id) }, &ks)?;
 
         // Test an incorrect password
-        push_test_password("5678");
+        push_test_password(new_password);
+        assert!(cmd_verify_protector(&ProtectorVerifyPassArgs { protector: Some(id) }, &ks).is_err());
+
+        // Change the password
+        push_test_password(password);
+        push_test_password(new_password);
+        cmd_change_protector_pass(&ProtectorChangePassArgs { protector: Some(id) }, &ks)?;
+
+        // Verify the new password
+        push_test_password(new_password);
+        cmd_verify_protector(&ProtectorVerifyPassArgs { protector: Some(id) }, &ks)?;
+
+        // Test that the old password fails
+        push_test_password(password);
         assert!(cmd_verify_protector(&ProtectorVerifyPassArgs { protector: Some(id) }, &ks).is_err());
 
         // Remove the protector
