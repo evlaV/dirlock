@@ -1589,6 +1589,32 @@ mod tests {
         assert_eq!(policy.keys.len(), 1);
         assert!(policy.keys.contains_key(&prot2_id));
 
+        // Add prot1 back to the policy. This time we leave 'unlock_with' unset
+        push_test_password(pass1);
+        push_test_password(pass2);
+        cmd_policy_add_protector(&PolicyAddProtectorArgs {
+            policy: policy_id.clone(),
+            protector: prot1_id,
+            unlock_with: None,
+        }, &ks)?;
+
+        // Check that both protectors are in the policy
+        let policy = ks.load_policy_data(&policy_id)?;
+        assert_eq!(policy.keys.len(), 2);
+        assert!(policy.keys.contains_key(&prot1_id));
+        assert!(policy.keys.contains_key(&prot2_id));
+
+        // With multiple protectors, adding a new one without 'unlock_with' should fail
+        let pass3 = "abcd";
+        let prot3_id = create_test_protector(&ks, "prot3", pass3)?;
+        push_test_password(pass3);
+        push_test_password(pass1);
+        cmd_policy_add_protector(&PolicyAddProtectorArgs {
+            policy: policy_id.clone(),
+            protector: prot3_id,
+            unlock_with: None,
+        }, &ks).expect_err("Expected error calling add-protector without unlock-with");
+
         Ok(())
     }
 }
