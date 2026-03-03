@@ -574,11 +574,11 @@ fn cmd_unlock(args: &UnlockArgs, ks: &Keystore) -> Result<()> {
     bail!("Unable to unlock directory");
 }
 
-fn cmd_change_pass(args: &ChangePassArgs) -> Result<()> {
-    let encrypted_dir = EncryptedDir::open(&args.dir, keystore(), LockState::Any)?;
+fn cmd_change_pass(args: &ChangePassArgs, ks: &Keystore) -> Result<()> {
+    let encrypted_dir = EncryptedDir::open(&args.dir, ks, LockState::Any)?;
 
     let protector = get_dir_protector(&encrypted_dir, &args.protector)?;
-    do_change_verify_protector_password(Some(protector.id), false)
+    do_change_verify_protector_password(Some(protector.id), false, ks)
 }
 
 /// Get an existing protector or create a new one for encrypting a directory.
@@ -946,12 +946,11 @@ fn cmd_remove_protector(args: &ProtectorRemoveArgs) -> Result<()> {
     Ok(())
 }
 
-fn do_change_verify_protector_password(protector_id: Option<ProtectorId>, verify_only: bool) -> Result<()> {
+fn do_change_verify_protector_password(protector_id: Option<ProtectorId>, verify_only: bool, ks: &Keystore) -> Result<()> {
     let Some(id) = protector_id else {
         println!("You must specify the ID of the protector.");
         return display_protector_list()
     };
-    let ks = keystore();
     let mut protector = ks.load_protector(id)?;
     let pass = read_password_for_protector(&protector)?;
     let Some(protector_key) = protector.unwrap_key(pass.as_bytes())? else {
@@ -968,11 +967,11 @@ fn do_change_verify_protector_password(protector_id: Option<ProtectorId>, verify
 }
 
 fn cmd_verify_protector(args: &ProtectorVerifyPassArgs) -> Result<()> {
-    do_change_verify_protector_password(args.protector, true)
+    do_change_verify_protector_password(args.protector, true, keystore())
 }
 
 fn cmd_change_protector_pass(args: &ProtectorChangePassArgs) -> Result<()> {
-    do_change_verify_protector_password(args.protector, false)
+    do_change_verify_protector_password(args.protector, false, keystore())
 }
 
 fn cmd_recovery_add(args: &RecoveryAddArgs) -> Result<()> {
@@ -1198,7 +1197,7 @@ fn main() -> Result<()> {
     match &args.command {
         Lock(args) => cmd_lock(args, keystore()),
         Unlock(args) => cmd_unlock(args, keystore()),
-        ChangePass(args) => cmd_change_pass(args),
+        ChangePass(args) => cmd_change_pass(args, keystore()),
         Encrypt(args) => cmd_encrypt(args, keystore()),
         Convert(args) => cmd_convert(args),
         Recovery(args) => match &args.command {
@@ -1309,6 +1308,44 @@ mod tests {
 
         // Lock it again
         cmd_lock(&lock_args, &ks)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_change_pass() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let ks_dir = TempDir::new("keystore")?;
+        let ks = Keystore::from_path(ks_dir.path());
+
+        let old_password = "1234";
+        let new_password = "5678";
+
+        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let lock_args = LockArgs { dir: dir.path().into(), all_users: false };
+        let unlock_args = UnlockArgs { dir: dir.path().into(), protector: None, recovery: false };
+
+        // Encrypt the directory and lock it
+        push_test_password(old_password);
+        cmd_encrypt(&test_encrypt_args(dir.path()), &ks)?;
+        cmd_lock(&lock_args, &ks)?;
+
+        // Change the password
+        push_test_password(old_password);
+        push_test_password(new_password);
+        cmd_change_pass(&ChangePassArgs { protector: None, dir: dir.path().into() }, &ks)?;
+
+        // Unlock with the new password
+        push_test_password(new_password);
+        cmd_unlock(&unlock_args, &ks)?;
+        EncryptedDir::open(dir.path(), &ks, LockState::Unlocked)?;
+
+        cmd_lock(&lock_args, &ks)?;
+
+        // Unlocking with the old password should fail
+        push_test_password(old_password);
+        assert!(cmd_unlock(&unlock_args, &ks).is_err());
 
         Ok(())
     }
