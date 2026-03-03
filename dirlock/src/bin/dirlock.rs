@@ -964,8 +964,8 @@ fn do_change_verify_protector_password(protector_id: Option<ProtectorId>, verify
     Ok(())
 }
 
-fn cmd_verify_protector(args: &ProtectorVerifyPassArgs) -> Result<()> {
-    do_change_verify_protector_password(args.protector, true, keystore())
+fn cmd_verify_protector(args: &ProtectorVerifyPassArgs, ks: &Keystore) -> Result<()> {
+    do_change_verify_protector_password(args.protector, true, ks)
 }
 
 fn cmd_change_protector_pass(args: &ProtectorChangePassArgs) -> Result<()> {
@@ -1217,7 +1217,7 @@ fn main() -> Result<()> {
                 ProtectorCommand::List(_) => display_protector_list(),
                 ProtectorCommand::Create(args) => cmd_create_protector(args, keystore()),
                 ProtectorCommand::Remove(args) => cmd_remove_protector(args, keystore()),
-                ProtectorCommand::VerifyPass(args) => cmd_verify_protector(args),
+                ProtectorCommand::VerifyPass(args) => cmd_verify_protector(args, keystore()),
                 ProtectorCommand::ChangePass(args) => cmd_change_protector_pass(args),
             },
             AdminCommand::Tpm2Test(_) => cmd_tpm2_test(),
@@ -1453,7 +1453,7 @@ mod tests {
     }
 
     #[test]
-    fn test_admin_protector_create_remove() -> Result<()> {
+    fn test_admin_protector() -> Result<()> {
         let ks_dir = TempDir::new("keystore")?;
         let ks = Keystore::from_path(ks_dir.path());
 
@@ -1463,6 +1463,16 @@ mod tests {
         assert!(ks.protector_ids()?.is_empty());
         let id = create_test_protector(&ks, "test", password)?;
         assert_eq!(ks.protector_ids()?.len(), 1);
+
+        // Verify the password
+        push_test_password(password);
+        cmd_verify_protector(&ProtectorVerifyPassArgs { protector: Some(id) }, &ks)?;
+
+        // Test an incorrect password
+        push_test_password("5678");
+        assert!(cmd_verify_protector(&ProtectorVerifyPassArgs { protector: Some(id) }, &ks).is_err());
+
+        // Remove the protector
         cmd_remove_protector(&ProtectorRemoveArgs { protector: Some(id) }, &ks)?;
         assert!(ks.protector_ids()?.is_empty());
 
