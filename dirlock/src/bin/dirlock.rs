@@ -460,10 +460,9 @@ fn display_tpm_information() -> Result<()> {
     Ok(())
 }
 
-fn display_protector_list() -> Result<()> {
+fn display_protector_list(ks: &Keystore) -> Result<()> {
     println!("{:16}    {:8}    Name", "Protector", "Type");
     println!("--------------------------------------");
-    let ks = keystore();
     for id in ks.protector_ids()? {
         match ks.load_protector(id) {
             Ok(prot) => {
@@ -652,10 +651,9 @@ fn cmd_encrypt(args: &EncryptArgs, ks: &Keystore) -> Result<()> {
     Ok(())
 }
 
-fn cmd_convert(args: &ConvertArgs) -> Result<()> {
+fn cmd_convert(args: &ConvertArgs, ks: &Keystore) -> Result<()> {
     use dirlock::convert::*;
 
-    let ks = keystore();
     dirlock::ensure_unencrypted(&args.dir, ks)?;
 
     if dir_is_empty(&args.dir)? {
@@ -707,8 +705,7 @@ fn cmd_convert(args: &ConvertArgs) -> Result<()> {
     Ok(())
 }
 
-fn cmd_list_policies() -> Result<()> {
-    let ks = keystore();
+fn cmd_list_policies(ks: &Keystore) -> Result<()> {
     let policies : Vec<_> = ks.policy_key_ids()?;
 
     println!("Policy                              Protectors");
@@ -765,7 +762,7 @@ fn cmd_list_policies() -> Result<()> {
 fn cmd_create_policy(args: &PolicyCreateArgs, ks: &Keystore) -> Result<()> {
     let Some(id) = args.protector else {
         println!("You must specify the ID of the protector.");
-        return display_protector_list()
+        return display_protector_list(ks)
     };
     let protector = ks.load_protector(id)?;
     let pass = read_password_for_protector(&protector)?;
@@ -780,7 +777,7 @@ fn cmd_create_policy(args: &PolicyCreateArgs, ks: &Keystore) -> Result<()> {
 fn cmd_remove_policy(args: &PolicyRemoveArgs, ks: &Keystore) -> Result<()> {
     let Some(id) = &args.policy else {
         println!("You must specify the ID of the policy.");
-        return cmd_list_policies();
+        return cmd_list_policies(ks);
     };
     let _ = ks.load_policy_data(id)?;
     if ! args.force {
@@ -811,10 +808,10 @@ fn cmd_remove_policy(args: &PolicyRemoveArgs, ks: &Keystore) -> Result<()> {
     Ok(())
 }
 
-fn cmd_policy_status(args: &PolicyStatusArgs) -> Result<()> {
+fn cmd_policy_status(args: &PolicyStatusArgs, ks: &Keystore) -> Result<()> {
     let policies = match &args.policy {
         Some(policy) => vec![policy.clone()],
-        None => keystore().policy_key_ids()?,
+        None => ks.policy_key_ids()?,
     };
     if policies.is_empty() {
         return Ok(());
@@ -923,7 +920,7 @@ fn cmd_create_protector(args: &ProtectorCreateArgs, ks: &Keystore) -> Result<()>
 fn cmd_remove_protector(args: &ProtectorRemoveArgs, ks: &Keystore) -> Result<()> {
     let Some(id) = args.protector else {
         println!("You must specify the ID of the protector.");
-        return display_protector_list()
+        return display_protector_list(ks)
     };
     let id_str = id.to_string();
     let protector = ks.load_protector(id)?;
@@ -944,7 +941,7 @@ fn cmd_remove_protector(args: &ProtectorRemoveArgs, ks: &Keystore) -> Result<()>
 fn do_change_verify_protector_password(protector_id: Option<ProtectorId>, verify_only: bool, ks: &Keystore) -> Result<()> {
     let Some(id) = protector_id else {
         println!("You must specify the ID of the protector.");
-        return display_protector_list()
+        return display_protector_list(ks)
     };
     let mut protector = ks.load_protector(id)?;
     let pass = read_password_for_protector(&protector)?;
@@ -1032,9 +1029,9 @@ fn cmd_recovery_restore(args: &RecoveryRestoreArgs, ks: &Keystore) -> Result<()>
     Ok(())
 }
 
-fn cmd_export_master_key(args: &ExportMasterKeyArgs) -> Result<()> {
+fn cmd_export_master_key(args: &ExportMasterKeyArgs, ks: &Keystore) -> Result<()> {
     use base64::prelude::*;
-    let encrypted_dir = EncryptedDir::open(&args.dir, keystore(), LockState::Any)?;
+    let encrypted_dir = EncryptedDir::open(&args.dir, ks, LockState::Any)?;
 
     let protector = get_dir_protector(&encrypted_dir, &args.protector)?;
 
@@ -1053,7 +1050,7 @@ fn cmd_export_master_key(args: &ExportMasterKeyArgs) -> Result<()> {
     Ok(())
 }
 
-fn cmd_import_master_key() -> Result<()> {
+fn cmd_import_master_key(ks: &Keystore) -> Result<()> {
     use base64::prelude::*;
 
     let mut key = String::new();
@@ -1076,7 +1073,6 @@ fn cmd_import_master_key() -> Result<()> {
 
     // Stop if there is already a protector available for this key
     // (unless the protector file is missing).
-    let ks = keystore();
     let (protectors, unusable) = ks.get_protectors_for_policy(&keyid)?;
     if ! protectors.is_empty() ||
         unusable.iter().any(|p| p.err.kind() != ErrorKind::NotFound) {
@@ -1100,7 +1096,7 @@ fn cmd_tpm2_test() -> Result<()> {
 }
 
 #[cfg(feature = "tpm2")]
-fn cmd_tpm2_test() -> Result<()> {
+fn cmd_tpm2_test(ks: &Keystore) -> Result<()> {
     use dirlock::policy::WrappedPolicyKey;
 
     match dirlock::protector::tpm2::get_status(None) {
@@ -1118,7 +1114,7 @@ fn cmd_tpm2_test() -> Result<()> {
         .with_type(Some(ProtectorType::Tpm2))
         .build()?;
     let (protector, protector_key) =
-        dirlock::create_protector(opts, pass.as_bytes(), CreateOpts::CreateOnly, keystore())?;
+        dirlock::create_protector(opts, pass.as_bytes(), CreateOpts::CreateOnly, ks)?;
     let wrapped = WrappedPolicyKey::new(policy_key, &protector_key);
     match protector.unwrap_policy_key(&wrapped, pass.as_bytes()) {
         Ok(Some(k)) if *k.secret() == raw_key => (),
@@ -1135,16 +1131,16 @@ fn cmd_fscrypt_enabled(args: &FscryptEnabledArgs) -> Result<()> {
     Ok(())
 }
 
-fn cmd_status(args: &StatusArgs) -> Result<()> {
+fn cmd_status(args: &StatusArgs, ks: &Keystore) -> Result<()> {
     let Some(dir) = &args.dir else {
         if args.brief {
             bail!("The --brief option can only be used on a directory");
         }
 
-        display_protector_list()?;
+        display_protector_list(ks)?;
 
         println!();
-        cmd_list_policies()?;
+        cmd_list_policies(ks)?;
 
         println!();
         display_tpm_information()?;
@@ -1152,7 +1148,6 @@ fn cmd_status(args: &StatusArgs) -> Result<()> {
         return Ok(());
     };
 
-    let ks = keystore();
     let dir_status = dirlock::open_dir(dir, ks)?;
     if args.brief {
         println!("{}", dir_status.name());
@@ -1188,38 +1183,40 @@ fn main() -> Result<()> {
 
     dirlock::init()?;
 
+    let ks = keystore();
+
     match &args.command {
-        Lock(args) => cmd_lock(args, keystore()),
-        Unlock(args) => cmd_unlock(args, keystore()),
-        ChangePass(args) => cmd_change_pass(args, keystore()),
-        Encrypt(args) => cmd_encrypt(args, keystore()),
-        Convert(args) => cmd_convert(args),
+        Lock(args) => cmd_lock(args, ks),
+        Unlock(args) => cmd_unlock(args, ks),
+        ChangePass(args) => cmd_change_pass(args, ks),
+        Encrypt(args) => cmd_encrypt(args, ks),
+        Convert(args) => cmd_convert(args, ks),
         Recovery(args) => match &args.command {
-            RecoveryCommand::Add(args) => cmd_recovery_add(args, keystore()),
-            RecoveryCommand::Remove(args) => cmd_recovery_remove(args, keystore()),
-            RecoveryCommand::Restore(args) => cmd_recovery_restore(args, keystore()),
+            RecoveryCommand::Add(args) => cmd_recovery_add(args, ks),
+            RecoveryCommand::Remove(args) => cmd_recovery_remove(args, ks),
+            RecoveryCommand::Restore(args) => cmd_recovery_restore(args, ks),
         },
-        Status(args) => cmd_status(args),
+        Status(args) => cmd_status(args, ks),
         Admin(args) => match &args.command {
             AdminCommand::Policy(args) => match &args.command {
-                PolicyCommand::List(_) => cmd_list_policies(),
-                PolicyCommand::Create(args) => cmd_create_policy(args, keystore()),
-                PolicyCommand::Remove(args) => cmd_remove_policy(args, keystore()),
-                PolicyCommand::Status(args) => cmd_policy_status(args),
-                PolicyCommand::Purge(args) => cmd_policy_purge(args, keystore()),
-                PolicyCommand::AddProtector(args) => cmd_policy_add_protector(args, keystore()),
-                PolicyCommand::RemoveProtector(args) => cmd_policy_remove_protector(args, keystore()),
+                PolicyCommand::List(_) => cmd_list_policies(ks),
+                PolicyCommand::Create(args) => cmd_create_policy(args, ks),
+                PolicyCommand::Remove(args) => cmd_remove_policy(args, ks),
+                PolicyCommand::Status(args) => cmd_policy_status(args, ks),
+                PolicyCommand::Purge(args) => cmd_policy_purge(args, ks),
+                PolicyCommand::AddProtector(args) => cmd_policy_add_protector(args, ks),
+                PolicyCommand::RemoveProtector(args) => cmd_policy_remove_protector(args, ks),
             },
             AdminCommand::Protector(args) => match &args.command {
-                ProtectorCommand::List(_) => display_protector_list(),
-                ProtectorCommand::Create(args) => cmd_create_protector(args, keystore()),
-                ProtectorCommand::Remove(args) => cmd_remove_protector(args, keystore()),
-                ProtectorCommand::VerifyPass(args) => cmd_verify_protector(args, keystore()),
-                ProtectorCommand::ChangePass(args) => cmd_change_protector_pass(args, keystore()),
+                ProtectorCommand::List(_) => display_protector_list(ks),
+                ProtectorCommand::Create(args) => cmd_create_protector(args, ks),
+                ProtectorCommand::Remove(args) => cmd_remove_protector(args, ks),
+                ProtectorCommand::VerifyPass(args) => cmd_verify_protector(args, ks),
+                ProtectorCommand::ChangePass(args) => cmd_change_protector_pass(args, ks),
             },
-            AdminCommand::Tpm2Test(_) => cmd_tpm2_test(),
-            AdminCommand::ExportMasterKey(args) => cmd_export_master_key(args),
-            AdminCommand::ImportMasterKey(_) => cmd_import_master_key(),
+            AdminCommand::Tpm2Test(_) => cmd_tpm2_test(ks),
+            AdminCommand::ExportMasterKey(args) => cmd_export_master_key(args, ks),
+            AdminCommand::ImportMasterKey(_) => cmd_import_master_key(ks),
             AdminCommand::FscryptEnabled(args) => cmd_fscrypt_enabled(args),
         },
     }
