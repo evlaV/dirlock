@@ -458,7 +458,7 @@ pub mod tests {
     pub struct Swtpm {}
 
     impl Swtpm {
-        pub fn new(_port: u16) -> Result<Self> {
+        pub fn new() -> Result<Self> {
             Ok(Swtpm{})
         }
         pub fn tcti_conf(&self) -> String {
