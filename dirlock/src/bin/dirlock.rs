@@ -762,12 +762,11 @@ fn cmd_list_policies() -> Result<()> {
     Ok(())
 }
 
-fn cmd_create_policy(args: &PolicyCreateArgs) -> Result<()> {
+fn cmd_create_policy(args: &PolicyCreateArgs, ks: &Keystore) -> Result<()> {
     let Some(id) = args.protector else {
         println!("You must specify the ID of the protector.");
         return display_protector_list()
     };
-    let ks = keystore();
     let protector = ks.load_protector(id)?;
     let pass = read_password_for_protector(&protector)?;
     let Some(protector_key) = protector.unwrap_key(pass.as_bytes())? else {
@@ -778,12 +777,11 @@ fn cmd_create_policy(args: &PolicyCreateArgs) -> Result<()> {
     Ok(())
 }
 
-fn cmd_remove_policy(args: &PolicyRemoveArgs) -> Result<()> {
+fn cmd_remove_policy(args: &PolicyRemoveArgs, ks: &Keystore) -> Result<()> {
     let Some(id) = &args.policy else {
         println!("You must specify the ID of the policy.");
         return cmd_list_policies();
     };
-    let ks = keystore();
     let _ = ks.load_policy_data(id)?;
     if ! args.force {
         print!("You are about to delete all data from the encryption\n\
@@ -1206,8 +1204,8 @@ fn main() -> Result<()> {
         Admin(args) => match &args.command {
             AdminCommand::Policy(args) => match &args.command {
                 PolicyCommand::List(_) => cmd_list_policies(),
-                PolicyCommand::Create(args) => cmd_create_policy(args),
-                PolicyCommand::Remove(args) => cmd_remove_policy(args),
+                PolicyCommand::Create(args) => cmd_create_policy(args, keystore()),
+                PolicyCommand::Remove(args) => cmd_remove_policy(args, keystore()),
                 PolicyCommand::Status(args) => cmd_policy_status(args),
                 PolicyCommand::Purge(args) => cmd_policy_purge(args),
                 PolicyCommand::AddProtector(args) => cmd_policy_add_protector(args),
@@ -1489,6 +1487,35 @@ mod tests {
         // Remove the protector
         cmd_remove_protector(&ProtectorRemoveArgs { protector: Some(id) }, &ks)?;
         assert!(ks.protector_ids()?.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_admin_policy() -> Result<()> {
+        let ks_dir = TempDir::new("keystore")?;
+        let ks = Keystore::from_path(ks_dir.path());
+
+        // Create a protector
+        let password = "1234";
+        let protector_id = create_test_protector(&ks, "test", password)?;
+
+        // Verify that the key store has no policies
+        assert!(ks.policy_key_ids()?.is_empty());
+
+        // Create a policy
+        push_test_password(password);
+        cmd_create_policy(&PolicyCreateArgs { protector: Some(protector_id) }, &ks)?;
+
+        // Verify the policy was saved to the keystore
+        assert_eq!(ks.policy_key_ids()?.len(), 1);
+
+        // Remove the policy
+        let policy_id = ks.policy_key_ids()?[0].clone();
+        cmd_remove_policy(&PolicyRemoveArgs { policy: Some(policy_id), force: true }, &ks)?;
+
+        // Verify the policy is gone
+        assert!(ks.policy_key_ids()?.is_empty());
 
         Ok(())
     }
