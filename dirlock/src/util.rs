@@ -6,6 +6,8 @@
 
 use anyhow::{anyhow, bail, Result};
 use nix::libc;
+use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::io::ErrorKind;
 use std::fs::{File, OpenOptions};
 use std::os::fd::{AsRawFd, FromRawFd};
@@ -45,8 +47,30 @@ pub fn create_dir_if_needed(dir: &Path) -> std::io::Result<()> {
     }
 }
 
+thread_local! {
+    /// Queue of passwords to be returned by the password-reading
+    /// functions like [`read_password_for_protector()`].
+    /// Used for tests who need to provide their own passwords and
+    /// bypass the interactive prompt.
+    static PASSWORD_QUEUE: RefCell<VecDeque<String>> = const { RefCell::new(VecDeque::new()) };
+}
+
+/// Push a new password to the queue
+pub fn push_test_password(pass: &str) {
+    PASSWORD_QUEUE.with_borrow_mut(|q| q.push_back(String::from(pass)));
+}
+
+/// Pop a password from the queue
+fn pop_test_password() -> Option<Zeroizing<String>> {
+    PASSWORD_QUEUE.with_borrow_mut(|q| q.pop_front().map(Zeroizing::new))
+}
+
 /// Prompt the user for a new protector password (with confirmation) and return it
 pub fn read_new_password_for_protector(ptype: ProtectorType) -> Result<Zeroizing<String>> {
+    if let Some(pass) = pop_test_password() {
+        return Ok(pass);
+    }
+
     // For FIDO2 protectors we need the existing PIN of the token, not a new one
     if ptype == ProtectorType::Fido2 {
         crate::protector::fido2::check_device_available()?;
@@ -69,12 +93,18 @@ pub fn read_new_password_for_protector(ptype: ProtectorType) -> Result<Zeroizing
 
 /// Prompt the user for a recovery key and return it
 pub fn read_recovery_key() -> Result<Zeroizing<String>> {
+    if let Some(pass) = pop_test_password() {
+        return Ok(pass);
+    }
     eprint!("Enter recovery key: ");
     Ok(Zeroizing::new(rpassword::read_password()?))
 }
 
 /// Prompt the user for a password for a specific protector and return it
 pub fn read_password_for_protector(prot: &Protector) -> Result<Zeroizing<String>> {
+    if let Some(pass) = pop_test_password() {
+        return Ok(pass);
+    }
     let prompt = prot.get_prompt().map_err(|e| anyhow!("{e}"))?;
     let pass = if prot.needs_password() {
         eprint!("{prompt}: ");
