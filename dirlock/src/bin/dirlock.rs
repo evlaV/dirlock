@@ -1005,8 +1005,7 @@ fn cmd_recovery_remove(args: &RecoveryRemoveArgs, ks: &Keystore) -> Result<()> {
     encrypted_dir.remove_recovery_key()
 }
 
-fn cmd_recovery_restore(args: &RecoveryRestoreArgs) -> Result<()> {
-    let ks = keystore();
+fn cmd_recovery_restore(args: &RecoveryRestoreArgs, ks: &Keystore) -> Result<()> {
     let encrypted_dir = EncryptedDir::open(&args.dir, ks, LockState::Any)?;
 
     if let Some(protid) = &args.protector {
@@ -1203,7 +1202,7 @@ fn main() -> Result<()> {
         Recovery(args) => match &args.command {
             RecoveryCommand::Add(args) => cmd_recovery_add(args, keystore()),
             RecoveryCommand::Remove(args) => cmd_recovery_remove(args, keystore()),
-            RecoveryCommand::Restore(args) => cmd_recovery_restore(args),
+            RecoveryCommand::Restore(args) => cmd_recovery_restore(args, keystore()),
         },
         Status(args) => cmd_status(args),
         Admin(args) => match &args.command {
@@ -1381,6 +1380,58 @@ mod tests {
         // Verify that the recovery key is gone
         let encrypted_dir = EncryptedDir::open(dir.path(), &ks, LockState::Locked)?;
         assert!(encrypted_dir.recovery.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_recovery_restore() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let ks_dir = TempDir::new("keystore")?;
+        let ks = Keystore::from_path(ks_dir.path());
+
+        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let lock_args = LockArgs { dir: dir.path().into(), all_users: false };
+        let unlock_args = UnlockArgs { dir: dir.path().into(), protector: None, recovery: false };
+
+        // Encrypt the directory and lock it
+        let password = "1234";
+        push_test_password(password);
+        cmd_encrypt(&test_encrypt_args(dir.path()), &ks)?;
+        cmd_lock(&lock_args, &ks)?;
+
+        // Add a recovery key using the library API so we can capture its value
+        let mut encrypted_dir = EncryptedDir::open(dir.path(), &ks, LockState::Locked)?;
+        let protkey = encrypted_dir.protectors[0].protector
+            .unwrap_key(password.as_bytes())?.unwrap();
+        let recovery_key = encrypted_dir.add_recovery_key(&protkey)?;
+
+        // Replace the old keystore with a new, empty one
+        let ks_dir = TempDir::new("new-keystore")?;
+        let ks = Keystore::from_path(ks_dir.path());
+
+        // Unlock should fail now
+        push_test_password(password);
+        assert!(cmd_unlock(&unlock_args, &ks).is_err());
+
+        // The new keystore is empty but the recovery key xattr is still on the directory
+        let new_password = "5678";
+        push_test_password(&recovery_key.to_string());
+        push_test_password(new_password);
+        cmd_recovery_restore(&RecoveryRestoreArgs {
+            protector_type: None,
+            protector_name: Some("restored".into()),
+            protector: None,
+            user: None,
+            dir: dir.path().into(),
+        }, &ks)?;
+
+        // Verify that the new password can unlock the directory
+        push_test_password(new_password);
+        cmd_unlock(&unlock_args, &ks)?;
+        EncryptedDir::open(dir.path(), &ks, LockState::Unlocked)?;
+        cmd_lock(&lock_args, &ks)?;
 
         Ok(())
     }
