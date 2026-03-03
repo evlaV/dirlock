@@ -830,10 +830,10 @@ fn cmd_policy_status(args: &PolicyStatusArgs) -> Result<()> {
     Ok(())
 }
 
-fn cmd_policy_purge(args: &PolicyPurgeArgs) -> Result<()> {
+fn cmd_policy_purge(args: &PolicyPurgeArgs, ks: &Keystore) -> Result<()> {
     let policies = match &args.policy {
         Some(policy) => vec![policy.clone()],
-        None => keystore().policy_key_ids()?,
+        None => ks.policy_key_ids()?,
     };
     if policies.is_empty() {
         return Ok(());
@@ -1207,7 +1207,7 @@ fn main() -> Result<()> {
                 PolicyCommand::Create(args) => cmd_create_policy(args, keystore()),
                 PolicyCommand::Remove(args) => cmd_remove_policy(args, keystore()),
                 PolicyCommand::Status(args) => cmd_policy_status(args),
-                PolicyCommand::Purge(args) => cmd_policy_purge(args),
+                PolicyCommand::Purge(args) => cmd_policy_purge(args, keystore()),
                 PolicyCommand::AddProtector(args) => cmd_policy_add_protector(args),
                 PolicyCommand::RemoveProtector(args) => cmd_policy_remove_protector(args),
             },
@@ -1516,6 +1516,33 @@ mod tests {
 
         // Verify the policy is gone
         assert!(ks.policy_key_ids()?.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_admin_policy_purge() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let ks_dir = TempDir::new("keystore")?;
+        let ks = Keystore::from_path(ks_dir.path());
+
+        // Encrypt the directory
+        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        push_test_password("1234");
+        cmd_encrypt(&test_encrypt_args(dir.path()), &ks)?;
+
+        // encrypt leaves the directory unlocked
+        let encrypted_dir = EncryptedDir::open(dir.path(), &ks, LockState::Unlocked)?;
+        assert_eq!(encrypted_dir.key_status, fscrypt::KeyStatus::Present);
+
+        // purge removes the key from memory (locking the directory)
+        cmd_policy_purge(&PolicyPurgeArgs {
+            policy: Some(encrypted_dir.policy.keyid.clone()),
+            mntpoint: dir.path().into()
+        }, &ks)?;
+        let encrypted_dir = EncryptedDir::open(dir.path(), &ks, LockState::Locked)?;
+        assert_eq!(encrypted_dir.key_status, fscrypt::KeyStatus::Absent);
 
         Ok(())
     }
