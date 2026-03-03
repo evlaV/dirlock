@@ -897,8 +897,8 @@ fn cmd_policy_add_protector(args: &PolicyAddProtectorArgs, ks: &Keystore) -> Res
     Ok(())
 }
 
-fn cmd_policy_remove_protector(args: &PolicyRemoveProtectorArgs) -> Result<()> {
-    dirlock::remove_protector_from_policy(&args.policy, &args.protector, keystore())?;
+fn cmd_policy_remove_protector(args: &PolicyRemoveProtectorArgs, ks: &Keystore) -> Result<()> {
+    dirlock::remove_protector_from_policy(&args.policy, &args.protector, ks)?;
     println!("Protector {} removed from policy {}", &args.protector, &args.policy);
     Ok(())
 }
@@ -1208,7 +1208,7 @@ fn main() -> Result<()> {
                 PolicyCommand::Status(args) => cmd_policy_status(args),
                 PolicyCommand::Purge(args) => cmd_policy_purge(args, keystore()),
                 PolicyCommand::AddProtector(args) => cmd_policy_add_protector(args, keystore()),
-                PolicyCommand::RemoveProtector(args) => cmd_policy_remove_protector(args),
+                PolicyCommand::RemoveProtector(args) => cmd_policy_remove_protector(args, keystore()),
             },
             AdminCommand::Protector(args) => match &args.command {
                 ProtectorCommand::List(_) => display_protector_list(),
@@ -1547,7 +1547,7 @@ mod tests {
     }
 
     #[test]
-    fn test_admin_policy_add_protector() -> Result<()> {
+    fn test_admin_policy_add_remove_protector() -> Result<()> {
         let ks_dir = TempDir::new("keystore")?;
         let ks = Keystore::from_path(ks_dir.path());
 
@@ -1576,6 +1576,17 @@ mod tests {
         let policy = ks.load_policy_data(&policy_id)?;
         assert_eq!(policy.keys.len(), 2);
         assert!(policy.keys.contains_key(&prot1_id));
+        assert!(policy.keys.contains_key(&prot2_id));
+
+        // Remove prot1 from the policy
+        cmd_policy_remove_protector(&PolicyRemoveProtectorArgs {
+            policy: policy_id.clone(),
+            protector: prot1_id,
+        }, &ks)?;
+
+        // Check that only prot2 remains
+        let policy = ks.load_policy_data(&policy_id)?;
+        assert_eq!(policy.keys.len(), 1);
         assert!(policy.keys.contains_key(&prot2_id));
 
         Ok(())
