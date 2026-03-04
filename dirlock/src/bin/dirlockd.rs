@@ -411,7 +411,7 @@ impl DirlockDaemon {
 }
 
 /// D-Bus API
-#[interface(name = "com.valvesoftware.Dirlock")]
+#[interface(name = "com.valvesoftware.Dirlock1")]
 impl DirlockDaemon {
     async fn lock_dir(
         &self,
@@ -625,7 +625,7 @@ async fn main() -> anyhow::Result<()> {
     dirlock::init()?;
     let (tx, mut rx) = mpsc::channel::<Event>(2);
     let builder = zbus::connection::Builder::session()?;
-    let conn = builder.name("com.valvesoftware.Dirlock")?
+    let conn = builder.name("com.valvesoftware.Dirlock1")?
         .build()
         .await?;
     let daemon = DirlockDaemon {
@@ -636,11 +636,11 @@ async fn main() -> anyhow::Result<()> {
     };
 
     conn.object_server()
-        .at("/com/valvesoftware/Dirlock", daemon)
+        .at("/com/valvesoftware/Dirlock1", daemon)
         .await?;
 
     let iface : InterfaceRef<DirlockDaemon> =
-        conn.object_server().interface("/com/valvesoftware/Dirlock").await?;
+        conn.object_server().interface("/com/valvesoftware/Dirlock1").await?;
 
     let mut sigquit = signal(SignalKind::quit())?;
     let mut sigterm = signal(SignalKind::terminate())?;
