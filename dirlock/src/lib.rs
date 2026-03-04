@@ -33,7 +33,6 @@ use protector::{
 };
 use recovery::RecoveryKey;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 
 /// The encryption status of an existing directory
 pub enum DirStatus {
@@ -414,14 +413,6 @@ pub fn add_protector_to_policy(policy_id: &PolicyKeyId, protector_key: &Protecto
     policy.add_protector(protector_key, policy_key)?;
     ks.save_policy_data(&policy)?;
     Ok(())
-}
-
-/// Get the default [`Keystore`]
-pub fn keystore() -> &'static Keystore {
-    static DEFAULT_KEYSTORE : OnceLock<Keystore> = OnceLock::new();
-    DEFAULT_KEYSTORE.get_or_init(|| {
-        Keystore::from_path(config::Config::keystore_dir())
-    })
 }
 
 /// Initialize the dirlock library

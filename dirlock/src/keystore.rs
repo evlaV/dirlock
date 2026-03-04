@@ -18,6 +18,7 @@ use std::{
 use crate::{
     ProtectedPolicyKey,
     UnusableProtector,
+    config::Config,
     fscrypt::PolicyKeyId,
     policy::PolicyData,
     protector::{
@@ -32,6 +33,13 @@ pub struct Keystore {
     protector_dir: PathBuf,
 }
 
+/// Create a [`Keystore`] in the default, system-wide directory
+impl Default for Keystore {
+    fn default() -> Self {
+        Keystore::from_path(Config::keystore_dir())
+    }
+}
+
 impl Keystore {
     /// Return a new [`Keystore`] with `dir` as its base path
     pub fn from_path(dir: &Path) -> Self {
@@ -40,7 +48,6 @@ impl Keystore {
         let protector_dir = base_dir.join("protectors");
         Keystore { policy_dir, protector_dir }
     }
-
 
     /// Return an iterator to the IDs of all policy keys available in the key store
     pub fn policy_key_ids(&self) -> std::io::Result<Vec<PolicyKeyId>> {

@@ -7,7 +7,7 @@
 mod pamlib;
 
 use pamsm::{LogLvl, Pam, PamError, PamFlags, PamLibExt, PamMsgStyle, PamServiceModule, pam_module};
-use dirlock::{DirStatus, EncryptedDir, keystore, protector::ProtectorKey, recovery::RecoveryKey};
+use dirlock::{DirStatus, EncryptedDir, Keystore, protector::ProtectorKey, recovery::RecoveryKey};
 use std::ffi::c_int;
 
 type Result<T> = std::result::Result<T, PamError>;
@@ -86,8 +86,8 @@ fn get_user(pamh: &Pam) -> Result<&str> {
 ///
 /// If it's not encrypted by dirlock then return PAM_USER_UNKNOWN so
 /// other PAM modules can try to handle it.
-fn get_home_data(user: &str) -> Result<EncryptedDir> {
-    match dirlock::open_home(user, keystore()) {
+fn get_home_data(user: &str, ks: &Keystore) -> Result<EncryptedDir> {
+    match dirlock::open_home(user, ks) {
         Ok(Some(DirStatus::Encrypted(d))) => Ok(d),
         Ok(Some(_)) => Err(PamError::USER_UNKNOWN), // The home directory is not encrypted with dirlock
         Ok(None)    => Err(PamError::USER_UNKNOWN), // The home directory does not exist
@@ -125,8 +125,9 @@ fn try_recovery_key(pamh: &Pam, dir: &EncryptedDir, pass: Option<&[u8]>) -> Resu
 ///
 /// Used for authentication.
 fn do_authenticate(pamh: Pam) -> Result<()> {
+    let ks = Keystore::default();
     let user = get_user(&pamh)?;
-    let homedir = get_home_data(user)?;
+    let homedir = get_home_data(user, &ks)?;
 
     let mut available_protectors = false;
 
@@ -193,8 +194,9 @@ fn do_authenticate(pamh: Pam) -> Result<()> {
 ///
 /// Used for changing passwords (with 'passwd' or similar)
 fn do_chauthtok(pamh: Pam, flags: PamFlags) -> Result<()> {
+    let ks = Keystore::default();
     let user = get_user(&pamh)?;
-    let mut homedir = get_home_data(user)?;
+    let mut homedir = get_home_data(user, &ks)?;
 
     // Get only the protectors that are available and can be updated
     let prots : Vec<_> = homedir.protectors.iter_mut().filter(|p| {
@@ -256,7 +258,7 @@ fn do_chauthtok(pamh: Pam, flags: PamFlags) -> Result<()> {
 
     // Change the password
     for p in prots {
-        match dirlock::update_protector_password(&mut p.protector, pass, newpass, keystore()) {
+        match dirlock::update_protector_password(&mut p.protector, pass, newpass, &ks) {
             Ok(false) => (),
             Ok(true) => {
                 let protid = &p.protector.id;
@@ -275,8 +277,9 @@ fn do_chauthtok(pamh: Pam, flags: PamFlags) -> Result<()> {
 }
 
 fn do_open_session(pamh: Pam) -> Result<()> {
+    let ks = Keystore::default();
     let user = get_user(&pamh)?;
-    let homedir = get_home_data(user)?;
+    let homedir = get_home_data(user, &ks)?;
     // If the home directory is already unlocked then we are done
     if homedir.key_status == dirlock::fscrypt::KeyStatus::Present {
         log_info(&pamh, format!("session opened for user {user}"));
@@ -304,8 +307,9 @@ fn do_open_session(pamh: Pam) -> Result<()> {
 }
 
 fn do_close_session(pamh: Pam) -> Result<()> {
+    let ks = Keystore::default();
     let user = get_user(&pamh)?;
-    let _homedir = get_home_data(user)?;
+    let _homedir = get_home_data(user, &ks)?;
     log_info(&pamh, format!("session closed for user {user}"));
     Ok(())
 }

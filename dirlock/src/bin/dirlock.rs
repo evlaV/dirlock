@@ -21,7 +21,6 @@ use dirlock::{
         PolicyKeyId,
         self,
     },
-    keystore,
     policy::PolicyKey,
     protector::{
         Protector,
@@ -1183,40 +1182,40 @@ fn main() -> Result<()> {
 
     dirlock::init()?;
 
-    let ks = keystore();
+    let ks = Keystore::default();
 
     match &args.command {
-        Lock(args) => cmd_lock(args, ks),
-        Unlock(args) => cmd_unlock(args, ks),
-        ChangePass(args) => cmd_change_pass(args, ks),
-        Encrypt(args) => cmd_encrypt(args, ks),
-        Convert(args) => cmd_convert(args, ks),
+        Lock(args) => cmd_lock(args, &ks),
+        Unlock(args) => cmd_unlock(args, &ks),
+        ChangePass(args) => cmd_change_pass(args, &ks),
+        Encrypt(args) => cmd_encrypt(args, &ks),
+        Convert(args) => cmd_convert(args, &ks),
         Recovery(args) => match &args.command {
-            RecoveryCommand::Add(args) => cmd_recovery_add(args, ks),
-            RecoveryCommand::Remove(args) => cmd_recovery_remove(args, ks),
-            RecoveryCommand::Restore(args) => cmd_recovery_restore(args, ks),
+            RecoveryCommand::Add(args) => cmd_recovery_add(args, &ks),
+            RecoveryCommand::Remove(args) => cmd_recovery_remove(args, &ks),
+            RecoveryCommand::Restore(args) => cmd_recovery_restore(args, &ks),
         },
-        Status(args) => cmd_status(args, ks),
+        Status(args) => cmd_status(args, &ks),
         Admin(args) => match &args.command {
             AdminCommand::Policy(args) => match &args.command {
-                PolicyCommand::List(_) => cmd_list_policies(ks),
-                PolicyCommand::Create(args) => cmd_create_policy(args, ks),
-                PolicyCommand::Remove(args) => cmd_remove_policy(args, ks),
-                PolicyCommand::Status(args) => cmd_policy_status(args, ks),
-                PolicyCommand::Purge(args) => cmd_policy_purge(args, ks),
-                PolicyCommand::AddProtector(args) => cmd_policy_add_protector(args, ks),
-                PolicyCommand::RemoveProtector(args) => cmd_policy_remove_protector(args, ks),
+                PolicyCommand::List(_) => cmd_list_policies(&ks),
+                PolicyCommand::Create(args) => cmd_create_policy(args, &ks),
+                PolicyCommand::Remove(args) => cmd_remove_policy(args, &ks),
+                PolicyCommand::Status(args) => cmd_policy_status(args, &ks),
+                PolicyCommand::Purge(args) => cmd_policy_purge(args, &ks),
+                PolicyCommand::AddProtector(args) => cmd_policy_add_protector(args, &ks),
+                PolicyCommand::RemoveProtector(args) => cmd_policy_remove_protector(args, &ks),
             },
             AdminCommand::Protector(args) => match &args.command {
-                ProtectorCommand::List(_) => display_protector_list(ks),
-                ProtectorCommand::Create(args) => cmd_create_protector(args, ks),
-                ProtectorCommand::Remove(args) => cmd_remove_protector(args, ks),
-                ProtectorCommand::VerifyPass(args) => cmd_verify_protector(args, ks),
-                ProtectorCommand::ChangePass(args) => cmd_change_protector_pass(args, ks),
+                ProtectorCommand::List(_) => display_protector_list(&ks),
+                ProtectorCommand::Create(args) => cmd_create_protector(args, &ks),
+                ProtectorCommand::Remove(args) => cmd_remove_protector(args, &ks),
+                ProtectorCommand::VerifyPass(args) => cmd_verify_protector(args, &ks),
+                ProtectorCommand::ChangePass(args) => cmd_change_protector_pass(args, &ks),
             },
-            AdminCommand::Tpm2Test(_) => cmd_tpm2_test(ks),
-            AdminCommand::ExportMasterKey(args) => cmd_export_master_key(args, ks),
-            AdminCommand::ImportMasterKey(_) => cmd_import_master_key(ks),
+            AdminCommand::Tpm2Test(_) => cmd_tpm2_test(&ks),
+            AdminCommand::ExportMasterKey(args) => cmd_export_master_key(args, &ks),
+            AdminCommand::ImportMasterKey(_) => cmd_import_master_key(&ks),
             AdminCommand::FscryptEnabled(args) => cmd_fscrypt_enabled(args),
         },
     }

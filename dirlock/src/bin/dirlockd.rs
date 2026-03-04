@@ -50,7 +50,7 @@ struct DirlockDaemon {
     jobs: HashMap<u32, Arc<ConvertJob>>,
     last_jobid: u32,
     tx: mpsc::Sender<Event>,
-    ks: &'static Keystore,
+    ks: Keystore,
 }
 
 /// Convert a Result into a zbus::fdo::Result
@@ -417,7 +417,7 @@ impl DirlockDaemon {
         &self,
         dir: &Path
     ) -> Result<()> {
-        do_lock_dir(dir, self.ks).into_dbus()
+        do_lock_dir(dir, &self.ks).into_dbus()
     }
 
     async fn unlock_dir(
@@ -427,7 +427,7 @@ impl DirlockDaemon {
     ) -> Result<()> {
         let pass = get_str(&options, "password")?;
         let protector = get_str(&options, "protector")?;
-        do_unlock_dir(dir, &pass, &protector, self.ks).into_dbus()
+        do_unlock_dir(dir, &pass, &protector, &self.ks).into_dbus()
     }
 
     async fn verify_protector_password(
@@ -436,7 +436,7 @@ impl DirlockDaemon {
     ) -> Result<bool> {
         let pass = get_str(&options, "password")?;
         let protector = get_str(&options, "protector")?;
-        do_verify_protector_password(&pass, &protector, self.ks).into_dbus()
+        do_verify_protector_password(&pass, &protector, &self.ks).into_dbus()
     }
 
     async fn change_protector_password(
@@ -446,14 +446,14 @@ impl DirlockDaemon {
         let pass = get_str(&options, "old-password")?;
         let newpass = get_str(&options, "new-password")?;
         let protector = get_str(&options, "protector")?;
-        do_change_protector_password(&pass, &newpass, &protector, self.ks).into_dbus()
+        do_change_protector_password(&pass, &newpass, &protector, &self.ks).into_dbus()
     }
 
     async fn get_dir_status(
         &self,
         dir: &Path,
     ) -> Result<DbusDirStatus> {
-        do_get_dir_status(dir, self.ks).into_dbus()
+        do_get_dir_status(dir, &self.ks).into_dbus()
     }
 
     async fn encrypt_dir(
@@ -463,7 +463,7 @@ impl DirlockDaemon {
     ) -> Result<String> {
         let pass = get_str(&options, "password")?;
         let protector = get_str(&options, "protector")?;
-        do_encrypt_dir(dir, &pass, &protector, self.ks).into_dbus()
+        do_encrypt_dir(dir, &pass, &protector, &self.ks).into_dbus()
     }
 
     async fn convert_dir(
@@ -476,7 +476,7 @@ impl DirlockDaemon {
         let pass = get_str(&options, "password")?;
         let protector = get_str(&options, "protector")?;
         // Create a new ConvertJob and store it in self.jobs
-        let job = do_convert_dir(dir, &pass, &protector, self.ks)
+        let job = do_convert_dir(dir, &pass, &protector, &self.ks)
             .map(Arc::new)
             .into_dbus()?;
         self.last_jobid += 1;
@@ -544,27 +544,27 @@ impl DirlockDaemon {
         let ptype = get_str(&options, "type")?;
         let name = get_str(&options, "name")?;
         let pass = get_str(&options, "password")?;
-        do_create_protector(&ptype, &name, &pass, self.ks).into_dbus()
+        do_create_protector(&ptype, &name, &pass, &self.ks).into_dbus()
     }
 
     async fn remove_protector(
         &self,
         protector_id: &str,
     ) -> Result<()> {
-        do_remove_protector(protector_id, self.ks).into_dbus()
+        do_remove_protector(protector_id, &self.ks).into_dbus()
     }
 
     async fn get_all_protectors(&self) -> Result<Vec<DbusProtectorData>> {
-        do_get_all_protectors(self.ks).into_dbus()
+        do_get_all_protectors(&self.ks).into_dbus()
     }
 
     async fn get_all_policies(&self) -> Result<DbusPolicyData> {
-        do_get_all_policies(self.ks).into_dbus()
+        do_get_all_policies(&self.ks).into_dbus()
     }
 
     async fn get_protector(&self, id: &str) -> Result<DbusProtectorData> {
         ProtectorId::from_str(id)
-            .and_then(|protid| do_get_protector(protid, self.ks))
+            .and_then(|protid| do_get_protector(protid, &self.ks))
             .into_dbus()
     }
 
@@ -577,7 +577,7 @@ impl DirlockDaemon {
         let protector_pass = get_str(&options, "protector-password")?;
         let unlock_with = get_str(&options, "unlock-with")?;
         let unlock_with_pass = get_str(&options, "unlock-with-password")?;
-        do_add_protector_to_policy(&policy, &protector, &protector_pass, &unlock_with, &unlock_with_pass, self.ks)
+        do_add_protector_to_policy(&policy, &protector, &protector_pass, &unlock_with, &unlock_with_pass, &self.ks)
             .into_dbus()
     }
 
@@ -587,7 +587,7 @@ impl DirlockDaemon {
     ) -> Result<()> {
         let policy = get_str(&options, "policy")?;
         let protector = get_str(&options, "protector")?;
-        do_remove_protector_from_policy(&policy, &protector, self.ks)
+        do_remove_protector_from_policy(&policy, &protector, &self.ks)
             .into_dbus()
     }
 
@@ -598,14 +598,14 @@ impl DirlockDaemon {
     ) -> Result<String> {
         let protector = get_str(&options, "protector")?;
         let pass = get_str(&options, "password")?;
-        do_recovery_add(dir, &protector, &pass, self.ks).into_dbus()
+        do_recovery_add(dir, &protector, &pass, &self.ks).into_dbus()
     }
 
     async fn recovery_remove(
         &self,
         dir: &Path,
     ) -> Result<()> {
-        do_recovery_remove(dir, self.ks).into_dbus()
+        do_recovery_remove(dir, &self.ks).into_dbus()
     }
 
     async fn recovery_restore(
@@ -616,7 +616,7 @@ impl DirlockDaemon {
         let recovery_key = get_str(&options, "recovery-key")?;
         let protector = get_str(&options, "protector")?;
         let pass = get_str(&options, "password")?;
-        do_recovery_restore(dir, &recovery_key, &protector, &pass, self.ks).into_dbus()
+        do_recovery_restore(dir, &recovery_key, &protector, &pass, &self.ks).into_dbus()
     }
 }
 
@@ -632,7 +632,7 @@ async fn main() -> anyhow::Result<()> {
         jobs: HashMap::new(),
         last_jobid: 0,
         tx,
-        ks: dirlock::keystore(),
+        ks: Keystore::default(),
     };
 
     conn.object_server()
