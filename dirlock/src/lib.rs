@@ -16,6 +16,8 @@ pub mod policy;
 pub mod protector;
 pub mod recovery;
 pub mod util;
+#[cfg(feature = "dbus")]
+pub mod dbus_proxy;
 
 use anyhow::{anyhow, bail, Result};
 pub use keystore::Keystore;

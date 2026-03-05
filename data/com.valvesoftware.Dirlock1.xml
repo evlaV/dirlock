@@ -1,0 +1,335 @@
+<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
+
+<!--
+  Copyright © 2026 Valve Corporation.
+  SPDX-License-Identifier: BSD-3-Clause
+-->
+
+<node name="/" xmlns:doc="http://www.freedesktop.org/dbus/1.0/doc.dtd">
+  <!--
+      com.valvesoftware.Dirlock1:
+      @short_description: Interface to control Dirlock.
+  -->
+  <interface name="com.valvesoftware.Dirlock1">
+
+    <!--
+        LockDir:
+        @dir: Path to an encrypted directory.
+
+        Lock an encrypted directory.
+        The directory must be currently unlocked.
+    -->
+    <method name="LockDir">
+      <arg name="dir" type="s" direction="in"/>
+    </method>
+
+    <!--
+        UnlockDir:
+        @dir: Path to an encrypted directory.
+        @options: Options dict. Required keys:
+        - `protector` (s): ID of the protector to use.
+        - `password` (s): The password or PIN of the protector.
+
+        Unlock an encrypted directory using one of its protectors.
+        The directory must be currently locked.
+    -->
+    <method name="UnlockDir">
+      <arg name="dir" type="s" direction="in"/>
+      <arg name="options" type="a{sv}" direction="in"/>
+    </method>
+
+    <!--
+        GetDirStatus:
+        @dir: Path to a directory.
+        @status: Dict with the following fields:
+
+        - `status` (s): One of `unencrypted`, `unsupported`,
+          `key-missing`, `locked`, `unlocked`, or `partially-locked`.
+
+        If the directory is encrypted, status also contains:
+
+        - `policy` (s): The policy ID
+        - `protectors` (aa{sv}): List of protectors (see GetProtector for the format).
+        - `has-recovery-key` (b): Whether a recovery key is set.
+
+        Get the encryption status of a directory.
+    -->
+    <method name="GetDirStatus">
+      <arg name="dir" type="s" direction="in"/>
+      <arg name="status" type="a{sv}" direction="out"/>
+    </method>
+
+    <!--
+        EncryptDir:
+        @dir: Path to an empty directory.
+        @options: Options dict. Required keys:
+
+        - `protector` (s): ID of the protector to use.
+        - `password` (s): The password or PIN of the protector.
+
+        @keyid: The policy ID of the newly encrypted directory.
+
+        Encrypt an empty directory using an existing protector.
+        The directory must be empty and unencrypted.
+    -->
+    <method name="EncryptDir">
+      <arg name="dir" type="s" direction="in"/>
+      <arg name="options" type="a{sv}" direction="in"/>
+      <arg name="keyid" type="s" direction="out"/>
+    </method>
+
+    <!--
+        ConvertDir:
+        @dir: Path to a directory.
+        @options: Options dict. Required keys:
+
+        - `protector` (s): ID of the protector to use.
+        - `password` (s): The password or PIN of the protector.
+
+        @jobid: ID of the background conversion job.
+
+        Start converting an unencrypted directory to an encrypted one
+        in the background. Progress is reported via the JobProgress,
+        JobFinished and JobFailed signals.
+    -->
+    <method name="ConvertDir">
+      <arg name="dir" type="s" direction="in"/>
+      <arg name="options" type="a{sv}" direction="in"/>
+      <arg name="jobid" type="u" direction="out"/>
+    </method>
+
+    <!--
+        CancelJob:
+        @jobn: ID of the job to cancel.
+
+        Cancel a running conversion job.
+    -->
+    <method name="CancelJob">
+      <arg name="jobn" type="u" direction="in"/>
+    </method>
+
+    <!--
+        JobStatus:
+        @jobn: ID of the job to query.
+        @progress: Progress percentage (0-100).
+
+        Query the progress of a running conversion job.
+    -->
+    <method name="JobStatus">
+      <arg name="jobn" type="u" direction="in"/>
+      <arg name="progress" type="i" direction="out"/>
+    </method>
+
+    <!--
+        JobFinished:
+        @jobid: ID of the finished job.
+        @keyid: Policy ID of the newly encrypted directory.
+
+        Emitted when a conversion job completes successfully.
+    -->
+    <signal name="JobFinished">
+      <arg name="jobid" type="u"/>
+      <arg name="keyid" type="s"/>
+    </signal>
+
+    <!--
+        JobFailed:
+        @jobid: ID of the failed job.
+        @error: Error message.
+
+        Emitted when a conversion job fails.
+    -->
+    <signal name="JobFailed">
+      <arg name="jobid" type="u"/>
+      <arg name="error" type="s"/>
+    </signal>
+
+    <!--
+        JobProgress:
+        @jobid: ID of the running job.
+        @progress: Progress percentage (0-100).
+
+        Emitted periodically while a conversion job is running.
+    -->
+    <signal name="JobProgress">
+      <arg name="jobid" type="u"/>
+      <arg name="progress" type="i"/>
+    </signal>
+
+    <!--
+        CreateProtector:
+        @options: Options dict. Required keys:
+
+        - `type` (s): Protector type (`password`, `tpm2`, or `fido2`).
+        - `name` (s): Protector name.
+        - `password` (s): Password or PIN.
+
+        @id: Protector ID.
+
+        Create a new protector.
+    -->
+    <method name="CreateProtector">
+      <arg name="options" type="a{sv}" direction="in"/>
+      <arg name="id" type="s" direction="out"/>
+    </method>
+
+    <!--
+        RemoveProtector:
+        @protector_id: Protector ID.
+
+        Remove a protector. It must not be in use by any policy,
+        otherwise an error is returned.
+    -->
+    <method name="RemoveProtector">
+      <arg name="protector_id" type="s" direction="in"/>
+    </method>
+
+    <!--
+        GetProtector:
+        @id: Protector ID.
+        @protector: Dict with the following fields:
+
+        - `id` (s): protector ID
+        - `type` (s): Protector type (`password`, `tpm2`, or `fido2`).
+        - `name` (s): Protector name.
+        - `needs-password` (b): Whether unlocking requires a password or PIN.
+
+        Get the metadata of an existing protector.
+    -->
+    <method name="GetProtector">
+      <arg name="id" type="s" direction="in"/>
+      <arg name="protector" type="a{sv}" direction="out"/>
+    </method>
+
+    <!--
+        GetAllProtectors:
+        @protectors: List of protector dicts (see GetProtector).
+
+        Get the metadata of all existing protectors.
+    -->
+    <method name="GetAllProtectors">
+      <arg name="protectors" type="aa{sv}" direction="out"/>
+    </method>
+
+    <!--
+        VerifyProtectorPassword:
+        @options: Options dict. Required keys:
+
+        - `password` (s): The password or PIN of the protector.
+        - `protector` (s): Protector ID.
+
+        @valid: %TRUE if the password is correct.
+
+        Verify a protector's password without unlocking anything.
+    -->
+    <method name="VerifyProtectorPassword">
+      <arg name="options" type="a{sv}" direction="in"/>
+      <arg name="valid" type="b" direction="out"/>
+    </method>
+
+    <!--
+        ChangeProtectorPassword:
+        @options: Options dict. Required keys:
+
+        - `old-password` (s): The current password or PIN.
+        - `new-password` (s): The new password or PIN.
+        - `protector` (s): Protector ID.
+
+        Change the password of a protector. The old and new
+        passwords must be different.
+    -->
+    <method name="ChangeProtectorPassword">
+      <arg name="options" type="a{sv}" direction="in"/>
+    </method>
+
+    <!--
+        GetAllPolicies:
+        @policies: Dict mapping policy IDs to protector dicts (see GetProtector).
+
+        Get all policies and their associated protectors.
+    -->
+    <method name="GetAllPolicies">
+      <arg name="policies" type="a{saa{sv}}" direction="out"/>
+    </method>
+
+    <!--
+        AddProtectorToPolicy:
+        @options: Options dict. Required keys:
+
+        - `policy` (s): Policy ID.
+        - `protector` (s): ID of the protector to add.
+        - `protector-password` (s): Password or PIN of the protector being added.
+        - `unlock-with` (s): ID of an existing protector.
+        - `unlock-with-password` (s): Password or PIN of the existing protector.
+
+        Add a protector to an encryption policy.
+    -->
+    <method name="AddProtectorToPolicy">
+      <arg name="options" type="a{sv}" direction="in"/>
+    </method>
+
+    <!--
+        RemoveProtectorFromPolicy:
+        @options: Options dict. Required keys:
+
+        - `policy` (s): Policy ID.
+        - `protector` (s): ID of the protector to remove.
+
+        Remove a protector from an encryption policy. It must not be
+        the last remaining protector in that policy.
+    -->
+    <method name="RemoveProtectorFromPolicy">
+      <arg name="options" type="a{sv}" direction="in"/>
+    </method>
+
+    <!--
+        RecoveryAdd:
+        @dir: Path to an encrypted directory.
+        @options: Options dict. Required keys:
+
+        - `protector` (s): ID of a protector for this directory.
+        - `password` (s): Password or PIN of the protector.
+
+        @recovery_key: The recovery key string. This must be
+        stored securely by the user; it cannot be retrieved later.
+
+        Add a recovery key to an encrypted directory.
+        The directory must not already have a recovery key.
+    -->
+    <method name="RecoveryAdd">
+      <arg name="dir" type="s" direction="in"/>
+      <arg name="options" type="a{sv}" direction="in"/>
+      <arg name="recovery_key" type="s" direction="out"/>
+    </method>
+
+    <!--
+        RecoveryRemove:
+        @dir: Path to an encrypted directory.
+
+        Remove the recovery key from an encrypted directory.
+    -->
+    <method name="RecoveryRemove">
+      <arg name="dir" type="s" direction="in"/>
+    </method>
+
+    <!--
+        RecoveryRestore:
+        @dir: Path to an encrypted directory.
+        @options: Options dict. Required keys:
+
+        - `recovery-key` (s): The recovery key string.
+        - `protector` (s): ID of a protector to associate with this directory.
+        - `password` (s): Password or PIN of the protector.
+
+        Restore keystore access to a directory using its recovery
+        key. After this call the specified protector will be able to
+        unlock the directory.
+    -->
+    <method name="RecoveryRestore">
+      <arg name="dir" type="s" direction="in"/>
+      <arg name="options" type="a{sv}" direction="in"/>
+    </method>
+
+  </interface>
+</node>
