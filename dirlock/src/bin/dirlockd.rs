@@ -1,5 +1,5 @@
 /*
- * Copyright © 2025 Valve Corporation
+ * Copyright © 2025-2026 Valve Corporation
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
@@ -39,6 +39,9 @@ use dirlock::{
     },
     recovery::RecoveryKey,
 };
+
+const DIRLOCK_DBUS_PATH: &str = "/com/valvesoftware/Dirlock1";
+const DIRLOCK_DBUS_SERVICE: &str = "com.valvesoftware.Dirlock1";
 
 /// Events sent by background tasks to the main thread
 enum Event {
@@ -625,7 +628,7 @@ async fn main() -> anyhow::Result<()> {
     dirlock::init()?;
     let (tx, mut rx) = mpsc::channel::<Event>(2);
     let builder = zbus::connection::Builder::session()?;
-    let conn = builder.name("com.valvesoftware.Dirlock1")?
+    let conn = builder.name(DIRLOCK_DBUS_SERVICE)?
         .build()
         .await?;
     let daemon = DirlockDaemon {
@@ -636,11 +639,11 @@ async fn main() -> anyhow::Result<()> {
     };
 
     conn.object_server()
-        .at("/com/valvesoftware/Dirlock1", daemon)
+        .at(DIRLOCK_DBUS_PATH, daemon)
         .await?;
 
     let iface : InterfaceRef<DirlockDaemon> =
-        conn.object_server().interface("/com/valvesoftware/Dirlock1").await?;
+        conn.object_server().interface(DIRLOCK_DBUS_PATH).await?;
 
     let mut sigquit = signal(SignalKind::quit())?;
     let mut sigterm = signal(SignalKind::terminate())?;
@@ -671,5 +674,124 @@ async fn main() -> anyhow::Result<()> {
         if r.is_err() {
             break r;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::Result;
+    use std::collections::HashMap;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use dirlock::dbus_proxy::Dirlock1Proxy;
+    use tempdir::TempDir;
+    use zbus::zvariant::{OwnedValue, Value};
+
+    /// Transform a list of key / value pairs from (&str, &str) into (&str, Value).
+    /// Used to provide an `a{sv}` options dict to D-Bus methods.
+    fn str_dict<'a, const N: usize>(pairs: [(&'a str, &'a str); N]) -> Vec<(&'a str, Value<'a>)> {
+        pairs.iter().map(|&(k, v)| (k, Value::from(v))).collect()
+    }
+
+    /// Transform an options dict as returned by str_dict() into a
+    /// HashMap with references to the values, as expected by the D-Bus proxy.
+    fn as_opts<'a>(vals: &'a Vec<(&str, Value<'a>)>) -> HashMap<&'a str, &'a Value<'a>> {
+        vals.iter().map(|(k, v)| (*k, v)).collect()
+    }
+
+    /// Get a string from a HashMap returned by the D-Bus proxy
+    fn expect_str<'a>(map: &'a HashMap<String, OwnedValue>, key: &str) -> Result<&'a str> {
+        match map.get(key).map(|k| &**k) {
+            Some(Value::Str(s)) => Ok(s),
+            Some(v) => bail!("Key {key}, expected string, got {v:?}"),
+            None => bail!("Missing key {key}"),
+        }
+    }
+
+    /// Get a bool from a HashMap returned by the D-Bus proxy
+    fn expect_bool(map: &HashMap<String, OwnedValue>, key: &str) -> Result<bool> {
+        match map.get(key).map(|k| &**k) {
+            Some(Value::Bool(v)) => Ok(*v),
+            Some(v) => bail!("Key {key}, expected bool, got {v:?}"),
+            None => bail!("Missing key {key}"),
+        }
+    }
+
+    /// Each test uses its own D-Bus service name so they can run in parallel.
+    /// This is the sequence number used to generate that name.
+    static TEST_SERVICE_SEQ: AtomicU32 = AtomicU32::new(0);
+
+    /// A client/server pair for a single test.
+    struct TestService {
+        _keystore_dir: TempDir,
+        _server_conn: zbus::Connection,
+        client_conn: zbus::Connection,
+        service_name: String,
+    }
+
+    impl TestService {
+        /// Start a [`DirlockDaemon`] with a unique name.
+        ///
+        /// Returns a new [`TestService`].
+        async fn start() -> Result<Self> {
+            let _keystore_dir = TempDir::new("dirlock-dbus-test")?;
+            let ks = Keystore::from_path(_keystore_dir.path());
+
+            let n = TEST_SERVICE_SEQ.fetch_add(1, Ordering::Relaxed);
+            let service_name = format!("{DIRLOCK_DBUS_SERVICE}Test{n}");
+
+            let (tx, _) = tokio::sync::mpsc::channel::<Event>(2);
+            let daemon = DirlockDaemon {
+                jobs: HashMap::new(),
+                last_jobid: 0,
+                tx,
+                ks,
+            };
+
+            let _server_conn = zbus::connection::Builder::session()?
+                .name(service_name.as_str())?
+                .serve_at(DIRLOCK_DBUS_PATH, daemon)?
+                .build()
+                .await?;
+
+            let client_conn = zbus::connection::Builder::session()?
+                .build()
+                .await?;
+
+            Ok(TestService { _keystore_dir, _server_conn, client_conn, service_name })
+        }
+
+        /// Build a proxy for the test service.
+        async fn proxy(&self) -> zbus::Result<Dirlock1Proxy<'_>> {
+            Dirlock1Proxy::builder(&self.client_conn)
+                .destination(self.service_name.as_str())?
+                .path(DIRLOCK_DBUS_PATH)?
+                .build()
+                .await
+        }
+    }
+
+    #[tokio::test]
+    async fn test_create_get_protector() -> Result<()> {
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        // Test CreateProtector
+        let id = proxy.create_protector(as_opts(&str_dict([
+            ("type", "password"),
+            ("name", "prot1"),
+            ("password", "pass1"),
+        ]))).await?;
+        ProtectorId::from_str(&id)?;
+
+        // Test GetProtector
+        let prot = proxy.get_protector(&id).await?;
+        assert_eq!(expect_str(&prot, "id")?, id);
+        assert_eq!(expect_str(&prot, "type")?, "password");
+        assert_eq!(expect_str(&prot, "name")?, "prot1");
+        assert_eq!(expect_bool(&prot, "needs-password")?, true);
+        assert_eq!(prot.len(), 4);
+
+        Ok(())
     }
 }
