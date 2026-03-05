@@ -816,4 +816,39 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_create_protector_invalid_type() -> Result<()> {
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        assert!(proxy.create_protector(as_opts(&str_dict([
+            ("type", "no-such-type"),
+            ("name", "prot1"),
+            ("password", "pass1"),
+        ]))).await.is_err());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_create_protector_missing_options() -> Result<()> {
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        assert!(proxy.create_protector(as_opts(&str_dict([
+            ("name", "prot1"),
+            ("password", "pass1"),
+        ]))).await.is_err());
+        assert!(proxy.create_protector(as_opts(&str_dict([
+            ("type", "password"),
+            ("password", "pass1"),
+        ]))).await.is_err());
+        assert!(proxy.create_protector(as_opts(&str_dict([
+            ("type", "password"),
+            ("name", "prot1"),
+        ]))).await.is_err());
+
+        Ok(())
+    }
 }
