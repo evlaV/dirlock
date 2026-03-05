@@ -794,4 +794,26 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_get_protector_missing() -> Result<()> {
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        // Non-existent protector
+        assert!(proxy.get_protector("0000000000000000").await.is_err());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_get_protector_wrong_id() -> Result<()> {
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        // Invalid protector ID
+        assert!(proxy.get_protector("0000").await.is_err());
+
+        Ok(())
+    }
 }
