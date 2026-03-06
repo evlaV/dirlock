@@ -1132,4 +1132,94 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_change_verify_protector_password() -> Result<()> {
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        let password = "pass1";
+        let new_password = "pass2";
+        let prot_id = create_test_protector(&proxy, password).await?;
+
+        // Verify the correct password
+        assert_eq!(proxy.verify_protector_password(as_opts(&str_dict([
+            ("protector", &prot_id),
+            ("password", password),
+        ]))).await?, true);
+
+        // Verify the wrong password
+        assert_eq!(proxy.verify_protector_password(as_opts(&str_dict([
+            ("protector", &prot_id),
+            ("password", "wrong"),
+        ]))).await?, false);
+
+        // Change the password
+        proxy.change_protector_password(as_opts(&str_dict([
+            ("protector", &prot_id),
+            ("old-password", password),
+            ("new-password", new_password),
+        ]))).await?;
+
+        // Verify the new password works
+        assert_eq!(proxy.verify_protector_password(as_opts(&str_dict([
+            ("protector", &prot_id),
+            ("password", new_password),
+        ]))).await?, true);
+
+        // Verify the old password no longer works
+        assert_eq!(proxy.verify_protector_password(as_opts(&str_dict([
+            ("protector", &prot_id),
+            ("password", password),
+        ]))).await?, false);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_change_verify_protector_password_wrong_options() -> Result<()> {
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        let password = "pass1";
+        let prot_id = create_test_protector(&proxy, password).await?;
+
+        // Verify with missing options
+        assert!(proxy.verify_protector_password(as_opts(&str_dict([
+            ("protector", &prot_id),
+        ]))).await.is_err());
+        assert!(proxy.verify_protector_password(as_opts(&str_dict([
+            ("password", password),
+        ]))).await.is_err());
+
+        // Change with the wrong old password
+        assert!(proxy.change_protector_password(as_opts(&str_dict([
+            ("protector", &prot_id),
+            ("old-password", "wrong"),
+            ("new-password", "something"),
+        ]))).await.is_err());
+
+        // Change with identical old and new passwords
+        assert!(proxy.change_protector_password(as_opts(&str_dict([
+            ("protector", &prot_id),
+            ("old-password", password),
+            ("new-password", password),
+        ]))).await.is_err());
+
+        // Change with missing options
+        assert!(proxy.change_protector_password(as_opts(&str_dict([
+            ("protector", &prot_id),
+            ("old-password", password),
+        ]))).await.is_err());
+        assert!(proxy.change_protector_password(as_opts(&str_dict([
+            ("protector", &prot_id),
+            ("new-password", "something"),
+        ]))).await.is_err());
+        assert!(proxy.change_protector_password(as_opts(&str_dict([
+            ("old-password", password),
+            ("new-password", "something"),
+        ]))).await.is_err());
+
+        Ok(())
+    }
 }
