@@ -1496,4 +1496,120 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_recovery_restore() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        // Create and encrypt a new directory
+        let password = "pass1";
+        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir_str = dir.path().to_str().unwrap();
+        let prot_id = create_test_protector(&proxy, password).await?;
+        encrypt_test_dir(&proxy, dir.path(), &prot_id, password).await?;
+
+        // Add a recovery key and lock the directory
+        let recovery_key = proxy.recovery_add(dir_str, as_opts(&str_dict([
+            ("protector", &prot_id),
+            ("password", password),
+        ]))).await?;
+        proxy.lock_dir(dir_str).await?;
+
+        // Start a new service with a fresh keystore to simulate losing the old one
+        let srv2 = TestService::start().await?;
+        let proxy2 = srv2.proxy().await?;
+
+        // The directory is still encrypted (the recovery key keeps it from being key-missing)
+        let status = proxy2.get_dir_status(dir_str).await?;
+        assert_eq!(expect_str(&status, "status")?, "locked");
+
+        // Create a new protector and restore using the recovery key
+        let new_password = "pass2";
+        let new_prot_id = create_test_protector(&proxy2, new_password).await?;
+        proxy2.recovery_restore(dir_str, as_opts(&str_dict([
+            ("recovery-key", &recovery_key),
+            ("protector", &new_prot_id),
+            ("password", new_password),
+        ]))).await?;
+
+        // The directory should now be unlockable with the new protector
+        proxy2.unlock_dir(dir_str, as_opts(&str_dict([
+            ("protector", &new_prot_id),
+            ("password", new_password),
+        ]))).await?;
+
+        let status = proxy2.get_dir_status(dir_str).await?;
+        assert_eq!(expect_str(&status, "status")?, "unlocked");
+
+        // Lock to release the key
+        proxy2.lock_dir(dir_str).await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_recovery_restore_wrong_options() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        // Create and encrypt a new directory
+        let password = "pass1";
+        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir_str = dir.path().to_str().unwrap();
+        let prot_id = create_test_protector(&proxy, password).await?;
+        encrypt_test_dir(&proxy, dir.path(), &prot_id, password).await?;
+
+        // Add a recovery key
+        let recovery_key = proxy.recovery_add(dir_str, as_opts(&str_dict([
+            ("protector", &prot_id),
+            ("password", password),
+        ]))).await?;
+
+        // Cannot restore with a protector that already protects this directory
+        assert!(proxy.recovery_restore(dir_str, as_opts(&str_dict([
+            ("recovery-key", &recovery_key),
+            ("protector", &prot_id),
+            ("password", password),
+        ]))).await.is_err());
+
+        // Wrong recovery key
+        let new_password = "pass2";
+        let new_prot_id = create_test_protector(&proxy, new_password).await?;
+        assert!(proxy.recovery_restore(dir_str, as_opts(&str_dict([
+            ("recovery-key", "dddddddd-dddddddd-dddddddd-dddddddd-dddddddd-dddddddd-dddddddd-dddddddd"),
+            ("protector", &new_prot_id),
+            ("password", new_password),
+        ]))).await.is_err());
+
+        // Invalid recovery key
+        assert!(proxy.recovery_restore(dir_str, as_opts(&str_dict([
+            ("recovery-key", "12345"),
+            ("protector", &new_prot_id),
+            ("password", new_password),
+        ]))).await.is_err());
+
+        // Missing options
+        assert!(proxy.recovery_restore(dir_str, as_opts(&str_dict([
+            ("protector", &new_prot_id),
+            ("password", new_password),
+        ]))).await.is_err());
+        assert!(proxy.recovery_restore(dir_str, as_opts(&str_dict([
+            ("recovery-key", &recovery_key),
+            ("password", new_password),
+        ]))).await.is_err());
+        assert!(proxy.recovery_restore(dir_str, as_opts(&str_dict([
+            ("recovery-key", &recovery_key),
+            ("protector", &new_prot_id),
+        ]))).await.is_err());
+
+        // Lock to release the key
+        proxy.lock_dir(dir_str).await?;
+
+        Ok(())
+    }
 }
