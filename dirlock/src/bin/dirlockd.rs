@@ -1059,4 +1059,24 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_create_remove_protector() -> Result<()> {
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        let id = create_test_protector(&proxy, "pass1").await?;
+
+        // Remove the protector
+        proxy.remove_protector(&id).await?;
+
+        // It should be gone now
+        assert!(proxy.get_protector(&id).await.is_err());
+
+        // Trying to remove a missing protector should fail
+        assert!(proxy.remove_protector(&id).await.is_err());
+        assert!(proxy.remove_protector("0000000000000000").await.is_err());
+
+        Ok(())
+    }
 }
