@@ -9,6 +9,7 @@ use serde::Serialize;
 use zbus::fdo::Result;
 use zbus::fdo::Error;
 use std::collections::HashMap;
+use std::num::NonZeroU32;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -64,6 +65,16 @@ trait IntoDbusResult<T> {
 impl<T> IntoDbusResult<T> for anyhow::Result<T> {
     fn into_dbus(self) -> zbus::fdo::Result<T> {
         self.map_err(|e| Error::Failed(e.to_string()))
+    }
+}
+
+/// When running tests, default to 1 KDF iteration in order to make
+/// them faster.
+fn get_kdf_iter(val: Option<NonZeroU32>) -> Option<NonZeroU32> {
+    if cfg!(test) && val.is_none() {
+        NonZeroU32::new(1)
+    } else {
+        val
     }
 }
 
@@ -243,6 +254,7 @@ fn do_create_protector(
     let (prot, _) = ProtectorOptsBuilder::new()
         .with_type(Some(ptype))
         .with_name(name.to_string())
+        .with_kdf_iter(get_kdf_iter(None))
         .build()
         .and_then(|opts| {
             let create = dirlock::CreateOpts::CreateAndSave;

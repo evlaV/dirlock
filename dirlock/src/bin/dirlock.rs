@@ -430,6 +430,16 @@ struct StatusArgs {
     dir: Option<PathBuf>,
 }
 
+/// When running tests, default to 1 KDF iteration in order to make
+/// them faster.
+fn get_kdf_iter(val: Option<NonZeroU32>) -> Option<NonZeroU32> {
+    if cfg!(test) && val.is_none() {
+        NonZeroU32::new(1)
+    } else {
+        val
+    }
+}
+
 #[cfg(feature = "tpm2")]
 fn display_tpm_information() -> Result<()> {
     let Ok(status) = dirlock::protector::tpm2::get_status(None) else {
@@ -617,6 +627,7 @@ fn get_or_create_protector(
         let opts = ProtectorOptsBuilder::new()
             .with_type(type_)
             .with_name(name)
+            .with_kdf_iter(get_kdf_iter(None))
             .with_user(user.map(str::to_owned))
             .build()?;
         let pass = read_new_password_for_protector(opts.get_type())?;
@@ -902,7 +913,7 @@ fn cmd_policy_remove_protector(args: &PolicyRemoveProtectorArgs, ks: &Keystore) 
 fn cmd_create_protector(args: &ProtectorCreateArgs, ks: &Keystore) -> Result<()> {
     let opts = ProtectorOptsBuilder::new()
         .with_type(Some(args.type_))
-        .with_kdf_iter(args.kdf_iter)
+        .with_kdf_iter(get_kdf_iter(args.kdf_iter))
         .with_use_pin(args.use_pin)
         .with_name(args.name.clone())
         .with_user(args.user.clone())
@@ -1081,6 +1092,7 @@ fn cmd_import_master_key(ks: &Keystore) -> Result<()> {
     let opts = ProtectorOptsBuilder::new()
         .with_name(String::from("Restored key"))
         .with_type(Some(ProtectorType::Password))
+        .with_kdf_iter(get_kdf_iter(None))
         .build()?;
     let pass = read_new_password_for_protector(opts.get_type())?;
     let (protector, protector_key) = dirlock::create_protector(opts, pass.as_bytes(), CreateOpts::CreateAndSave, ks)?;
@@ -1111,6 +1123,7 @@ fn cmd_tpm2_test(ks: &Keystore) -> Result<()> {
     let opts = ProtectorOptsBuilder::new()
         .with_name(String::from(pass))
         .with_type(Some(ProtectorType::Tpm2))
+        .with_kdf_iter(get_kdf_iter(None))
         .build()?;
     let (protector, protector_key) =
         dirlock::create_protector(opts, pass.as_bytes(), CreateOpts::CreateOnly, ks)?;
