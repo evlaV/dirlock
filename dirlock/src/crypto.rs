@@ -117,7 +117,7 @@ pub struct AesIv(
 );
 
 #[serde_as]
-#[derive(PartialEq, Default, Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct Hmac(
     #[serde_as(as = "Base64")]
     pub [u8; HMAC_LEN]
