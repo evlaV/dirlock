@@ -1079,4 +1079,57 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_get_all_protectors() -> Result<()> {
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        // Create two protectors
+        let id1 = proxy.create_protector(as_opts(&str_dict([
+            ("type", "password"),
+            ("name", "prot1"),
+            ("password", "pass1"),
+        ]))).await?;
+
+        let id2 = proxy.create_protector(as_opts(&str_dict([
+            ("type", "password"),
+            ("name", "prot2"),
+            ("password", "pass2"),
+        ]))).await?;
+
+        // Get all protectors, we should get two
+        let prots = proxy.get_all_protectors().await?;
+        assert_eq!(prots.len(), 2);
+
+        // Find each protector by ID and check all fields
+        let p1 = prots.iter().find(|p| expect_str(p, "id").unwrap() == id1).unwrap();
+        assert_eq!(expect_str(p1, "type")?, "password");
+        assert_eq!(expect_str(p1, "name")?, "prot1");
+        assert_eq!(expect_bool(p1, "needs-password")?, true);
+        assert_eq!(p1.len(), 4);
+
+        let p2 = prots.iter().find(|p| expect_str(p, "id").unwrap() == id2).unwrap();
+        assert_eq!(expect_str(p2, "type")?, "password");
+        assert_eq!(expect_str(p2, "name")?, "prot2");
+        assert_eq!(expect_bool(p2, "needs-password")?, true);
+        assert_eq!(p2.len(), 4);
+
+        // Remove one and check again
+        proxy.remove_protector(&id1).await?;
+        let prots = proxy.get_all_protectors().await?;
+        assert_eq!(prots.len(), 1);
+        assert_eq!(expect_str(&prots[0], "id")?, id2);
+        assert_eq!(expect_str(&prots[0], "type")?, "password");
+        assert_eq!(expect_str(&prots[0], "name")?, "prot2");
+        assert_eq!(expect_bool(&prots[0], "needs-password")?, true);
+        assert_eq!(prots[0].len(), 4);
+
+        // Remove the last one
+        proxy.remove_protector(&id2).await?;
+        let prots = proxy.get_all_protectors().await?;
+        assert!(prots.is_empty());
+
+        Ok(())
+    }
 }
