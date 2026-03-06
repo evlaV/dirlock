@@ -694,6 +694,7 @@ mod tests {
     use super::*;
     use anyhow::Result;
     use std::collections::HashMap;
+    use std::path::PathBuf;
     use std::sync::atomic::{AtomicU32, Ordering};
     use dirlock::dbus_proxy::Dirlock1Proxy;
     use tempdir::TempDir;
@@ -726,6 +727,18 @@ mod tests {
             Some(Value::Bool(v)) => Ok(*v),
             Some(v) => bail!("Key {key}, expected bool, got {v:?}"),
             None => bail!("Missing key {key}"),
+        }
+    }
+
+    /// Filesystem where to run the tests. It must support fscrypt.
+    /// Set to 'skip' to skip these tests.
+    const MNTPOINT_ENV_VAR: &str = "DIRLOCK_TEST_FS";
+
+    fn get_mntpoint() -> Result<Option<PathBuf>> {
+        match std::env::var(MNTPOINT_ENV_VAR) {
+            Ok(x) if x == "skip" => Ok(None),
+            Ok(x) => Ok(Some(PathBuf::from(x))),
+            _ => bail!("Environment variable '{MNTPOINT_ENV_VAR}' not set"),
         }
     }
 
@@ -860,6 +873,74 @@ mod tests {
             ("type", "password"),
             ("name", "prot1"),
         ]))).await.is_err());
+
+        Ok(())
+    }
+
+    // Helper: create a password protector
+    async fn create_test_protector(
+        proxy: &Dirlock1Proxy<'_>,
+        password: &str,
+    ) -> Result<String> {
+        let id = proxy.create_protector(as_opts(&str_dict([
+            ("type", "password"),
+            ("name", "test"),
+            ("password", password),
+        ]))).await?;
+
+        // Verify the ID
+        ProtectorId::from_str(&id)?;
+
+        Ok(id)
+    }
+
+    // Helper: encrypt an empty directory
+    async fn encrypt_test_dir(
+        proxy: &Dirlock1Proxy<'_>,
+        dir: &Path,
+        prot_id: &str,
+        password: &str,
+    ) -> Result<String> {
+        let policy_id = proxy.encrypt_dir(
+            dir.to_str().unwrap(),
+            as_opts(&str_dict([
+                ("protector", &prot_id),
+                ("password", password),
+            ])),
+        ).await?;
+
+        // Verify the ID
+        PolicyKeyId::from_str(&policy_id)?;
+
+        Ok(policy_id)
+    }
+
+    #[tokio::test]
+    async fn test_encrypt_dir() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        // Create and encrypt an empty directory
+        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let prot_id = create_test_protector(&proxy, "pass1").await?;
+        let policy_id = encrypt_test_dir(&proxy, dir.path(), &prot_id, "pass1").await?;
+
+        // The directory should now be encrypted and unlocked
+        let status = proxy.get_dir_status(&dir.path().to_str().unwrap()).await?;
+        assert_eq!(expect_str(&status, "status")?, "unlocked");
+        assert_eq!(expect_str(&status, "policy")?, policy_id);
+        assert_eq!(expect_bool(&status, "has-recovery-key")?, false);
+        assert_eq!(status.len(), 4); // Element 4 is the 'protectors' field
+
+        // Lock the directory
+        proxy.lock_dir(&dir.path().to_str().unwrap()).await?;
+        let status = proxy.get_dir_status(&dir.path().to_str().unwrap()).await?;
+        assert_eq!(expect_str(&status, "status")?, "locked");
+        assert_eq!(expect_str(&status, "policy")?, policy_id);
+        assert_eq!(expect_bool(&status, "has-recovery-key")?, false);
+        assert_eq!(status.len(), 4); // Element 4 is the 'protectors' field
 
         Ok(())
     }
