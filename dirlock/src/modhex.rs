@@ -5,7 +5,7 @@
  */
 
 /// A simple implementation of the modhex encoding. This is base16
-/// with an alternate alphabet (`MODEX_CHARS`).
+/// with an alternate alphabet (`MODHEX_CHARS`).
 
 use anyhow::{anyhow, bail, Result};
 
@@ -35,11 +35,11 @@ pub fn encode(bytes: &[u8]) -> String {
     output
 }
 
-/// Decodes a modex-encoded string (passed as a slice of ASCII bytes).
+/// Decodes a modhex-encoded string (passed as a slice of ASCII bytes).
 /// The output buffer must have the exact size to fit the decoded data
 /// (that is, half of the length of the string, after removing any dashes).
 pub fn decode_ascii_bytes_into(input: &[u8], output: &mut [u8]) -> Result<()> {
-    const ERR_LONG: &str = "Modhex input too short";
+    const ERR_LONG: &str = "Modhex input too long";
     const ERR_SHORT: &str = "Modhex input too short";
     const ERR_INVALID: &str = "Invalid modhex input";
 
