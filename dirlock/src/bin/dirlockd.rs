@@ -977,4 +977,46 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_lock_unlock_dir() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        // Create an empty directory and a protector
+        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir_str = dir.path().to_str().unwrap();
+        let prot_id = create_test_protector(&proxy, "pass1").await?;
+
+        let unlock_opts = str_dict([
+            ("protector", &prot_id),
+            ("password", "pass1"),
+        ]);
+
+        // You cannot lock or unlock an unencrypted directory
+        assert!(proxy.lock_dir(dir_str).await.is_err());
+        assert!(proxy.unlock_dir(dir_str, as_opts(&unlock_opts)).await.is_err());
+
+        // Encrypt the directory
+        let _ = encrypt_test_dir(&proxy, dir.path(), &prot_id, "pass1").await?;
+
+        // You cannot unlock an already unlocked directory
+        assert!(proxy.unlock_dir(dir_str, as_opts(&unlock_opts)).await.is_err());
+
+        // Lock the directory
+        proxy.lock_dir(dir_str).await?;
+
+        // You cannot lock an already locked directory
+        assert!(proxy.lock_dir(dir_str).await.is_err());
+
+        // Unlock the directory
+        proxy.unlock_dir(dir_str, as_opts(&unlock_opts)).await?;
+
+        // Lock it again (in order to release the key from the kernel)
+        proxy.lock_dir(dir_str).await?;
+
+        Ok(())
+    }
 }
