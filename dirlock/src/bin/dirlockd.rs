@@ -1405,4 +1405,95 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_recovery_add_remove() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        let password = "pass1";
+        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir_str = dir.path().to_str().unwrap();
+        let prot_id = create_test_protector(&proxy, password).await?;
+        encrypt_test_dir(&proxy, dir.path(), &prot_id, password).await?;
+
+        // No recovery key yet
+        let status = proxy.get_dir_status(dir_str).await?;
+        assert_eq!(expect_bool(&status, "has-recovery-key")?, false);
+
+        // Add a recovery key
+        let recovery_key = proxy.recovery_add(dir_str, as_opts(&str_dict([
+            ("protector", &prot_id),
+            ("password", password),
+        ]))).await?;
+        assert!(!recovery_key.is_empty());
+
+        // The status should reflect the recovery key
+        let status = proxy.get_dir_status(dir_str).await?;
+        assert_eq!(expect_bool(&status, "has-recovery-key")?, true);
+
+        // Cannot add a second recovery key
+        assert!(proxy.recovery_add(dir_str, as_opts(&str_dict([
+            ("protector", &prot_id),
+            ("password", password),
+        ]))).await.is_err());
+
+        // Remove the recovery key
+        proxy.recovery_remove(dir_str).await?;
+
+        let status = proxy.get_dir_status(dir_str).await?;
+        assert_eq!(expect_bool(&status, "has-recovery-key")?, false);
+
+        // Lock to release the key
+        proxy.lock_dir(dir_str).await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_recovery_add_wrong_options() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        let password = "pass1";
+        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir_str = dir.path().to_str().unwrap();
+        let prot_id = create_test_protector(&proxy, password).await?;
+        encrypt_test_dir(&proxy, dir.path(), &prot_id, password).await?;
+
+        // Wrong password
+        assert!(proxy.recovery_add(dir_str, as_opts(&str_dict([
+            ("protector", &prot_id),
+            ("password", "wrong"),
+        ]))).await.is_err());
+
+        // Missing options
+        assert!(proxy.recovery_add(dir_str, as_opts(&str_dict([
+            ("protector", &prot_id),
+        ]))).await.is_err());
+        assert!(proxy.recovery_add(dir_str, as_opts(&str_dict([
+            ("password", password),
+        ]))).await.is_err());
+
+        // Cannot remove a recovery key that doesn't exist
+        assert!(proxy.recovery_remove(dir_str).await.is_err());
+
+        // Cannot add/remove recovery on an unencrypted directory
+        let unenc_dir = TempDir::new_in(&mntpoint, "unencrypted")?;
+        let unenc_str = unenc_dir.path().to_str().unwrap();
+        assert!(proxy.recovery_add(unenc_str, as_opts(&str_dict([
+            ("protector", &prot_id),
+            ("password", password),
+        ]))).await.is_err());
+        assert!(proxy.recovery_remove(unenc_str).await.is_err());
+
+        // Lock to release the key
+        proxy.lock_dir(dir_str).await?;
+
+        Ok(())
+    }
 }
