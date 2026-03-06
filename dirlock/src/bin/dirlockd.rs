@@ -944,4 +944,37 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_encrypt_dir_wrong_options() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        // Create a directory and a protector
+        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let prot_id = create_test_protector(&proxy, "pass").await?;
+
+        // Try to encrypt it with the wrong password
+        assert!(encrypt_test_dir(&proxy, dir.path(), &prot_id, "wrong").await.is_err());
+
+        // Try to encrypt it without setting the password
+        assert!(proxy.encrypt_dir(
+            dir.path().to_str().unwrap(),
+            as_opts(&str_dict([
+                ("protector", &prot_id),
+            ])),
+        ).await.is_err());
+
+        // Try to encrypt it without setting the protector ID
+        assert!(proxy.encrypt_dir(
+            dir.path().to_str().unwrap(),
+            as_opts(&str_dict([
+                ("password", "pass"),
+            ])),
+        ).await.is_err());
+
+        Ok(())
+    }
 }
