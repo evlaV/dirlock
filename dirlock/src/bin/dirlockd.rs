@@ -1222,4 +1222,138 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_add_remove_protector_from_policy() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        let pass1 = "pass1";
+        let pass2 = "pass2";
+
+        // Create two protectors and encrypt a directory with the first one
+        let prot1_id = create_test_protector(&proxy, pass1).await?;
+        let prot2_id = create_test_protector(&proxy, pass2).await?;
+        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let policy_id = encrypt_test_dir(&proxy, dir.path(), &prot1_id, pass1).await?;
+
+        // The policy should have one protector
+        let policies = proxy.get_all_policies().await?;
+        assert_eq!(policies[&policy_id].len(), 1);
+        assert_eq!(expect_str(&policies[&policy_id][0], "id")?, prot1_id);
+
+        // Add prot2 to the policy
+        proxy.add_protector_to_policy(as_opts(&str_dict([
+            ("policy", &policy_id),
+            ("protector", &prot2_id),
+            ("protector-password", pass2),
+            ("unlock-with", &prot1_id),
+            ("unlock-with-password", pass1),
+        ]))).await?;
+
+        // The policy should now have two protectors
+        let policies = proxy.get_all_policies().await?;
+        assert_eq!(policies[&policy_id].len(), 2);
+
+        // You cannot remove protectors that are being used in a policy
+        assert!(proxy.remove_protector(&prot1_id).await.is_err());
+        assert!(proxy.remove_protector(&prot2_id).await.is_err());
+
+        // Remove prot1 from the policy
+        proxy.remove_protector_from_policy(as_opts(&str_dict([
+            ("policy", &policy_id),
+            ("protector", &prot1_id),
+        ]))).await?;
+
+        // The policy should have only prot2
+        let policies = proxy.get_all_policies().await?;
+        assert_eq!(policies[&policy_id].len(), 1);
+        assert_eq!(expect_str(&policies[&policy_id][0], "id")?, prot2_id);
+
+        // Now it should be possible to remove prot1
+        proxy.remove_protector(&prot1_id).await?;
+
+        // Lock and unlock using prot2
+        let dir_str = dir.path().to_str().unwrap();
+        proxy.lock_dir(dir_str).await?;
+        proxy.unlock_dir(dir_str, as_opts(&str_dict([
+            ("protector", &prot2_id),
+            ("password", pass2),
+        ]))).await?;
+
+        // Lock it again to release the key
+        proxy.lock_dir(dir_str).await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_add_remove_protector_from_policy_wrong_options() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        let pass1 = "pass1";
+        let pass2 = "pass2";
+
+        // Create two protectors and encrypt a directory with the first one
+        let prot1_id = create_test_protector(&proxy, pass1).await?;
+        let prot2_id = create_test_protector(&proxy, pass2).await?;
+        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let policy_id = encrypt_test_dir(&proxy, dir.path(), &prot1_id, pass1).await?;
+
+        // Add with wrong protector password
+        assert!(proxy.add_protector_to_policy(as_opts(&str_dict([
+            ("policy", &policy_id),
+            ("protector", &prot2_id),
+            ("protector-password", "wrong"),
+            ("unlock-with", &prot1_id),
+            ("unlock-with-password", pass1),
+        ]))).await.is_err());
+
+        // Add with wrong unlock-with password
+        assert!(proxy.add_protector_to_policy(as_opts(&str_dict([
+            ("policy", &policy_id),
+            ("protector", &prot2_id),
+            ("protector-password", pass2),
+            ("unlock-with", &prot1_id),
+            ("unlock-with-password", "wrong"),
+        ]))).await.is_err());
+
+        // Add with missing options
+        assert!(proxy.add_protector_to_policy(as_opts(&str_dict([
+            ("protector", &prot2_id),
+            ("protector-password", pass2),
+            ("unlock-with", &prot1_id),
+            ("unlock-with-password", pass1),
+        ]))).await.is_err());
+        assert!(proxy.add_protector_to_policy(as_opts(&str_dict([
+            ("policy", &policy_id),
+            ("protector-password", pass2),
+            ("unlock-with", &prot1_id),
+            ("unlock-with-password", pass1),
+        ]))).await.is_err());
+
+        // Remove with missing options
+        assert!(proxy.remove_protector_from_policy(as_opts(&str_dict([
+            ("protector", &prot1_id),
+        ]))).await.is_err());
+        assert!(proxy.remove_protector_from_policy(as_opts(&str_dict([
+            ("policy", &policy_id),
+        ]))).await.is_err());
+
+        // Cannot remove the last protector from a policy
+        assert!(proxy.remove_protector_from_policy(as_opts(&str_dict([
+            ("policy", &policy_id),
+            ("protector", &prot1_id),
+        ]))).await.is_err());
+
+        // Lock to release the key
+        proxy.lock_dir(dir.path().to_str().unwrap()).await?;
+
+        Ok(())
+    }
 }
