@@ -1356,4 +1356,53 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_get_dir_status() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir_str = dir.path().to_str().unwrap();
+
+        // An unencrypted directory
+        let status = proxy.get_dir_status(dir_str).await?;
+        assert_eq!(expect_str(&status, "status")?, "unencrypted");
+        assert_eq!(status.len(), 1);
+
+        // Encrypt the directory
+        let prot_id = create_test_protector(&proxy, "pass1").await?;
+        let policy_id = encrypt_test_dir(&proxy, dir.path(), &prot_id, "pass1").await?;
+
+        // The directory should be encrypted and unlocked
+        let status = proxy.get_dir_status(dir_str).await?;
+        assert_eq!(expect_str(&status, "status")?, "unlocked");
+        assert_eq!(expect_str(&status, "policy")?, policy_id);
+        assert_eq!(expect_bool(&status, "has-recovery-key")?, false);
+        assert_eq!(status.len(), 4); // Element 4 is the 'protectors' field
+
+        // Check the protectors field
+        let prots: Vec<HashMap<String, OwnedValue>> = status.get("protectors")
+            .ok_or_else(|| anyhow!("Missing 'protectors'"))?
+            .clone().try_into()?;
+        assert_eq!(prots.len(), 1);
+        assert_eq!(expect_str(&prots[0], "id")?, prot_id);
+        assert_eq!(expect_str(&prots[0], "type")?, "password");
+        assert_eq!(expect_str(&prots[0], "name")?, "test");
+        assert_eq!(expect_bool(&prots[0], "needs-password")?, true);
+        assert_eq!(prots[0].len(), 4);
+
+        // Lock the directory
+        proxy.lock_dir(dir_str).await?;
+
+        let status = proxy.get_dir_status(dir_str).await?;
+        assert_eq!(expect_str(&status, "status")?, "locked");
+        assert_eq!(expect_str(&status, "policy")?, policy_id);
+        assert_eq!(expect_bool(&status, "has-recovery-key")?, false);
+        assert_eq!(status.len(), 4); // Element 4 is the 'protectors' field
+
+        Ok(())
+    }
 }
