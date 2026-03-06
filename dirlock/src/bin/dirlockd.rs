@@ -1019,4 +1019,44 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    async fn test_unlock_dir_wrong_options() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        // Create an empty directory and a protector
+        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir_str = dir.path().to_str().unwrap();
+        let prot_id = create_test_protector(&proxy, "pass1").await?;
+
+        // Encrypt and lock the directory
+        let _ = encrypt_test_dir(&proxy, dir.path(), &prot_id, "pass1").await?;
+        proxy.lock_dir(dir_str).await?;
+
+        // You cannot unlock a directory with the wrong password
+        assert!(proxy.unlock_dir(
+            dir_str,
+            as_opts(&str_dict([
+                ("protector", &prot_id),
+                ("password", "wrong"),
+            ]))).await.is_err());
+
+        // You cannot unlock a directory with missing options
+        assert!(proxy.unlock_dir(
+            dir_str,
+            as_opts(&str_dict([
+                ("password", "pass1"),
+            ]))).await.is_err());
+
+        assert!(proxy.unlock_dir(
+            dir_str,
+            as_opts(&str_dict([
+                ("protector", &prot_id),
+            ]))).await.is_err());
+
+        Ok(())
+    }
 }
