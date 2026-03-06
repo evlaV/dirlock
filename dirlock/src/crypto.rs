@@ -116,6 +116,18 @@ pub struct AesIv(
     pub [u8; AES_IV_LEN]
 );
 
+impl AesIv {
+    pub fn new_random() -> Self {
+        let mut iv = Self::default();
+        iv.randomize();
+        iv
+    }
+
+    pub fn randomize(&mut self) {
+        OsRng.fill_bytes(&mut self.0);
+    }
+}
+
 #[serde_as]
 #[derive(Default, Serialize, Deserialize)]
 pub struct Hmac(
@@ -129,3 +141,15 @@ pub struct Salt(
     #[serde_as(as = "Base64")]
     pub [u8; SALT_LEN]
 );
+
+impl Salt {
+    pub fn new_random() -> Self {
+        let mut salt = Self::default();
+        salt.randomize();
+        salt
+    }
+
+    pub fn randomize(&mut self) {
+        OsRng.fill_bytes(&mut self.0);
+    }
+}

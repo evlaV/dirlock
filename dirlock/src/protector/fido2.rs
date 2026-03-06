@@ -33,7 +33,6 @@ use {
         FIDO_ERR_UNSUPPORTED_OPTION,
         FIDO_ERR_UP_REQUIRED,
     },
-    rand::{RngCore, rngs::OsRng},
     std::borrow::Cow,
     std::io::IsTerminal,
 };
@@ -124,8 +123,7 @@ impl Fido2Protector {
             Err(e) => bail!("Error creating FIDO2 protector: {e}"),
         }
 
-        let mut salt = Salt::default();
-        OsRng.fill_bytes(&mut salt.0);
+        let salt = Salt::new_random();
 
         let mut prot = Fido2Protector {
             name: opts.name,
@@ -146,7 +144,7 @@ impl Fido2Protector {
         };
 
         // Use the encryption key to wrap the protector key
-        OsRng.fill_bytes(&mut prot.iv.0);
+        prot.iv.randomize();
         prot.hmac = enc_key.encrypt(&prot.iv, prot_key.secret_mut());
         prot.wrapped_key = *prot_key.secret();
 

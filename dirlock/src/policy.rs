@@ -141,8 +141,7 @@ impl WrappedPolicyKey {
 
     /// Creates a new [`WrappedPolicyKey`] that wraps a [`PolicyKey`] with a [`ProtectorKey`]
     pub fn new(mut raw_key: PolicyKey, protector_key: &ProtectorKey) -> Self {
-        let mut iv = AesIv::default();
-        OsRng.fill_bytes(&mut iv.0);
+        let iv = AesIv::new_random();
         let hmac = protector_key.key().encrypt(&iv, raw_key.secret_mut());
         WrappedPolicyKey{ wrapped_key: *raw_key.secret(), iv, hmac }
     }

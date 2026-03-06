@@ -15,7 +15,6 @@ use {
     crate::config::Config,
     crate::crypto::Aes256Key,
     crate::kdf::Pbkdf2,
-    rand::{RngCore, rngs::OsRng},
     std::cell::OnceCell,
     std::str::FromStr,
     tss_esapi::{
@@ -151,10 +150,8 @@ impl Tpm2Protector {
     pub fn wrap_key(&mut self, mut prot_key: ProtectorKey, pass: &[u8]) -> Result<()> {
         let mut ctx = self.create_context()?;
         let primary_key = create_primary_key(&mut ctx)?;
-        let mut salt = Salt::default();
-        OsRng.fill_bytes(&mut salt.0);
-        let mut iv = AesIv::default();
-        OsRng.fill_bytes(&mut iv.0);
+        let salt = Salt::new_random();
+        let iv = AesIv::new_random();
         let (auth, enc_key) = derive_auth_value_and_key(pass, &salt, &self.kdf);
         let hmac = enc_key.encrypt(&iv, prot_key.secret_mut());
         let (public, private) = {

@@ -4,7 +4,6 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
-use rand::{RngCore, rngs::OsRng};
 use serde::{Serialize, Deserialize};
 use serde_with::{serde_as, base64::Base64};
 use crate::kdf::{Kdf, Pbkdf2};
@@ -54,8 +53,8 @@ impl PasswordProtector {
 
     /// Wraps `prot_key` with `pass`. This generates new random values for IV and Salt.
     pub fn wrap_key(&mut self, mut prot_key: ProtectorKey, pass: &[u8]) {
-        OsRng.fill_bytes(&mut self.iv.0);
-        OsRng.fill_bytes(&mut self.salt.0);
+        self.iv.randomize();
+        self.salt.randomize();
         let enc_key = Aes256Key::new_from_password(pass, &self.salt, &self.kdf);
         self.hmac = enc_key.encrypt(&self.iv, prot_key.secret_mut());
         self.wrapped_key = *prot_key.secret();
