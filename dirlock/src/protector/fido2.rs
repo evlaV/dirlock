@@ -1,5 +1,5 @@
 /*
- * Copyright © 2025 Valve Corporation
+ * Copyright © 2025-2026 Valve Corporation
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
@@ -44,7 +44,9 @@ use crate::{
         Salt,
     },
     protector::{
+        ProtectorBackend,
         ProtectorKey,
+        ProtectorType,
         PROTECTOR_KEY_LEN,
         opts::Fido2Opts,
     },
@@ -53,16 +55,19 @@ use crate::{
 #[cfg(feature = "fido2")]
 const RELYING_PARTY_ID: &str = "cloud.steamos.dirlock";
 
+#[cfg(not(feature = "fido2"))]
+const FIDO2_DISABLED: &str = "FIDO2 support is disabled";
+
 /// A [`Protector`] that wraps a [`ProtectorKey`] using a FIDO2 token
 #[serde_as]
 #[derive(Serialize, Deserialize, Default)]
 pub struct Fido2Protector {
-    pub name: String,
+    name: String,
     #[serde_as(as = "Base64")]
     credential: Vec<u8>,
     salt: Salt,
     rp: String,
-    pub(super) pin: bool,
+    pin: bool,
     // We don't have a 'up' setting because hmac-secret always requires it
     #[serde_as(as = "Base64")]
     wrapped_key: [u8; PROTECTOR_KEY_LEN],
@@ -74,25 +79,34 @@ pub struct Fido2Protector {
 #[cfg(not(feature = "fido2"))]
 impl Fido2Protector {
     pub fn new(_opts: Fido2Opts, _prot_key: ProtectorKey, _pass: &[u8]) -> Result<Self> {
-        bail!("FIDO2 support is disabled");
+        bail!(FIDO2_DISABLED);
+    }
+}
+
+#[cfg(not(feature = "fido2"))]
+impl ProtectorBackend for Fido2Protector {
+    fn get_name(&self) -> &str { &self.name }
+    fn get_type(&self) -> ProtectorType { ProtectorType::Fido2 }
+    fn can_change_password(&self) -> bool { false }
+    fn needs_password(&self) -> bool { self.pin }
+    fn is_available(&self) -> bool { false }
+
+    fn wrap_key(&mut self, _key: ProtectorKey, _pass: &[u8]) -> Result<()> {
+        bail!(FIDO2_DISABLED);
     }
 
-    pub fn unwrap_key(&self, _pass: &[u8]) -> Result<Option<ProtectorKey>> {
-        bail!("FIDO2 support is disabled");
+    fn unwrap_key(&self, _pass: &[u8]) -> Result<Option<ProtectorKey>> {
+        bail!(FIDO2_DISABLED);
     }
 
-    pub fn is_available(&self) -> bool {
-        false
-    }
-
-    pub fn get_prompt(&self) -> Result<String, String> {
-        Err(String::from("FIDO2 support is disabled"))
+    fn get_prompt(&self) -> Result<String, String> {
+        Err(String::from(FIDO2_DISABLED))
     }
 }
 
 #[cfg(not(feature = "fido2"))]
 pub fn check_device_available() -> Result<()> {
-    bail!("FIDO2 support is disabled");
+    bail!(FIDO2_DISABLED);
 }
 
 #[cfg(feature = "fido2")]
@@ -151,51 +165,6 @@ impl Fido2Protector {
         Ok(prot)
     }
 
-    /// Unwraps a [`ProtectorKey`] with a FIDO2 token.
-    pub fn unwrap_key(&self, pass: &[u8]) -> Result<Option<ProtectorKey>> {
-        let dev = get_fido2_device(Some(&self.credential))?;
-        // TODO: the caller always has to provide a PIN even if we don't use it
-        let pin = if self.pin {
-            let Cow::Borrowed(s) = String::from_utf8_lossy(pass) else {
-                bail!("The FIDO2 PIN is not a valid string");
-            };
-            Some(s)
-        } else {
-            None
-        };
-        match self.hmac_secret(&dev, pin)? {
-            Some(dec_key) => {
-                let mut prot_key = ProtectorKey::from(&self.wrapped_key);
-                if dec_key.decrypt(&self.iv, &self.hmac, prot_key.secret_mut()) {
-                    Ok(Some(prot_key))
-                } else {
-                    // This means that the key that we got from the
-                    // token cannot unwrap the protector key.
-                    // It should never happen.
-                    bail!("Unexpected failure unlocking protector with FIDO2 token");
-                }
-            },
-            None => Ok(None),
-        }
-    }
-
-    /// Returns whether the protector is available to be used
-    pub fn is_available(&self) -> bool {
-        get_fido2_device(Some(&self.credential)).is_ok()
-    }
-
-    /// Returns the prompt, or an error message if the FIDO2 token is not available or usable
-    pub fn get_prompt(&self) -> Result<String, String> {
-        match get_fido2_device(Some(&self.credential)) {
-            Ok(_) => if self.pin {
-                Ok(String::from("Enter FIDO2 PIN and confirm presence on the token"))
-            } else {
-                Ok(String::from("Confirm presence on the FIDO2 token"))
-            },
-            Err(e) => Err(e.to_string()),
-        }
-    }
-
     /// Gets an [`Aes256Key`] from the token using the hmac-secret extension
     fn hmac_secret(&self, dev: &Device, pin: Option<&str>) -> Result<Option<Aes256Key>> {
         let mut req = AssertRequest::new();
@@ -222,6 +191,62 @@ impl Fido2Protector {
             Err(Error::Fido(e)) if e.code == FIDO_ERR_PIN_INVALID => Ok(None),
             Err(Error::Fido(e)) => Err(parse_fido2_error(e)),
             Err(x) => bail!("{x}"),
+        }
+    }
+}
+
+#[cfg(feature = "fido2")]
+impl ProtectorBackend for Fido2Protector {
+    fn get_name(&self) -> &str { &self.name }
+    fn get_type(&self) -> ProtectorType { ProtectorType::Fido2 }
+    fn can_change_password(&self) -> bool { false }
+    fn needs_password(&self) -> bool { self.pin }
+
+    fn wrap_key(&mut self, _key: ProtectorKey, _pass: &[u8]) -> Result<()> {
+        bail!("Cannot change the PIN of the FIDO2 token")
+    }
+
+    /// Unwraps a [`ProtectorKey`] with a FIDO2 token.
+    fn unwrap_key(&self, pass: &[u8]) -> Result<Option<ProtectorKey>> {
+        let dev = get_fido2_device(Some(&self.credential))?;
+        // TODO: the caller always has to provide a PIN even if we don't use it
+        let pin = if self.pin {
+            let Cow::Borrowed(s) = String::from_utf8_lossy(pass) else {
+                bail!("The FIDO2 PIN is not a valid string");
+            };
+            Some(s)
+        } else {
+            None
+        };
+        match self.hmac_secret(&dev, pin)? {
+            Some(dec_key) => {
+                let mut prot_key = ProtectorKey::from(&self.wrapped_key);
+                if dec_key.decrypt(&self.iv, &self.hmac, prot_key.secret_mut()) {
+                    Ok(Some(prot_key))
+                } else {
+                    // This means that the key that we got from the
+                    // token cannot unwrap the protector key.
+                    // It should never happen.
+                    bail!("Unexpected failure unlocking protector with FIDO2 token");
+                }
+            },
+            None => Ok(None),
+        }
+    }
+
+    fn is_available(&self) -> bool {
+        get_fido2_device(Some(&self.credential)).is_ok()
+    }
+
+    /// Returns the prompt, or an error message if the FIDO2 token is not available or usable
+    fn get_prompt(&self) -> Result<String, String> {
+        match get_fido2_device(Some(&self.credential)) {
+            Ok(_) => if self.pin {
+                Ok(String::from("Enter FIDO2 PIN and confirm presence on the token"))
+            } else {
+                Ok(String::from("Confirm presence on the FIDO2 token"))
+            },
+            Err(e) => Err(e.to_string()),
         }
     }
 }

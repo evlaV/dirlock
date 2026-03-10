@@ -236,7 +236,7 @@ impl Protector {
         match self.data {
             ProtectorData::Password(ref mut p) => p.wrap_key(key, pass)?,
             ProtectorData::Tpm2(ref mut p) => p.wrap_key(key, pass)?,
-            ProtectorData::Fido2(_) => bail!("Cannot change the PIN of the FIDO2 token"),
+            ProtectorData::Fido2(ref mut p) => p.wrap_key(key, pass)?,
         }
         Ok(())
     }
@@ -246,7 +246,7 @@ impl Protector {
         match &self.data {
             ProtectorData::Password(p) => p.get_name(),
             ProtectorData::Tpm2(p) => p.get_name(),
-            ProtectorData::Fido2(p) => &p.name,
+            ProtectorData::Fido2(p) => p.get_name(),
         }
     }
 
@@ -255,7 +255,7 @@ impl Protector {
         match &self.data {
             ProtectorData::Password(p) => p.get_type(),
             ProtectorData::Tpm2(p) => p.get_type(),
-            ProtectorData::Fido2(_) => ProtectorType::Fido2,
+            ProtectorData::Fido2(p) => p.get_type(),
         }
     }
 
@@ -276,7 +276,7 @@ impl Protector {
         match &self.data {
             ProtectorData::Password(p) => p.can_change_password(),
             ProtectorData::Tpm2(p) => p.can_change_password(),
-            ProtectorData::Fido2(_) => false,
+            ProtectorData::Fido2(p) => p.can_change_password(),
         }
     }
 
@@ -285,7 +285,7 @@ impl Protector {
         match &self.data {
             ProtectorData::Password(p) => p.needs_password(),
             ProtectorData::Tpm2(p) => p.needs_password(),
-            ProtectorData::Fido2(p) => p.pin,
+            ProtectorData::Fido2(p) => p.needs_password(),
         }
     }
 
