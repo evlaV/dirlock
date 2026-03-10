@@ -307,7 +307,7 @@ mod tests {
 
         // Change the protector data and save it to disk
         match prot2.data {
-            ProtectorData::Password(ref mut p) => p.name = String::from("new name"),
+            ProtectorData::Password(ref mut p) => p.set_name(String::from("new name")),
             _ => panic!(),
         }
         ks.save_protector(&prot2)?;

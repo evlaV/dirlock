@@ -201,7 +201,7 @@ impl Protector {
         let uid = opts.uid();
         let gid = opts.gid();
         let data = match opts {
-            ProtectorOpts::Password(pw_opts) => ProtectorData::Password(PasswordProtector::new(pw_opts,raw_key, pass)),
+            ProtectorOpts::Password(pw_opts) => ProtectorData::Password(PasswordProtector::new(pw_opts,raw_key, pass)?),
             ProtectorOpts::Tpm2(tpm2_opts) => ProtectorData::Tpm2(Tpm2Protector::new(tpm2_opts, raw_key, pass)?),
             ProtectorOpts::Fido2(fido2_opts) => ProtectorData::Fido2(Fido2Protector::new(fido2_opts, raw_key, pass)?),
         };
@@ -217,7 +217,7 @@ impl Protector {
     /// Unwraps this protector's [`ProtectorKey`] using a password
     pub fn unwrap_key(&self, pass: &[u8]) -> Result<Option<ProtectorKey>> {
         match &self.data {
-            ProtectorData::Password(p) => Ok(p.unwrap_key(pass)),
+            ProtectorData::Password(p) => p.unwrap_key(pass),
             ProtectorData::Tpm2(p) => p.unwrap_key(pass),
             ProtectorData::Fido2(p) => p.unwrap_key(pass),
         }
@@ -234,7 +234,7 @@ impl Protector {
             bail!("This key doesn't belong to this protector");
         }
         match self.data {
-            ProtectorData::Password(ref mut p) => p.wrap_key(key, pass),
+            ProtectorData::Password(ref mut p) => p.wrap_key(key, pass)?,
             ProtectorData::Tpm2(ref mut p) => p.wrap_key(key, pass)?,
             ProtectorData::Fido2(_) => bail!("Cannot change the PIN of the FIDO2 token"),
         }
@@ -244,7 +244,7 @@ impl Protector {
     /// Gets the name of this protector
     pub fn get_name(&self) -> &str {
         match &self.data {
-            ProtectorData::Password(p) => &p.name,
+            ProtectorData::Password(p) => p.get_name(),
             ProtectorData::Tpm2(p) => &p.name,
             ProtectorData::Fido2(p) => &p.name,
         }
@@ -252,8 +252,8 @@ impl Protector {
 
     /// Gets the type of this protector
     pub fn get_type(&self) -> ProtectorType {
-        match self.data {
-            ProtectorData::Password(_) => ProtectorType::Password,
+        match &self.data {
+            ProtectorData::Password(p) => p.get_type(),
             ProtectorData::Tpm2(_) => ProtectorType::Tpm2,
             ProtectorData::Fido2(_) => ProtectorType::Fido2,
         }
@@ -265,7 +265,7 @@ impl Protector {
     /// Returns the string message to show to the user if the protector cannot be used
     pub fn get_prompt(&self) -> Result<String, String> {
         match &self.data {
-            ProtectorData::Password(_) => Ok(String::from("Enter password")),
+            ProtectorData::Password(p) => p.get_prompt(),
             ProtectorData::Tpm2(p) => p.get_prompt(),
             ProtectorData::Fido2(p) => p.get_prompt(),
         }
@@ -274,7 +274,7 @@ impl Protector {
     /// Returns whether the protector can change its PIN / password
     pub fn can_change_password(&self) -> bool {
         match &self.data {
-            ProtectorData::Password(_) => true,
+            ProtectorData::Password(p) => p.can_change_password(),
             ProtectorData::Tpm2(_) => true,
             ProtectorData::Fido2(_) => false,
         }
@@ -283,7 +283,7 @@ impl Protector {
     /// Returns whether the protector needs a PIN / password to unlock its key
     pub fn needs_password(&self) -> bool {
         match &self.data {
-            ProtectorData::Password(_) => true,
+            ProtectorData::Password(p) => p.needs_password(),
             ProtectorData::Tpm2(_) => true,
             ProtectorData::Fido2(p) => p.pin,
         }
@@ -292,7 +292,7 @@ impl Protector {
     /// Returns whether the protector is available to be used
     pub fn is_available(&self) -> bool {
         match &self.data {
-            ProtectorData::Password(_) => true,
+            ProtectorData::Password(p) => p.is_available(),
             ProtectorData::Tpm2(_) => cfg!(feature = "tpm2"),
             ProtectorData::Fido2(p) => p.is_available(),
         }

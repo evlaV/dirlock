@@ -1,9 +1,10 @@
 /*
- * Copyright © 2025 Valve Corporation
+ * Copyright © 2025-2026 Valve Corporation
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
+use anyhow::Result;
 use serde::{Serialize, Deserialize};
 use serde_with::{serde_as, base64::Base64};
 use crate::kdf::{Kdf, Pbkdf2};
@@ -16,7 +17,9 @@ use crate::{
         Salt,
     },
     protector::{
+        ProtectorBackend,
         ProtectorKey,
+        ProtectorType,
         PROTECTOR_KEY_LEN,
         opts::PasswordOpts,
     },
@@ -29,7 +32,7 @@ use crate::protector::Protector;
 #[serde_as]
 #[derive(Serialize, Deserialize, Default)]
 pub struct PasswordProtector {
-    pub name: String,
+    name: String,
     #[serde_as(as = "Base64")]
     wrapped_key: [u8; PROTECTOR_KEY_LEN],
     iv: AesIv,
@@ -40,34 +43,53 @@ pub struct PasswordProtector {
 
 impl PasswordProtector {
     /// Creates a new [`PasswordProtector`] that wraps a [`ProtectorKey`] with a password.
-    pub fn new(opts: PasswordOpts, prot_key: ProtectorKey, pass: &[u8]) -> Self {
+    pub fn new(opts: PasswordOpts, prot_key: ProtectorKey, pass: &[u8]) -> Result<Self> {
         let kdf = if let Some(kdf_iter) = opts.kdf_iter {
             Kdf::Pbkdf2(Pbkdf2::new(kdf_iter.into()))
         } else {
             Kdf::default()
         };
         let mut prot = PasswordProtector { kdf, name: opts.name, ..Default::default() };
-        prot.wrap_key(prot_key, pass);
-        prot
+        prot.wrap_key(prot_key, pass)?;
+        Ok(prot)
+    }
+
+    #[cfg(test)]
+    /// Change the name of the protector. This is only used in tests.
+    pub(crate) fn set_name(&mut self, name: String) {
+        self.name = name;
+    }
+}
+
+impl ProtectorBackend for PasswordProtector {
+    fn get_name(&self) -> &str { &self.name }
+    fn get_type(&self) -> ProtectorType { ProtectorType::Password }
+    fn can_change_password(&self) -> bool { true }
+    fn needs_password(&self) -> bool { true }
+    fn is_available(&self) -> bool { true }
+
+    fn get_prompt(&self) -> Result<String, String> {
+        Ok(String::from("Enter password"))
     }
 
     /// Wraps `prot_key` with `pass`. This generates new random values for IV and Salt.
-    pub fn wrap_key(&mut self, mut prot_key: ProtectorKey, pass: &[u8]) {
+    fn wrap_key(&mut self, mut prot_key: ProtectorKey, pass: &[u8]) -> Result<()> {
         self.iv.randomize();
         self.salt.randomize();
         let enc_key = Aes256Key::new_from_password(pass, &self.salt, &self.kdf);
         self.hmac = enc_key.encrypt(&self.iv, prot_key.secret_mut());
         self.wrapped_key = *prot_key.secret();
+        Ok(())
     }
 
     /// Unwraps a [`ProtectorKey`] with a password.
-    pub fn unwrap_key(&self, pass: &[u8]) -> Option<ProtectorKey> {
+    fn unwrap_key(&self, pass: &[u8]) -> Result<Option<ProtectorKey>> {
         let mut prot_key = ProtectorKey::from(&self.wrapped_key);
         let key = Aes256Key::new_from_password(pass, &self.salt, &self.kdf);
         if key.decrypt(&self.iv, &self.hmac, prot_key.secret_mut()) {
-            Some(prot_key)
+            Ok(Some(prot_key))
         } else {
-            None
+            Ok(None)
         }
     }
 }
@@ -75,7 +97,7 @@ impl PasswordProtector {
 #[cfg(test)]
 mod tests {
     use anyhow::{bail, Result};
-    use crate::protector::ProtectorData;
+    use crate::protector::{ProtectorBackend, ProtectorData};
 
     #[test]
     fn test_json_password_protector() -> Result<()> {
@@ -99,7 +121,7 @@ mod tests {
             _ => bail!("Error creating protector from JSON data"),
         };
 
-        assert!(prot.unwrap_key(b"1234").is_some(), "Failed to unwrap key with password protector");
+        assert!(prot.unwrap_key(b"1234")?.is_some(), "Failed to unwrap key with password protector");
         Ok(())
     }
 }
