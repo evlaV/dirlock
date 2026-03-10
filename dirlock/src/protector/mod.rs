@@ -1,5 +1,5 @@
 /*
- * Copyright © 2025 Valve Corporation
+ * Copyright © 2025-2026 Valve Corporation
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
@@ -214,88 +214,45 @@ impl Protector {
         Protector { id, data, uid, gid, is_new: Cell::new(false) }
     }
 
-    /// Unwraps this protector's [`ProtectorKey`] using a password
-    pub fn unwrap_key(&self, pass: &[u8]) -> Result<Option<ProtectorKey>> {
-        match &self.data {
-            ProtectorData::Password(p) => p.unwrap_key(pass),
-            ProtectorData::Tpm2(p) => p.unwrap_key(pass),
-            ProtectorData::Fido2(p) => p.unwrap_key(pass),
-        }
-    }
-
     /// Unwraps a [`PolicyKey`] using this protector's key
     pub fn unwrap_policy_key(&self, policy: &WrappedPolicyKey, pass: &[u8]) -> Result<Option<PolicyKey>> {
         Ok(self.unwrap_key(pass)?.and_then(|k| policy.unwrap_key(&k)))
     }
 
-    /// Wraps this protector's [`ProtectorKey`] again using a new password
+    /// Get a reference to the underlying backend
+    fn backend(&self) -> &dyn ProtectorBackend {
+        match &self.data {
+            ProtectorData::Password(p) => p,
+            ProtectorData::Tpm2(p) => p,
+            ProtectorData::Fido2(p) => p,
+        }
+    }
+
+    /// Get a mutable reference to the underlying backend
+    fn backend_mut(&mut self) -> &mut dyn ProtectorBackend {
+        match &mut self.data {
+            ProtectorData::Password(p) => p,
+            ProtectorData::Tpm2(p) => p,
+            ProtectorData::Fido2(p) => p,
+        }
+    }
+
+    // Methods from the ProtectorBackend trait
+
+    pub fn get_name(&self) -> &str { self.backend().get_name() }
+    pub fn get_type(&self) -> ProtectorType { self.backend().get_type() }
+    pub fn unwrap_key(&self, pass: &[u8]) -> Result<Option<ProtectorKey>> { self.backend().unwrap_key(pass) }
+    pub fn get_prompt(&self) -> Result<String, String> { self.backend().get_prompt() }
+    pub fn can_change_password(&self) -> bool { self.backend().can_change_password() }
+    pub fn needs_password(&self) -> bool { self.backend().needs_password() }
+    pub fn is_available(&self) -> bool { self.backend().is_available() }
+
+    /// This checks that the key is valid before calling the implementation
     pub fn wrap_key(&mut self, key: ProtectorKey, pass: &[u8]) -> Result<()> {
         if key.get_id() != self.id {
             bail!("This key doesn't belong to this protector");
         }
-        match self.data {
-            ProtectorData::Password(ref mut p) => p.wrap_key(key, pass)?,
-            ProtectorData::Tpm2(ref mut p) => p.wrap_key(key, pass)?,
-            ProtectorData::Fido2(ref mut p) => p.wrap_key(key, pass)?,
-        }
-        Ok(())
-    }
-
-    /// Gets the name of this protector
-    pub fn get_name(&self) -> &str {
-        match &self.data {
-            ProtectorData::Password(p) => p.get_name(),
-            ProtectorData::Tpm2(p) => p.get_name(),
-            ProtectorData::Fido2(p) => p.get_name(),
-        }
-    }
-
-    /// Gets the type of this protector
-    pub fn get_type(&self) -> ProtectorType {
-        match &self.data {
-            ProtectorData::Password(p) => p.get_type(),
-            ProtectorData::Tpm2(p) => p.get_type(),
-            ProtectorData::Fido2(p) => p.get_type(),
-        }
-    }
-
-    /// Returns the text used to prompt the user for a password or PIN
-    ///
-    /// # Errors
-    /// Returns the string message to show to the user if the protector cannot be used
-    pub fn get_prompt(&self) -> Result<String, String> {
-        match &self.data {
-            ProtectorData::Password(p) => p.get_prompt(),
-            ProtectorData::Tpm2(p) => p.get_prompt(),
-            ProtectorData::Fido2(p) => p.get_prompt(),
-        }
-    }
-
-    /// Returns whether the protector can change its PIN / password
-    pub fn can_change_password(&self) -> bool {
-        match &self.data {
-            ProtectorData::Password(p) => p.can_change_password(),
-            ProtectorData::Tpm2(p) => p.can_change_password(),
-            ProtectorData::Fido2(p) => p.can_change_password(),
-        }
-    }
-
-    /// Returns whether the protector needs a PIN / password to unlock its key
-    pub fn needs_password(&self) -> bool {
-        match &self.data {
-            ProtectorData::Password(p) => p.needs_password(),
-            ProtectorData::Tpm2(p) => p.needs_password(),
-            ProtectorData::Fido2(p) => p.needs_password(),
-        }
-    }
-
-    /// Returns whether the protector is available to be used
-    pub fn is_available(&self) -> bool {
-        match &self.data {
-            ProtectorData::Password(p) => p.is_available(),
-            ProtectorData::Tpm2(p) => p.is_available(),
-            ProtectorData::Fido2(p) => p.is_available(),
-        }
+        self.backend_mut().wrap_key(key, pass)
     }
 }
 
