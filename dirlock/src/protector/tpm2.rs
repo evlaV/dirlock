@@ -1,5 +1,5 @@
 /*
- * Copyright © 2025 Valve Corporation
+ * Copyright © 2025-2026 Valve Corporation
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
@@ -66,7 +66,9 @@ use crate::{
         Hmac,
     },
     protector::{
+        ProtectorBackend,
         ProtectorKey,
+        ProtectorType,
         Salt,
         opts::Tpm2Opts,
     },
@@ -94,7 +96,7 @@ use crate::protector::Protector;
 #[serde_as]
 #[derive(Serialize, Deserialize, Default)]
 pub struct Tpm2Protector {
-    pub name: String,
+    name: String,
     #[serde_as(as = "Base64")]
     public: Vec<u8>,
     #[serde_as(as = "Base64")]
@@ -114,16 +116,25 @@ impl Tpm2Protector {
     pub fn new(_opts: Tpm2Opts, _raw_key: ProtectorKey, _pass: &[u8]) -> Result<Self> {
         bail!("TPM support is disabled");
     }
+}
 
-    pub fn wrap_key(&mut self, _prot_key: ProtectorKey, _pass: &[u8]) -> Result<()> {
+#[cfg(not(feature = "tpm2"))]
+impl ProtectorBackend for Tpm2Protector {
+    fn get_name(&self) -> &str { &self.name }
+    fn get_type(&self) -> ProtectorType { ProtectorType::Tpm2 }
+    fn can_change_password(&self) -> bool { true }
+    fn needs_password(&self) -> bool { true }
+    fn is_available(&self) -> bool { false }
+
+    fn wrap_key(&mut self, _key: ProtectorKey, _pass: &[u8]) -> Result<()> {
         bail!("TPM support is disabled");
     }
 
-    pub fn unwrap_key(&self, _pass: &[u8]) -> Result<Option<ProtectorKey>> {
+    fn unwrap_key(&self, _pass: &[u8]) -> Result<Option<ProtectorKey>> {
         bail!("TPM support is disabled");
     }
 
-    pub fn get_prompt(&self) -> Result<String, String> {
+    fn get_prompt(&self) -> Result<String, String> {
         Err(String::from("TPM support is disabled"))
     }
 }
@@ -146,8 +157,36 @@ impl Tpm2Protector {
         Ok(prot)
     }
 
+    /// Gets (and initializes if necessary) the TCTI conf string
+    fn get_tcti_conf(&self) -> &str {
+        match self.tcti.get() {
+            Some(s) => s,
+            None => {
+                let tcti = Config::tpm2_tcti();
+                self.tcti.set(tcti.to_string()).unwrap();
+                tcti
+            }
+        }
+    }
+
+    /// Creates a new Context
+    fn create_context(&self) -> Result<Context> {
+        let tcti = self.get_tcti_conf();
+        Context::new(TctiNameConf::from_str(tcti)?)
+            .map_err(|e| anyhow!("Unable to access the TPM at {tcti}: {e}"))
+    }
+}
+
+#[cfg(feature = "tpm2")]
+impl ProtectorBackend for Tpm2Protector {
+    fn get_name(&self) -> &str { &self.name }
+    fn get_type(&self) -> ProtectorType { ProtectorType::Tpm2 }
+    fn can_change_password(&self) -> bool { true }
+    fn needs_password(&self) -> bool { true }
+    fn is_available(&self) -> bool { true }
+
     /// Wraps `prot_key` with `pass`. This generates a new random Salt.
-    pub fn wrap_key(&mut self, mut prot_key: ProtectorKey, pass: &[u8]) -> Result<()> {
+    fn wrap_key(&mut self, mut prot_key: ProtectorKey, pass: &[u8]) -> Result<()> {
         let mut ctx = self.create_context()?;
         let primary_key = create_primary_key(&mut ctx)?;
         let salt = Salt::new_random();
@@ -169,7 +208,7 @@ impl Tpm2Protector {
     }
 
     /// Unwraps a [`ProtectorKey`] with a password.
-    pub fn unwrap_key(&self, pass: &[u8]) -> Result<Option<ProtectorKey>> {
+    fn unwrap_key(&self, pass: &[u8]) -> Result<Option<ProtectorKey>> {
         let mut ctx = self.create_context()?;
         let primary_key = create_primary_key(&mut ctx)?;
         let public = Public::try_from(PublicBuffer::unmarshall(&self.public)?)?;
@@ -204,7 +243,7 @@ impl Tpm2Protector {
     }
 
     /// Returns the prompt, or an error message if the TPM is not usable
-    pub fn get_prompt(&self) -> Result<String, String> {
+    fn get_prompt(&self) -> Result<String, String> {
         let s = get_status(Some(self.get_tcti_conf()))
             .map_err(|_| String::from("Error connecting to the TPM"))?;
         let retries = s.max_auth_fail - s.lockout_counter;
@@ -216,25 +255,6 @@ impl Tpm2Protector {
         } else {
             Ok(String::from("Enter TPM2 PIN"))
         }
-    }
-
-    /// Gets (and initializes if necessary) the TCTI conf string
-    fn get_tcti_conf(&self) -> &str {
-        match self.tcti.get() {
-            Some(s) => s,
-            None => {
-                let tcti = Config::tpm2_tcti();
-                self.tcti.set(tcti.to_string()).unwrap();
-                tcti
-            }
-        }
-    }
-
-    /// Creates a new Context
-    fn create_context(&self) -> Result<Context> {
-        let tcti = self.get_tcti_conf();
-        Context::new(TctiNameConf::from_str(tcti)?)
-            .map_err(|e| anyhow!("Unable to access the TPM at {tcti}: {e}"))
     }
 }
 

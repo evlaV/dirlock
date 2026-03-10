@@ -245,7 +245,7 @@ impl Protector {
     pub fn get_name(&self) -> &str {
         match &self.data {
             ProtectorData::Password(p) => p.get_name(),
-            ProtectorData::Tpm2(p) => &p.name,
+            ProtectorData::Tpm2(p) => p.get_name(),
             ProtectorData::Fido2(p) => &p.name,
         }
     }
@@ -254,7 +254,7 @@ impl Protector {
     pub fn get_type(&self) -> ProtectorType {
         match &self.data {
             ProtectorData::Password(p) => p.get_type(),
-            ProtectorData::Tpm2(_) => ProtectorType::Tpm2,
+            ProtectorData::Tpm2(p) => p.get_type(),
             ProtectorData::Fido2(_) => ProtectorType::Fido2,
         }
     }
@@ -275,7 +275,7 @@ impl Protector {
     pub fn can_change_password(&self) -> bool {
         match &self.data {
             ProtectorData::Password(p) => p.can_change_password(),
-            ProtectorData::Tpm2(_) => true,
+            ProtectorData::Tpm2(p) => p.can_change_password(),
             ProtectorData::Fido2(_) => false,
         }
     }
@@ -284,7 +284,7 @@ impl Protector {
     pub fn needs_password(&self) -> bool {
         match &self.data {
             ProtectorData::Password(p) => p.needs_password(),
-            ProtectorData::Tpm2(_) => true,
+            ProtectorData::Tpm2(p) => p.needs_password(),
             ProtectorData::Fido2(p) => p.pin,
         }
     }
@@ -293,7 +293,7 @@ impl Protector {
     pub fn is_available(&self) -> bool {
         match &self.data {
             ProtectorData::Password(p) => p.is_available(),
-            ProtectorData::Tpm2(_) => cfg!(feature = "tpm2"),
+            ProtectorData::Tpm2(p) => p.is_available(),
             ProtectorData::Fido2(p) => p.is_available(),
         }
     }
