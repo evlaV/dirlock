@@ -30,6 +30,29 @@ pub mod password;
 pub mod tpm2;
 pub mod opts;
 
+/// All protector types must implement this trait
+trait ProtectorBackend {
+    /// Gets the name of this protector
+    fn get_name(&self) -> &str;
+    /// Gets the type of this protector
+    fn get_type(&self) -> ProtectorType;
+    /// Unwraps this protector's [`ProtectorKey`] using a password
+    fn unwrap_key(&self, pass: &[u8]) -> Result<Option<ProtectorKey>>;
+    /// Wraps this protector's [`ProtectorKey`] again using a new password
+    fn wrap_key(&mut self, key: ProtectorKey, pass: &[u8]) -> Result<()>;
+    /// Returns the text used to prompt the user for a password or PIN
+    ///
+    /// # Errors
+    /// Returns the string message to show to the user if the protector cannot be used
+    fn get_prompt(&self) -> Result<String, String>;
+    /// Returns whether the protector can change its PIN / password
+    fn can_change_password(&self) -> bool;
+    /// Returns whether the protector needs a PIN / password to unlock its key
+    fn needs_password(&self) -> bool;
+    /// Returns whether the protector is available to be used
+    fn is_available(&self) -> bool;
+}
+
 const PROTECTOR_KEY_LEN: usize = 32;
 const PROTECTOR_ID_LEN: usize = 8;
 
