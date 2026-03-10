@@ -1102,7 +1102,7 @@ fn cmd_import_master_key(ks: &Keystore) -> Result<()> {
 }
 
 #[cfg(not(feature = "tpm2"))]
-fn cmd_tpm2_test() -> Result<()> {
+fn cmd_tpm2_test(_ks: &Keystore) -> Result<()> {
     bail!("TPM support is disabled");
 }
 
