@@ -1541,6 +1541,62 @@ mod tests {
     }
 
     #[test]
+    fn test_unlock_recovery() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let ks_dir = TempDir::new("keystore")?;
+        let ks = Keystore::from_path(ks_dir.path());
+
+        let password = "1234";
+
+        // Encrypt the directory and lock it
+        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let lock_args = LockArgs { dir: dir.path().into(), all_users: false };
+        push_test_password(password);
+        cmd_encrypt(&test_encrypt_args(dir.path()), &ks)?;
+        cmd_lock(&lock_args, &ks)?;
+
+        // Add a recovery key using the library API so we can capture its value
+        let mut encrypted_dir = EncryptedDir::open(dir.path(), &ks, LockState::Locked)?;
+        let protkey = encrypted_dir.protectors[0].protector
+            .unwrap_key(password.as_bytes())?.unwrap();
+        let recovery_key = encrypted_dir.add_recovery_key(&protkey)?;
+
+        // Unlock using --recovery
+        push_test_password(&recovery_key.to_string());
+        cmd_unlock(&UnlockArgs {
+            dir: dir.path().into(),
+            protector: None,
+            recovery: true
+        }, &ks)?;
+        EncryptedDir::open(dir.path(), &ks, LockState::Unlocked)?;
+        cmd_lock(&lock_args, &ks)?;
+
+        // The recovery key is always accepted,
+        // also when dirlock expects the password of the protector
+        push_test_password(&recovery_key.to_string());
+        cmd_unlock(&UnlockArgs {
+            dir: dir.path().into(),
+            protector: None,
+            recovery: false
+        }, &ks)?;
+        EncryptedDir::open(dir.path(), &ks, LockState::Unlocked)?;
+        cmd_lock(&lock_args, &ks)?;
+
+        // But if we use --recovery explicitly
+        // then the password won't unlock the directory
+        push_test_password(&password);
+        cmd_unlock(&UnlockArgs {
+            dir: dir.path().into(),
+            protector: None,
+            recovery: true
+        }, &ks).expect_err("unlock --recovery succeeded unexpectedly");
+        EncryptedDir::open(dir.path(), &ks, LockState::Locked)?;
+
+        Ok(())
+    }
+
+    #[test]
     fn test_admin_protector() -> Result<()> {
         let ks_dir = TempDir::new("keystore")?;
         let ks = Keystore::from_path(ks_dir.path());
