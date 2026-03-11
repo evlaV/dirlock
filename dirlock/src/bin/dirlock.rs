@@ -1303,6 +1303,69 @@ mod tests {
     }
 
     #[test]
+    fn test_encrypt_existing_protector() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        // Create an empty directory
+        let ks_dir = TempDir::new("keystore")?;
+        let ks = Keystore::from_path(ks_dir.path());
+
+        // Create two protectors
+        let pass1 = "1234";
+        let pass2 = "5678";
+        let prot1_id = create_test_protector(&ks, "prot1", pass1)?;
+        let prot2_id = create_test_protector(&ks, "prot2", pass2)?;
+
+        // Encrypt a directory using the first protector
+        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        push_test_password(pass1);
+        cmd_encrypt(&EncryptArgs {
+            protector: Some(prot1_id),
+            protector_type: None,
+            protector_name: None,
+            user: None,
+            dir: dir.path().into(),
+        }, &ks)?;
+
+        // Add the second protector to the policy
+        let policy_id = ks.policy_key_ids()?[0].clone();
+        push_test_password(pass2);
+        push_test_password(pass1);
+        cmd_policy_add_protector(&PolicyAddProtectorArgs {
+            policy: policy_id,
+            protector: prot2_id,
+            unlock_with: Some(prot1_id),
+        }, &ks)?;
+
+        // Verify that the directory has both protectors
+        let encrypted_dir = EncryptedDir::open(dir.path(), &ks, LockState::Unlocked)?;
+        assert_eq!(encrypted_dir.protectors.len(), 2);
+
+        // Lock the directory
+        let lock_args = LockArgs { dir: dir.path().into(), all_users: false };
+        cmd_lock(&lock_args, &ks)?;
+
+        // Unlock with each protector
+        push_test_password(pass1);
+        cmd_unlock(&UnlockArgs {
+            dir: dir.path().into(),
+            protector: Some(prot1_id),
+            recovery: false
+        }, &ks)?;
+        cmd_lock(&lock_args, &ks)?;
+
+        push_test_password(pass2);
+        cmd_unlock(&UnlockArgs {
+            dir: dir.path().into(),
+            protector: Some(prot2_id),
+            recovery: false
+        }, &ks)?;
+        cmd_lock(&lock_args, &ks)?;
+
+        Ok(())
+    }
+
+    #[test]
     fn test_encrypt_non_empty() -> Result<()> {
         let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
 
