@@ -1303,6 +1303,25 @@ mod tests {
     }
 
     #[test]
+    fn test_encrypt_non_empty() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let ks_dir = TempDir::new("keystore")?;
+        let ks = Keystore::from_path(ks_dir.path());
+
+        // Create a directory and put a file inside
+        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        std::fs::write(dir.path().join("file.txt"), "hello")?;
+
+        // Try to encrypt it: it should fail
+        push_test_password("1234");
+        let err = cmd_encrypt(&test_encrypt_args(dir.path()), &ks).unwrap_err();
+        assert!(err.to_string().contains("not empty"), "unexpected error: {err}");
+
+        Ok(())
+    }
+
+    #[test]
     fn test_lock_unlock() -> Result<()> {
         let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
 

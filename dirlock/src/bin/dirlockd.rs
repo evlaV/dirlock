@@ -979,6 +979,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_encrypt_dir_non_empty() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        // Create a directory and put a file inside
+        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        std::fs::write(dir.path().join("file.txt"), "hello")?;
+
+        // Try to encrypt it: it should fail
+        let password = "pass1";
+        let prot_id = create_test_protector(&proxy, password).await?;
+        assert!(encrypt_test_dir(&proxy, dir.path(), &prot_id, password).await.is_err());
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_lock_unlock_dir() -> Result<()> {
         let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
 
