@@ -105,7 +105,7 @@ pub fn read_password_for_protector(prot: &Protector) -> Result<Zeroizing<String>
     if let Some(pass) = pop_test_password() {
         return Ok(pass);
     }
-    let prompt = prot.get_prompt().map_err(|e| anyhow!("{e}"))?;
+    let prompt = prot.get_prompt(None).map_err(|e| anyhow!("{e}"))?;
     let pass = if prot.needs_password() {
         eprint!("{prompt}: ");
         Zeroizing::new(rpassword::read_password()?)
@@ -119,6 +119,17 @@ pub fn read_password_for_protector(prot: &Protector) -> Result<Zeroizing<String>
 /// Return true if a filesystem has fscrypt support
 pub fn fs_supports_encryption(fstype: &str) -> bool {
     matches!(fstype, "ext4" | "f2fs" | "ubifs" | "ceph")
+}
+
+/// Return whether a host is remote or not.
+/// This is a raw slice of bytes as returned by PAM_RHOST.
+pub fn rhost_is_remote(rhost: Option<&[u8]>) -> bool {
+    !matches!(rhost.unwrap_or(b""),
+                b""
+              | b"localhost"
+              | b"127.0.0.1"
+              | b"::1"
+    )
 }
 
 /// Helper to safely write the new version of a file to disk.

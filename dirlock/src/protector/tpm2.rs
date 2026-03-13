@@ -134,7 +134,7 @@ impl ProtectorBackend for Tpm2Protector {
         bail!("TPM support is disabled");
     }
 
-    fn get_prompt(&self) -> Result<String, String> {
+    fn get_prompt(&self, _rhost: Option<&[u8]>) -> Result<String, String> {
         Err(String::from("TPM support is disabled"))
     }
 }
@@ -243,11 +243,19 @@ impl ProtectorBackend for Tpm2Protector {
     }
 
     /// Returns the prompt, or an error message if the TPM is not usable
-    fn get_prompt(&self) -> Result<String, String> {
+    fn get_prompt(&self, rhost: Option<&[u8]>) -> Result<String, String> {
         let s = get_status(Some(self.get_tcti_conf()))
             .map_err(|_| String::from("Error connecting to the TPM"))?;
         let retries = s.max_auth_fail - s.lockout_counter;
-        if retries == 0 {
+        // If the user is trying to authenticate remotely we cap the
+        // maximum number of attempts to reserve some for local users.
+        if crate::util::rhost_is_remote(rhost) {
+            if retries > Config::tpm2_min_local_tries() {
+                Ok(String::from("Enter TPM2 PIN"))
+            } else {
+                Err(String::from("The TPM is currently unavailable"))
+            }
+        } else if retries == 0 {
             Err(format!("The TPM is locked, wait up to {} seconds before trying again",
                         s.lockout_interval))
         } else if retries < 10 {

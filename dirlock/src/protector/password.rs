@@ -68,7 +68,7 @@ impl ProtectorBackend for PasswordProtector {
     fn needs_password(&self) -> bool { true }
     fn is_available(&self) -> bool { true }
 
-    fn get_prompt(&self) -> Result<String, String> {
+    fn get_prompt(&self, _rhost: Option<&[u8]>) -> Result<String, String> {
         Ok(String::from("Enter password"))
     }
 

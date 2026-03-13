@@ -20,11 +20,15 @@ const DEFAULT_TPM2_TCTI: &str = "device:/dev/tpm0";
 const KEYSTORE_DIR_ENV_VAR : &str = "DIRLOCK_KEYSTORE";
 const DEFAULT_KEYSTORE_DIR : &str = "/var/lib/dirlock";
 const RUNTIME_DATA_DIR : &str = "/run";
+const DEFAULT_TPM2_MIN_LOCAL_TRIES : u32 = 10;
 
 #[derive(Deserialize)]
 pub struct Config {
     #[serde(default = "default_tpm2_tcti")]
     tpm2_tcti: String,
+    #[serde(default = "default_tpm2_min_local_tries")]
+    /// Number of attempts reserved for local authentication with the TPM
+    tpm2_min_local_tries: u32,
     #[serde(default = "default_keystore_dir")]
     keystore_dir: PathBuf,
 }
@@ -34,6 +38,7 @@ impl Default for Config {
         Config {
             tpm2_tcti: default_tpm2_tcti(),
             keystore_dir: default_keystore_dir(),
+            tpm2_min_local_tries: default_tpm2_min_local_tries(),
         }
     }
 }
@@ -48,6 +53,10 @@ fn default_keystore_dir() -> PathBuf {
     std::env::var(KEYSTORE_DIR_ENV_VAR)
         .unwrap_or(String::from(DEFAULT_KEYSTORE_DIR))
         .into()
+}
+
+fn default_tpm2_min_local_tries() -> u32 {
+    DEFAULT_TPM2_MIN_LOCAL_TRIES
 }
 
 impl Config {
@@ -72,6 +81,10 @@ impl Config {
 
     pub fn keystore_dir() -> &'static Path {
         Config::get().unwrap().keystore_dir.as_path()
+    }
+
+    pub fn tpm2_min_local_tries() -> u32 {
+        Config::get().unwrap().tpm2_min_local_tries
     }
 
     pub fn runtime_dir() -> &'static Path {

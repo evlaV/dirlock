@@ -95,6 +95,11 @@ fn get_home_data(user: &str, ks: &Keystore) -> Result<EncryptedDir> {
     }
 }
 
+/// Get the value of PAM_RHOST from the session, as a slice of bytes.
+fn get_rhost(pamh: &Pam) -> Option<&[u8]> {
+    pamh.get_rhost().unwrap_or(None).map(|h| h.to_bytes())
+}
+
 /// Try the modhex-encoded recovery key `pass` on `dir`.
 ///
 /// If `pass` is unset, the user will be prompted for one.
@@ -128,6 +133,7 @@ fn do_authenticate(pamh: Pam) -> Result<()> {
     let ks = Keystore::default();
     let user = get_user(&pamh)?;
     let homedir = get_home_data(user, &ks)?;
+    let rhost = get_rhost(&pamh);
 
     let mut available_protectors = false;
 
@@ -136,9 +142,11 @@ fn do_authenticate(pamh: Pam) -> Result<()> {
             continue;
         }
 
-        let prompt = match p.protector.get_prompt() {
+        let protid = &p.protector.id;
+        let prompt = match p.protector.get_prompt(rhost) {
             Ok(p) => p,
             Err(e) => {
+                log_warning(&pamh, format!("unable to use protector {protid}; user={user} error={e}"));
                 _ = pamh.conv(Some(&e), PamMsgStyle::ERROR_MSG);
                 continue;
             },
@@ -162,7 +170,6 @@ fn do_authenticate(pamh: Pam) -> Result<()> {
         }
 
         // Check if the password can unlock the home directory (but don't actually unlock it)
-        let protid = &p.protector.id;
         match p.protector.unwrap_key(pass) {
             Ok(Some(protkey)) => {
                 return AuthData::store_in_session(&pamh, protkey);
@@ -197,10 +204,12 @@ fn do_chauthtok(pamh: Pam, flags: PamFlags) -> Result<()> {
     let ks = Keystore::default();
     let user = get_user(&pamh)?;
     let mut homedir = get_home_data(user, &ks)?;
+    let rhost = get_rhost(&pamh);
 
     // Get only the protectors that are available and can be updated
     let prots : Vec<_> = homedir.protectors.iter_mut().filter(|p| {
-        p.protector.can_change_password() && p.protector.is_available()
+        p.protector.can_change_password() && p.protector.is_available() &&
+        p.protector.get_prompt(rhost).is_ok()
     }).collect();
 
     if prots.is_empty() {

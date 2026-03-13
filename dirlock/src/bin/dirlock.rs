@@ -564,7 +564,7 @@ fn cmd_unlock(args: &UnlockArgs, ks: &Keystore) -> Result<()> {
     }
 
     for p in &prots {
-        if let Err(e) = p.get_prompt() {
+        if let Err(e) = p.get_prompt(None) {
             println!("Cannot use protector {}: {e}", p.id);
             continue;
         }
