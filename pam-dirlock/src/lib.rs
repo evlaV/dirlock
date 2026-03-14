@@ -104,6 +104,16 @@ fn get_rhost(pamh: &Pam) -> Host {
     }
 }
 
+/// Show an error message to the user
+fn show_pam_error(pamh: &Pam, text: &str) {
+    match pamh.get_service() {
+        // ssh won't display the error messages until the user is
+        // logged in, so it's better not to show anything
+        Ok(Some(s)) if s == c"sshd" => (),
+        _ => _ = pamh.conv(Some(text), PamMsgStyle::ERROR_MSG),
+    }
+}
+
 /// Try the modhex-encoded recovery key `pass` on `dir`.
 ///
 /// If `pass` is unset, the user will be prompted for one.
@@ -151,7 +161,7 @@ fn do_authenticate(pamh: Pam) -> Result<()> {
             Ok(p) => p,
             Err(e) => {
                 log_warning(&pamh, format!("unable to use protector {protid}; user={user} error={e}"));
-                _ = pamh.conv(Some(&e), PamMsgStyle::ERROR_MSG);
+                show_pam_error(&pamh, &e);
                 continue;
             },
         };
@@ -182,7 +192,7 @@ fn do_authenticate(pamh: Pam) -> Result<()> {
             Err(e) => log_warning(&pamh, format!("authentication failure; user={user} protector={protid} error={e}")),
         }
 
-        _ = pamh.conv(Some("Authentication failed"), PamMsgStyle::ERROR_MSG);
+        show_pam_error(&pamh, "Authentication failed");
     }
 
     if !available_protectors {
@@ -191,9 +201,9 @@ fn do_authenticate(pamh: Pam) -> Result<()> {
             if try_recovery_key(&pamh, &homedir, None)? {
                 return Ok(());
             }
-            _ = pamh.conv(Some("Authentication failed"), PamMsgStyle::ERROR_MSG);
+            show_pam_error(&pamh, "Authentication failed");
         } else {
-            _ = pamh.conv(Some("Cannot authenticate: no available protectors"), PamMsgStyle::ERROR_MSG);
+            show_pam_error(&pamh, "Cannot authenticate: no available protectors");
         }
     }
 
