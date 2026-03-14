@@ -38,6 +38,7 @@ use {
 };
 
 use crate::{
+    Host,
     crypto::{
         AesIv,
         Hmac,
@@ -99,7 +100,7 @@ impl ProtectorBackend for Fido2Protector {
         bail!(FIDO2_DISABLED);
     }
 
-    fn get_prompt(&self, _rhost: Option<&[u8]>) -> Result<String, String> {
+    fn get_prompt(&self, _host: Host) -> Result<String, String> {
         Err(String::from(FIDO2_DISABLED))
     }
 }
@@ -239,7 +240,7 @@ impl ProtectorBackend for Fido2Protector {
     }
 
     /// Returns the prompt, or an error message if the FIDO2 token is not available or usable
-    fn get_prompt(&self, _rhost: Option<&[u8]>) -> Result<String, String> {
+    fn get_prompt(&self, _host: Host) -> Result<String, String> {
         match get_fido2_device(Some(&self.credential)) {
             Ok(_) => if self.pin {
                 Ok(String::from("Enter FIDO2 PIN and confirm presence on the token"))

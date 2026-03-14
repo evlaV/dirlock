@@ -10,6 +10,7 @@ use serde_with::{serde_as, base64::Base64};
 use crate::kdf::{Kdf, Pbkdf2};
 
 use crate::{
+    Host,
     crypto::{
         Aes256Key,
         AesIv,
@@ -68,7 +69,7 @@ impl ProtectorBackend for PasswordProtector {
     fn needs_password(&self) -> bool { true }
     fn is_available(&self) -> bool { true }
 
-    fn get_prompt(&self, _rhost: Option<&[u8]>) -> Result<String, String> {
+    fn get_prompt(&self, _host: Host) -> Result<String, String> {
         Ok(String::from("Enter password"))
     }
 

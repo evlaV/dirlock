@@ -7,7 +7,7 @@
 mod pamlib;
 
 use pamsm::{LogLvl, Pam, PamError, PamFlags, PamLibExt, PamMsgStyle, PamServiceModule, pam_module};
-use dirlock::{DirStatus, EncryptedDir, Keystore, protector::ProtectorKey, recovery::RecoveryKey};
+use dirlock::{DirStatus, EncryptedDir, Host, Keystore, protector::ProtectorKey, recovery::RecoveryKey};
 use std::ffi::c_int;
 
 type Result<T> = std::result::Result<T, PamError>;
@@ -95,9 +95,13 @@ fn get_home_data(user: &str, ks: &Keystore) -> Result<EncryptedDir> {
     }
 }
 
-/// Get the value of PAM_RHOST from the session, as a slice of bytes.
-fn get_rhost(pamh: &Pam) -> Option<&[u8]> {
-    pamh.get_rhost().unwrap_or(None).map(|h| h.to_bytes())
+/// Get the value of PAM_RHOST and return whether it is local or remote.
+fn get_rhost(pamh: &Pam) -> Host {
+    let rhost = pamh.get_rhost().unwrap_or(None).map(|h| h.to_bytes());
+    match rhost.unwrap_or(b"") {
+        b"" | b"localhost" | b"127.0.0.1" | b"::1" => Host::Local,
+        _ => Host::Remote,
+    }
 }
 
 /// Try the modhex-encoded recovery key `pass` on `dir`.

@@ -36,6 +36,13 @@ use protector::{
 use recovery::RecoveryKey;
 use std::path::{Path, PathBuf};
 
+/// Whether a user is connecting locally or remotely
+#[derive(Copy, Clone, PartialEq)]
+pub enum Host {
+    Local,
+    Remote,
+}
+
 /// The encryption status of an existing directory
 pub enum DirStatus {
     Unencrypted,

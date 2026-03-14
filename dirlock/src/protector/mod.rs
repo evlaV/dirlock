@@ -13,6 +13,7 @@ use std::cell::Cell;
 use std::cmp;
 use std::fmt;
 
+use crate::Host;
 use crate::crypto::{
     Aes256Key,
     Salt,
@@ -44,7 +45,7 @@ trait ProtectorBackend {
     ///
     /// # Errors
     /// Returns the string message to show to the user if the protector cannot be used
-    fn get_prompt(&self, rhost: Option<&[u8]>) -> Result<String, String>;
+    fn get_prompt(&self, host: Host) -> Result<String, String>;
     /// Returns whether the protector can change its PIN / password
     fn can_change_password(&self) -> bool;
     /// Returns whether the protector needs a PIN / password to unlock its key
@@ -242,7 +243,7 @@ impl Protector {
     pub fn get_name(&self) -> &str { self.backend().get_name() }
     pub fn get_type(&self) -> ProtectorType { self.backend().get_type() }
     pub fn unwrap_key(&self, pass: &[u8]) -> Result<Option<ProtectorKey>> { self.backend().unwrap_key(pass) }
-    pub fn get_prompt(&self, rhost: Option<&[u8]>) -> Result<String, String> { self.backend().get_prompt(rhost) }
+    pub fn get_prompt(&self, host: Host) -> Result<String, String> { self.backend().get_prompt(host) }
     pub fn can_change_password(&self) -> bool { self.backend().can_change_password() }
     pub fn needs_password(&self) -> bool { self.backend().needs_password() }
     pub fn is_available(&self) -> bool { self.backend().is_available() }
