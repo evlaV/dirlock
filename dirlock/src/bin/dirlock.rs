@@ -1770,4 +1770,126 @@ mod tests {
 
         Ok(())
     }
+
+    fn test_convert_args(dir: &Path, protid: Option<ProtectorId>) -> ConvertArgs {
+        // If not using an existing protector, set a name
+        let name = protid.is_none().then(|| "test1".to_string());
+        ConvertArgs {
+            protector_type: None,
+            protector_name: name,
+            protector: protid,
+            user: None,
+            force: true,
+            dir: dir.into(),
+        }
+    }
+
+    #[test]
+    fn test_convert() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let ks_dir = TempDir::new("keystore")?;
+        let ks = Keystore::from_path(ks_dir.path());
+
+        // Create a directory with some files
+        let dir = TempDir::new_in(&mntpoint, "convert")?;
+        std::fs::write(dir.path().join("file.txt"), "hello")?;
+        std::fs::create_dir(dir.path().join("subdir"))?;
+        std::fs::write(dir.path().join("subdir/nested.txt"), "world")?;
+
+        // Convert it to an encrypted directory
+        let password = "1234";
+        push_test_password(password);
+        cmd_convert(&test_convert_args(dir.path(), None), &ks)?;
+
+        // Verify that the directory is encrypted and unlocked
+        let encrypted_dir = EncryptedDir::open(dir.path(), &ks, LockState::Unlocked)?;
+        assert_eq!(encrypted_dir.protectors.len(), 1);
+
+        // Verify that the data was preserved
+        assert_eq!(std::fs::read_to_string(dir.path().join("file.txt"))?, "hello");
+        assert_eq!(std::fs::read_to_string(dir.path().join("subdir/nested.txt"))?, "world");
+
+        // Lock and unlock to verify that the protector works
+        let lock_args = LockArgs { dir: dir.path().into(), all_users: false };
+        cmd_lock(&lock_args, &ks)?;
+        EncryptedDir::open(dir.path(), &ks, LockState::Locked)?;
+
+        push_test_password(password);
+        cmd_unlock(&UnlockArgs { dir: dir.path().into(), protector: None, recovery: false }, &ks)?;
+        EncryptedDir::open(dir.path(), &ks, LockState::Unlocked)?;
+
+        // Verify the data again
+        assert_eq!(std::fs::read_to_string(dir.path().join("file.txt"))?, "hello");
+        assert_eq!(std::fs::read_to_string(dir.path().join("subdir/nested.txt"))?, "world");
+
+        cmd_lock(&lock_args, &ks)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_convert_existing_protector() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let ks_dir = TempDir::new("keystore")?;
+        let ks = Keystore::from_path(ks_dir.path());
+
+        let password = "1234";
+        let prot_id = create_test_protector(&ks, "prot", password)?;
+
+        // Convert a directory with data using the existing protector
+        let dir = TempDir::new_in(&mntpoint, "convert")?;
+        std::fs::write(dir.path().join("data.txt"), "test data")?;
+
+        push_test_password(password);
+        cmd_convert(&test_convert_args(dir.path(), Some(prot_id)), &ks)?;
+
+        // Verify that the directory is encrypted with the protector
+        let encrypted_dir = EncryptedDir::open(dir.path(), &ks, LockState::Unlocked)?;
+        assert_eq!(encrypted_dir.protectors.len(), 1);
+        assert!(encrypted_dir.protectors[0].protector.id == prot_id);
+
+        let lock_args = LockArgs { dir: dir.path().into(), all_users: false };
+        cmd_lock(&lock_args, &ks)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_convert_empty_dir() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let ks_dir = TempDir::new("keystore")?;
+        let ks = Keystore::from_path(ks_dir.path());
+
+        // Converting an empty directory should fail
+        let dir = TempDir::new_in(&mntpoint, "convert")?;
+        push_test_password("1234");
+        let err = cmd_convert(&test_convert_args(dir.path(), None), &ks).unwrap_err();
+        assert!(err.to_string().contains("empty"), "unexpected error: {err}");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_convert_already_encrypted() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let ks_dir = TempDir::new("keystore")?;
+        let ks = Keystore::from_path(ks_dir.path());
+
+        // Encrypt a directory first, then put a file in it
+        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        push_test_password("1234");
+        cmd_encrypt(&test_encrypt_args(dir.path()), &ks)?;
+        std::fs::write(dir.path().join("file.txt"), "data")?;
+
+        // Trying to convert an already-encrypted directory should fail
+        push_test_password("5678");
+        let err = cmd_convert(&test_convert_args(dir.path(), None), &ks).unwrap_err();
+        assert!(err.to_string().contains("encrypted"), "unexpected error: {err}");
+
+        Ok(())
+    }
 }
