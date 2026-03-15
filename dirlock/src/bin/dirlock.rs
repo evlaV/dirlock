@@ -157,6 +157,9 @@ struct ConvertArgs {
     /// owner of the protector and policy (default: current user)
     #[argh(option)]
     user: Option<String>,
+    /// don't ask for confirmation
+    #[argh(switch)]
+    force: bool,
     /// directory
     #[argh(positional)]
     dir: PathBuf,
@@ -671,17 +674,19 @@ fn cmd_convert(args: &ConvertArgs, ks: &Keystore) -> Result<()> {
         bail!("The directory is empty. Use the 'encrypt' command instead");
     }
 
-    println!("You are about to encrypt a directory that contains data.\n\
-              This feature is *experimental*. Make sure that you are not\n\
-              accessing the files while they are being encrypted in order\n\
-              to avoid unexpected behaviors. If this is a home directory\n\
-              the user should be ideally logged out.\n");
-    print!("Do you want to continue? [y/N] ");
-    io::stdout().flush().unwrap();
-    let mut s = String::new();
-    let _ = io::stdin().read_line(&mut s)?;
-    if s.trim() != "y" {
-        return Ok(());
+    if ! args.force {
+        println!("You are about to encrypt a directory that contains data.\n\
+                  This feature is *experimental*. Make sure that you are not\n\
+                  accessing the files while they are being encrypted in order\n\
+                  to avoid unexpected behaviors. If this is a home directory\n\
+                  the user should be ideally logged out.\n");
+        print!("Do you want to continue? [y/N] ");
+        io::stdout().flush().unwrap();
+        let mut s = String::new();
+        let _ = io::stdin().read_line(&mut s)?;
+        if s.trim() != "y" {
+            return Ok(());
+        }
     }
 
     match conversion_status(&args.dir)? {
