@@ -764,6 +764,20 @@ mod tests {
         }
     }
 
+    /// Create a memfd containing the given data and return it as a
+    /// D-Bus Value, suitable for using in an options dict.
+    fn secret_to_memfd(data: &[u8]) -> Value<'static> {
+        use nix::sys::memfd::{memfd_create, MemFdCreateFlag};
+        use nix::unistd::{lseek, write, Whence};
+        use std::os::fd::AsRawFd;
+
+        let fd = memfd_create(c"dirlock-fd", MemFdCreateFlag::empty())
+            .expect("memfd_create failed");
+        write(&fd, data).expect("write to memfd failed");
+        lseek(fd.as_raw_fd(), 0, Whence::SeekSet).expect("lseek failed");
+        Value::from(zvariant::Fd::from(fd))
+    }
+
     /// Filesystem where to run the tests. It must support fscrypt.
     /// Set to 'skip' to skip these tests.
     const MNTPOINT_ENV_VAR: &str = "DIRLOCK_TEST_FS";
@@ -1810,6 +1824,65 @@ mod tests {
                 "unexpected error: {err}");
 
         proxy.lock_dir(dir_str).await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_secret_fd_basic() -> Result<()> {
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        // Create a protector using a string password
+        let password = "pass1";
+        let prot_id = create_test_protector(&proxy, password).await?;
+
+        // Verify it passing the password using an fd
+        let fd = secret_to_memfd(password.as_bytes());
+        let mut opts = str_dict([("protector", prot_id.as_str())]);
+        opts.push(("password-fd", fd));
+        assert_eq!(proxy.verify_protector_password(as_opts(&opts)).await?, true);
+
+        // Passing the wrong password should fail
+        let fd = secret_to_memfd(b"wrong");
+        let mut opts = str_dict([("protector", prot_id.as_str())]);
+        opts.push(("password-fd", fd));
+        assert_eq!(proxy.verify_protector_password(as_opts(&opts)).await?, false);
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_secret_fd_mutually_exclusive() -> Result<()> {
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        let prot_id = create_test_protector(&proxy, "pass1").await?;
+
+        // You cannot pass both 'password' and 'password-fd'
+        let fd = secret_to_memfd(b"pass1");
+        let mut opts = str_dict([
+            ("protector", prot_id.as_str()),
+            ("password", "pass1"),
+        ]);
+        opts.push(("password-fd", fd));
+        assert!(proxy.verify_protector_password(as_opts(&opts)).await.is_err());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_secret_fd_too_large() -> Result<()> {
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        let prot_id = create_test_protector(&proxy, "pass1").await?;
+
+        let large = vec![b'x'; MAX_SECRET_SIZE + 1];
+        let fd = secret_to_memfd(&large);
+        let mut opts = str_dict([("protector", prot_id.as_str())]);
+        opts.push(("password-fd", fd));
+        assert!(proxy.verify_protector_password(as_opts(&opts)).await.is_err());
 
         Ok(())
     }
