@@ -43,6 +43,9 @@ statx-sys = "0.4.1"
 regex = "1.11.1"
 xattr = "1.6.1"
 
+[dev-dependencies]
+futures-lite = "2.6.1"
+
 [features]
 tpm2 = ["dep:tss-esapi", "dep:tss-esapi-sys"]
 fido2 = ["dep:fido2-rs", "dep:libfido2-sys"]

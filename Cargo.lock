@@ -493,6 +493,7 @@ dependencies = [
  "ctr",
  "derive_more",
  "fido2-rs",
+ "futures-lite",
  "get_sys_info",
  "hex",
  "hkdf",

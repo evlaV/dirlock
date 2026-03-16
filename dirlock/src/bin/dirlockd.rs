@@ -233,6 +233,10 @@ fn do_convert_dir(
 
     dirlock::ensure_unencrypted(dir, ks)?;
 
+    if dirlock::util::dir_is_empty(dir)? {
+        bail!("The directory is empty, use EncryptDir instead");
+    }
+
     let key = match protector.unwrap_key(pass.as_bytes())? {
         Some(k) => k,
         None => bail!("Authentication failed"),
@@ -750,6 +754,7 @@ mod tests {
     struct TestService {
         _keystore_dir: TempDir,
         _server_conn: zbus::Connection,
+        _event_task: tokio::task::JoinHandle<()>,
         client_conn: zbus::Connection,
         service_name: String,
     }
@@ -765,7 +770,7 @@ mod tests {
             let n = TEST_SERVICE_SEQ.fetch_add(1, Ordering::Relaxed);
             let service_name = format!("{DIRLOCK_DBUS_SERVICE}Test{n}");
 
-            let (tx, _) = tokio::sync::mpsc::channel::<Event>(2);
+            let (tx, mut rx) = tokio::sync::mpsc::channel::<Event>(2);
             let daemon = DirlockDaemon {
                 jobs: HashMap::new(),
                 last_jobid: 0,
@@ -779,11 +784,21 @@ mod tests {
                 .build()
                 .await?;
 
+            // Spawn a task to process events (needed for convert jobs)
+            let iface: InterfaceRef<DirlockDaemon> =
+                _server_conn.object_server().interface(DIRLOCK_DBUS_PATH).await?;
+            let _event_task = tokio::task::spawn(async move {
+                while let Some(ev) = rx.recv().await {
+                    let emitter = iface.signal_emitter();
+                    _ = iface.get_mut().await.handle_event(emitter, ev).await;
+                }
+            });
+
             let client_conn = zbus::connection::Builder::session()?
                 .build()
                 .await?;
 
-            Ok(TestService { _keystore_dir, _server_conn, client_conn, service_name })
+            Ok(TestService { _keystore_dir, _server_conn, _event_task, client_conn, service_name })
         }
 
         /// Build a proxy for the test service.
@@ -1627,6 +1642,143 @@ mod tests {
         ]))).await.is_err());
 
         // Lock to release the key
+        proxy.lock_dir(dir_str).await?;
+
+        Ok(())
+    }
+
+    /// Helper: start a convert job and wait for it to finish.
+    /// Returns the policy ID from the job_finished signal.
+    async fn convert_and_wait(
+        proxy: &Dirlock1Proxy<'_>,
+        dir: &str,
+        prot_id: &str,
+        password: &str,
+    ) -> Result<String> {
+        use futures_lite::StreamExt;
+
+        let mut finished = proxy.receive_job_finished().await?;
+        let mut failed = proxy.receive_job_failed().await?;
+
+        let jobid = proxy.convert_dir(dir, as_opts(&str_dict([
+            ("protector", prot_id),
+            ("password", password),
+        ]))).await?;
+
+        // Wait for either job_finished or job_failed
+        tokio::select! {
+            Some(sig) = finished.next() => {
+                let args = sig.args()?;
+                assert_eq!(args.jobid, jobid);
+                Ok(args.keyid.to_string())
+            }
+            Some(sig) = failed.next() => {
+                let args = sig.args()?;
+                assert_eq!(args.jobid, jobid);
+                bail!("{}", args.error)
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_convert() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        // Create a directory with some files
+        let dir = TempDir::new_in(&mntpoint, "convert")?;
+        let dir_str = dir.path().to_str().unwrap();
+        std::fs::write(dir.path().join("file.txt"), "hello")?;
+        std::fs::create_dir(dir.path().join("subdir"))?;
+        std::fs::write(dir.path().join("subdir/nested.txt"), "world")?;
+
+        // Create a protector
+        let password = "1234";
+        let prot_id = create_test_protector(&proxy, password).await?;
+
+        // Convert the directory
+        let policy_id = convert_and_wait(&proxy, dir_str, &prot_id, password).await?;
+        PolicyKeyId::from_str(&policy_id)?;
+
+        // Verify that the directory is encrypted and unlocked
+        let status = proxy.get_dir_status(dir_str).await?;
+        assert_eq!(expect_str(&status, "status")?, "unlocked");
+        assert_eq!(expect_str(&status, "policy")?, policy_id);
+
+        // Verify that the data was preserved
+        assert_eq!(std::fs::read_to_string(dir.path().join("file.txt"))?, "hello");
+        assert_eq!(std::fs::read_to_string(dir.path().join("subdir/nested.txt"))?, "world");
+
+        // Lock and unlock to verify that the protector works
+        proxy.lock_dir(dir_str).await?;
+        let status = proxy.get_dir_status(dir_str).await?;
+        assert_eq!(expect_str(&status, "status")?, "locked");
+
+        proxy.unlock_dir(dir_str, as_opts(&str_dict([
+            ("protector", &prot_id),
+            ("password", password),
+        ]))).await?;
+        let status = proxy.get_dir_status(dir_str).await?;
+        assert_eq!(expect_str(&status, "status")?, "unlocked");
+
+        // Verify the data again
+        assert_eq!(std::fs::read_to_string(dir.path().join("file.txt"))?, "hello");
+        assert_eq!(std::fs::read_to_string(dir.path().join("subdir/nested.txt"))?, "world");
+
+        proxy.lock_dir(dir_str).await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_convert_empty_dir() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        let password = "1234";
+        let prot_id = create_test_protector(&proxy, password).await?;
+
+        // Converting an empty directory should fail
+        let dir = TempDir::new_in(&mntpoint, "convert")?;
+        let dir_str = dir.path().to_str().unwrap();
+        let err = proxy.convert_dir(dir_str, as_opts(&str_dict([
+            ("protector", prot_id.as_str()),
+            ("password", password),
+        ]))).await.unwrap_err();
+        assert!(err.to_string().contains("empty"),
+                "unexpected error: {err}");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_convert_already_encrypted() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        let password = "1234";
+        let prot_id = create_test_protector(&proxy, password).await?;
+
+        // Encrypt a directory first, then put a file in it
+        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        encrypt_test_dir(&proxy, dir.path(), &prot_id, password).await?;
+        std::fs::write(dir.path().join("file.txt"), "data")?;
+
+        // Trying to convert an already-encrypted directory should fail
+        let dir_str = dir.path().to_str().unwrap();
+        let err = proxy.convert_dir(dir_str, as_opts(&str_dict([
+            ("protector", prot_id.as_str()),
+            ("password", password),
+        ]))).await.unwrap_err();
+        assert!(err.to_string().contains("encrypted"),
+                "unexpected error: {err}");
+
         proxy.lock_dir(dir_str).await?;
 
         Ok(())
