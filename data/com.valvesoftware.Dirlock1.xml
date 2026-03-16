@@ -30,6 +30,8 @@
         @options: Options dict. Required keys:
         - `protector` (s): ID of the protector to use.
         - `password` (s): The password or PIN of the protector.
+          Alternatively, `password-fd` (h) can be used to pass the
+          secret via a file descriptor. Both are mutually exclusive.
 
         Unlock an encrypted directory using one of its protectors.
         The directory must be currently locked.
@@ -67,6 +69,8 @@
 
         - `protector` (s): ID of the protector to use.
         - `password` (s): The password or PIN of the protector.
+          Alternatively, `password-fd` (h) can be used to pass the
+          secret via a file descriptor. Both are mutually exclusive.
 
         @keyid: The policy ID of the newly encrypted directory.
 
@@ -86,6 +90,8 @@
 
         - `protector` (s): ID of the protector to use.
         - `password` (s): The password or PIN of the protector.
+          Alternatively, `password-fd` (h) can be used to pass the
+          secret via a file descriptor. Both are mutually exclusive.
 
         @jobid: ID of the background conversion job.
 
@@ -164,6 +170,8 @@
         - `type` (s): Protector type (`password`, `tpm2`, or `fido2`).
         - `name` (s): Protector name.
         - `password` (s): Password or PIN.
+          Alternatively, `password-fd` (h) can be used to pass the
+          secret via a file descriptor. Both are mutually exclusive.
 
         @id: Protector ID.
 
@@ -217,6 +225,8 @@
         @options: Options dict. Required keys:
 
         - `password` (s): The password or PIN of the protector.
+          Alternatively, `password-fd` (h) can be used to pass the
+          secret via a file descriptor. Both are mutually exclusive.
         - `protector` (s): Protector ID.
 
         @valid: %TRUE if the password is correct.
@@ -233,7 +243,11 @@
         @options: Options dict. Required keys:
 
         - `old-password` (s): The current password or PIN.
+          Alternatively, `old-password-fd` (h) can be used to pass the
+          secret via a file descriptor. Both are mutually exclusive.
         - `new-password` (s): The new password or PIN.
+          Alternatively, `new-password-fd` (h) can be used to pass the
+          secret via a file descriptor. Both are mutually exclusive.
         - `protector` (s): Protector ID.
 
         Change the password of a protector. The old and new
@@ -260,8 +274,12 @@
         - `policy` (s): Policy ID.
         - `protector` (s): ID of the protector to add.
         - `protector-password` (s): Password or PIN of the protector being added.
+          Alternatively, `protector-password-fd` (h) can be used to pass the
+          secret via a file descriptor. Both are mutually exclusive.
         - `unlock-with` (s): ID of an existing protector.
         - `unlock-with-password` (s): Password or PIN of the existing protector.
+          Alternatively, `unlock-with-password-fd` (h) can be used to pass the
+          secret via a file descriptor. Both are mutually exclusive.
 
         Add a protector to an encryption policy.
     -->
@@ -290,6 +308,8 @@
 
         - `protector` (s): ID of a protector for this directory.
         - `password` (s): Password or PIN of the protector.
+          Alternatively, `password-fd` (h) can be used to pass the
+          secret via a file descriptor. Both are mutually exclusive.
 
         @recovery_key: The recovery key string. This must be
         stored securely by the user; it cannot be retrieved later.
@@ -319,8 +339,12 @@
         @options: Options dict. Required keys:
 
         - `recovery-key` (s): The recovery key string.
+          Alternatively, `recovery-key-fd` (h) can be used to pass the
+          secret via a file descriptor. Both are mutually exclusive.
         - `protector` (s): ID of a protector to associate with this directory.
         - `password` (s): Password or PIN of the protector.
+          Alternatively, `password-fd` (h) can be used to pass the
+          secret via a file descriptor. Both are mutually exclusive.
 
         Restore keystore access to a directory using its recovery
         key. After this call the specified protector will be able to

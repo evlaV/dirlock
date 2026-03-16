@@ -8,8 +8,11 @@ use anyhow::{anyhow, bail};
 use serde::Serialize;
 use zbus::fdo::Result;
 use zbus::fdo::Error;
+use zeroize::Zeroizing;
 use std::collections::HashMap;
+use std::io::Read;
 use std::num::NonZeroU32;
+use std::os::fd::AsFd;
 use std::path::Path;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -87,6 +90,33 @@ fn get_str(options: &HashMap<String, Value<'_>>, key: &str) -> zbus::fdo::Result
     }
 }
 
+/// Maximum size of secrets (i.e. passwords) sent via D-Bus
+const MAX_SECRET_SIZE: usize = 256;
+
+/// Extract a secret from the options dict.
+/// If `<key>-fd` is present, the secret is read from an fd.
+/// Otherwise, `<key>` is read as a plain string.
+fn get_secret(options: &HashMap<String, Value<'_>>, key: &str) -> zbus::fdo::Result<Zeroizing<Vec<u8>>> {
+    let fd_key = format!("{key}-fd");
+    if options.contains_key(fd_key.as_str()) && options.contains_key(key) {
+        return Err(Error::InvalidArgs(format!("'{key}' and '{fd_key}' are mutually exclusive")));
+    }
+    if let Some(Value::Fd(fd)) = options.get(fd_key.as_str()) {
+        let mut buf = Zeroizing::new(Vec::new());
+        let owned = fd.as_fd().try_clone_to_owned()
+            .map_err(|e| Error::Failed(format!("failed to clone '{fd_key}': {e}")))?;
+        std::fs::File::from(owned)
+            .take(MAX_SECRET_SIZE as u64 + 1)
+            .read_to_end(&mut buf)
+            .map_err(|e| Error::Failed(format!("failed to read from '{fd_key}': {e}")))?;
+        if buf.len() > MAX_SECRET_SIZE {
+            return Err(Error::InvalidArgs(format!("'{fd_key}' is too long")));
+        }
+        return Ok(buf);
+    }
+    Ok(Zeroizing::new(get_str(options, key)?.into_bytes()))
+}
+
 /// This is the D-Bus API version of [`DirStatus`]
 #[derive(Serialize, zvariant::Type)]
 struct DbusDirStatus(HashMap<&'static str, Value<'static>>);
@@ -146,14 +176,14 @@ fn do_lock_dir(dir: &Path, ks: &Keystore) -> anyhow::Result<()> {
 /// Unlock a directory
 fn do_unlock_dir(
     dir: &Path,
-    pass: &str,
+    pass: &[u8],
     protector_id: &str,
     ks: &Keystore,
 ) -> anyhow::Result<()> {
     let protector_id = ProtectorId::from_str(protector_id)?;
     let encrypted_dir = EncryptedDir::open(dir, ks, LockState::Locked)?;
 
-    if encrypted_dir.unlock(pass.as_bytes(), &protector_id)? {
+    if encrypted_dir.unlock(pass, &protector_id)? {
         Ok(())
     } else {
         bail!("Authentication failed")
@@ -162,20 +192,20 @@ fn do_unlock_dir(
 
 /// Verify the password of a protector (without unlocking anything)
 fn do_verify_protector_password(
-    pass: &str,
+    pass: &[u8],
     protector_id: &str,
     ks: &Keystore,
 ) -> anyhow::Result<bool> {
     ProtectorId::from_str(protector_id)
         .and_then(|id| ks.load_protector(id).map_err(|e| e.into()))
-        .and_then(|prot| prot.unwrap_key(pass.as_bytes()))
+        .and_then(|prot| prot.unwrap_key(pass))
         .map(|key| key.is_some())
 }
 
 /// Change the password of a protector
 fn do_change_protector_password(
-    pass: &str,
-    newpass: &str,
+    pass: &[u8],
+    newpass: &[u8],
     protector_id: &str,
     ks: &Keystore,
 ) -> anyhow::Result<()> {
@@ -186,7 +216,7 @@ fn do_change_protector_password(
     let mut prot = ProtectorId::from_str(protector_id)
         .and_then(|id| ks.load_protector(id).map_err(|e| e.into()))?;
 
-    if ! dirlock::update_protector_password(&mut prot, pass.as_bytes(), newpass.as_bytes(), ks)? {
+    if ! dirlock::update_protector_password(&mut prot, pass, newpass, ks)? {
         bail!("Invalid password");
     }
     Ok(())
@@ -203,7 +233,7 @@ fn do_get_dir_status(
 /// Encrypt a directory using an existing protector
 fn do_encrypt_dir(
     dir: &Path,
-    pass: &str,
+    pass: &[u8],
     protector_id: &str,
     ks: &Keystore,
 ) -> anyhow::Result<String> {
@@ -212,7 +242,7 @@ fn do_encrypt_dir(
 
     dirlock::ensure_unencrypted(dir, ks)?;
 
-    let key = match protector.unwrap_key(pass.as_bytes())? {
+    let key = match protector.unwrap_key(pass)? {
         Some(k) => k,
         None => bail!("Authentication failed"),
     };
@@ -224,7 +254,7 @@ fn do_encrypt_dir(
 /// Convert a directory using an existing protector
 fn do_convert_dir(
     dir: &Path,
-    pass: &str,
+    pass: &[u8],
     protector_id: &str,
     ks: &Keystore,
 ) -> anyhow::Result<ConvertJob> {
@@ -237,7 +267,7 @@ fn do_convert_dir(
         bail!("The directory is empty, use EncryptDir instead");
     }
 
-    let key = match protector.unwrap_key(pass.as_bytes())? {
+    let key = match protector.unwrap_key(pass)? {
         Some(k) => k,
         None => bail!("Authentication failed"),
     };
@@ -249,7 +279,7 @@ fn do_convert_dir(
 fn do_create_protector(
     ptype: &str,
     name: &str,
-    pass: &str,
+    pass: &[u8],
     ks: &Keystore,
 ) -> anyhow::Result<String> {
     let ptype = ProtectorType::from_str(ptype)
@@ -262,7 +292,7 @@ fn do_create_protector(
         .build()
         .and_then(|opts| {
             let create = dirlock::CreateOpts::CreateAndSave;
-            dirlock::create_protector(opts, pass.as_bytes(), create, ks)
+            dirlock::create_protector(opts, pass, create, ks)
         })
         .map_err(|e| anyhow!("Error creating protector: {e}"))?;
 
@@ -316,9 +346,9 @@ fn do_get_all_policies(ks: &Keystore) -> anyhow::Result<DbusPolicyData> {
 fn do_add_protector_to_policy(
     policy: &str,
     protector: &str,
-    protector_pass: &str,
+    protector_pass: &[u8],
     unlock_with: &str,
-    unlock_with_pass: &str,
+    unlock_with_pass: &[u8],
     ks: &Keystore,
 ) -> anyhow::Result<()> {
     let policy_id = PolicyKeyId::from_str(policy)?;
@@ -327,18 +357,18 @@ fn do_add_protector_to_policy(
     let unlock_with = ProtectorId::from_str(unlock_with)
         .and_then(|id| ks.load_protector(id).map_err(|e| e.into()))?;
 
-    let Some(protector_key) = protector.unwrap_key(protector_pass.as_bytes())? else {
+    let Some(protector_key) = protector.unwrap_key(protector_pass)? else {
         bail!("Invalid {} for protector {}", protector.get_type().credential_name(), protector.id);
     };
 
-    dirlock::add_protector_to_policy(&policy_id, &protector_key, &unlock_with, unlock_with_pass.as_bytes(), ks)
+    dirlock::add_protector_to_policy(&policy_id, &protector_key, &unlock_with, unlock_with_pass, ks)
 }
 
 /// Add a recovery key to an encrypted directory
 fn do_recovery_add(
     dir: &Path,
     protector_id: &str,
-    pass: &str,
+    pass: &[u8],
     ks: &Keystore,
 ) -> anyhow::Result<String> {
     let protector_id = ProtectorId::from_str(protector_id)?;
@@ -349,7 +379,7 @@ fn do_recovery_add(
     }
 
     let prot = encrypted_dir.get_protector_by_id(&protector_id)?;
-    let Some(protkey) = prot.unwrap_key(pass.as_bytes())? else {
+    let Some(protkey) = prot.unwrap_key(pass)? else {
         bail!("Authentication failed");
     };
 
@@ -368,9 +398,9 @@ fn do_recovery_remove(dir: &Path, ks: &Keystore) -> anyhow::Result<()> {
 /// Restore keystore access to a directory using its recovery key
 fn do_recovery_restore(
     dir: &Path,
-    recovery_key_str: &str,
+    recovery_key_str: &[u8],
     protector_id: &str,
-    pass: &str,
+    pass: &[u8],
     ks: &Keystore,
 ) -> anyhow::Result<()> {
     let encrypted_dir = EncryptedDir::open(dir, ks, LockState::Any)?;
@@ -379,7 +409,7 @@ fn do_recovery_restore(
         bail!("This directory does not have a recovery key");
     };
 
-    let Ok(recovery_key) = RecoveryKey::from_ascii_bytes(recovery_key_str.as_bytes()) else {
+    let Ok(recovery_key) = RecoveryKey::from_ascii_bytes(recovery_key_str) else {
         bail!("Invalid recovery key");
     };
 
@@ -393,7 +423,7 @@ fn do_recovery_restore(
     }
 
     let protector = ks.load_protector(protector_id)?;
-    let Some(protector_key) = protector.unwrap_key(pass.as_bytes())? else {
+    let Some(protector_key) = protector.unwrap_key(pass)? else {
         bail!("Authentication failed");
     };
 
@@ -444,7 +474,7 @@ impl DirlockDaemon {
         dir: &Path,
         options: HashMap<String, Value<'_>>,
     ) -> Result<()> {
-        let pass = get_str(&options, "password")?;
+        let pass = get_secret(&options, "password")?;
         let protector = get_str(&options, "protector")?;
         do_unlock_dir(dir, &pass, &protector, &self.ks).into_dbus()
     }
@@ -453,7 +483,7 @@ impl DirlockDaemon {
         &self,
         options: HashMap<String, Value<'_>>,
     ) -> Result<bool> {
-        let pass = get_str(&options, "password")?;
+        let pass = get_secret(&options, "password")?;
         let protector = get_str(&options, "protector")?;
         do_verify_protector_password(&pass, &protector, &self.ks).into_dbus()
     }
@@ -462,8 +492,8 @@ impl DirlockDaemon {
         &self,
         options: HashMap<String, Value<'_>>,
     ) -> Result<()> {
-        let pass = get_str(&options, "old-password")?;
-        let newpass = get_str(&options, "new-password")?;
+        let pass = get_secret(&options, "old-password")?;
+        let newpass = get_secret(&options, "new-password")?;
         let protector = get_str(&options, "protector")?;
         do_change_protector_password(&pass, &newpass, &protector, &self.ks).into_dbus()
     }
@@ -480,7 +510,7 @@ impl DirlockDaemon {
         dir: &Path,
         options: HashMap<String, Value<'_>>,
     ) -> Result<String> {
-        let pass = get_str(&options, "password")?;
+        let pass = get_secret(&options, "password")?;
         let protector = get_str(&options, "protector")?;
         do_encrypt_dir(dir, &pass, &protector, &self.ks).into_dbus()
     }
@@ -492,7 +522,7 @@ impl DirlockDaemon {
         #[zbus(signal_emitter)]
         emitter: SignalEmitter<'_>,
     ) -> Result<u32> {
-        let pass = get_str(&options, "password")?;
+        let pass = get_secret(&options, "password")?;
         let protector = get_str(&options, "protector")?;
         // Create a new ConvertJob and store it in self.jobs
         let job = do_convert_dir(dir, &pass, &protector, &self.ks)
@@ -562,7 +592,7 @@ impl DirlockDaemon {
     ) -> Result<String> {
         let ptype = get_str(&options, "type")?;
         let name = get_str(&options, "name")?;
-        let pass = get_str(&options, "password")?;
+        let pass = get_secret(&options, "password")?;
         do_create_protector(&ptype, &name, &pass, &self.ks).into_dbus()
     }
 
@@ -593,9 +623,9 @@ impl DirlockDaemon {
     ) -> Result<()> {
         let policy = get_str(&options, "policy")?;
         let protector = get_str(&options, "protector")?;
-        let protector_pass = get_str(&options, "protector-password")?;
+        let protector_pass = get_secret(&options, "protector-password")?;
         let unlock_with = get_str(&options, "unlock-with")?;
-        let unlock_with_pass = get_str(&options, "unlock-with-password")?;
+        let unlock_with_pass = get_secret(&options, "unlock-with-password")?;
         do_add_protector_to_policy(&policy, &protector, &protector_pass, &unlock_with, &unlock_with_pass, &self.ks)
             .into_dbus()
     }
@@ -616,7 +646,7 @@ impl DirlockDaemon {
         options: HashMap<String, Value<'_>>,
     ) -> Result<String> {
         let protector = get_str(&options, "protector")?;
-        let pass = get_str(&options, "password")?;
+        let pass = get_secret(&options, "password")?;
         do_recovery_add(dir, &protector, &pass, &self.ks).into_dbus()
     }
 
@@ -632,9 +662,9 @@ impl DirlockDaemon {
         dir: &Path,
         options: HashMap<String, Value<'_>>,
     ) -> Result<()> {
-        let recovery_key = get_str(&options, "recovery-key")?;
+        let recovery_key = get_secret(&options, "recovery-key")?;
         let protector = get_str(&options, "protector")?;
-        let pass = get_str(&options, "password")?;
+        let pass = get_secret(&options, "password")?;
         do_recovery_restore(dir, &recovery_key, &protector, &pass, &self.ks).into_dbus()
     }
 }
