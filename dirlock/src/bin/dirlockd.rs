@@ -310,9 +310,8 @@ fn do_remove_protector(protector_id: &str, ks: &Keystore) -> anyhow::Result<()> 
 
 /// Get a protector
 fn do_get_protector(id: ProtectorId, ks: &Keystore) -> anyhow::Result<DbusProtectorData> {
-    let Ok(prot) = ks.load_protector(id) else {
-        bail!("Error reading protector {id}");
-    };
+    let prot = ks.load_protector(id)
+        .map_err(|e| anyhow!("Error reading protector {id}: {e}"))?;
     Ok(DbusProtectorData::from(&prot))
 }
 
