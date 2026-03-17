@@ -16,12 +16,18 @@
     <!--
         LockDir:
         @dir: Path to an encrypted directory.
+        @flags: List of status flags from the kernel.
+        Possible values include `files-busy` (some files are still
+        in use) and `other-users` (other users still have the key).
+        An empty list means that the key was fully removed and the
+        directory is locked.
 
         Lock an encrypted directory.
         The directory must be currently unlocked.
     -->
     <method name="LockDir">
       <arg name="dir" type="s" direction="in"/>
+      <arg name="flags" type="as" direction="out"/>
     </method>
 
     <!--

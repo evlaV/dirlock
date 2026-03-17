@@ -80,7 +80,7 @@ pub trait Dirlock1 {
     fn job_status(&self, jobid: u32) -> zbus::Result<i32>;
 
     /// LockDir method
-    fn lock_dir(&self, dir: &str) -> zbus::Result<()>;
+    fn lock_dir(&self, dir: &str) -> zbus::Result<Vec<String>>;
 
     /// RecoveryAdd method
     fn recovery_add(

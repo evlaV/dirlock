@@ -34,6 +34,7 @@ use dirlock::{
     fscrypt::{
         self,
         PolicyKeyId,
+        RemovalStatusFlags,
     },
     protector::{
         Protector,
@@ -46,6 +47,10 @@ use dirlock::{
 
 const DIRLOCK_DBUS_PATH: &str = "/com/valvesoftware/Dirlock1";
 const DIRLOCK_DBUS_SERVICE: &str = "com.valvesoftware.Dirlock1";
+
+// String versions of fscrypt::RemovalStatusFlags
+const FILES_BUSY_FLAG: &str = "files-busy";
+const OTHER_USERS_FLAG: &str = "other-users";
 
 /// Events sent by background tasks to the main thread
 enum Event {
@@ -166,11 +171,29 @@ impl From<&ProtectedPolicyKey> for DbusProtectorData {
 #[derive(Serialize, zvariant::Type)]
 struct DbusPolicyData(HashMap<String, Vec<DbusProtectorData>>);
 
+/// Convert RemovalStatusFlags into a list of strings
+fn removal_status_flags_to_strings(flags: RemovalStatusFlags) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut remaining = flags;
+    if remaining.contains(RemovalStatusFlags::FilesBusy) {
+        result.push(FILES_BUSY_FLAG.to_string());
+        remaining.remove(RemovalStatusFlags::FilesBusy);
+    }
+    if remaining.contains(RemovalStatusFlags::OtherUsers) {
+        result.push(OTHER_USERS_FLAG.to_string());
+        remaining.remove(RemovalStatusFlags::OtherUsers);
+    }
+    if !remaining.is_empty() {
+        result.push(format!("unknown-flags-{:#x}", remaining.bits()));
+    }
+    result
+}
+
 /// Lock a directory
-fn do_lock_dir(dir: &Path, ks: &Keystore) -> anyhow::Result<()> {
+fn do_lock_dir(dir: &Path, ks: &Keystore) -> anyhow::Result<Vec<String>> {
     let encrypted_dir = EncryptedDir::open(dir, ks, LockState::Unlocked)?;
-    encrypted_dir.lock(fscrypt::RemoveKeyUsers::CurrentUser)
-        .and(Ok(())) // TODO: check removal status flags
+    let flags = encrypted_dir.lock(fscrypt::RemoveKeyUsers::CurrentUser)?;
+    Ok(removal_status_flags_to_strings(flags))
 }
 
 /// Unlock a directory
@@ -464,7 +487,7 @@ impl DirlockDaemon {
     async fn lock_dir(
         &self,
         dir: &Path
-    ) -> Result<()> {
+    ) -> Result<Vec<String>> {
         do_lock_dir(dir, &self.ks).into_dbus()
     }
 
@@ -1084,8 +1107,9 @@ mod tests {
         // You cannot unlock an already unlocked directory
         assert!(proxy.unlock_dir(dir_str, as_opts(&unlock_opts)).await.is_err());
 
-        // Lock the directory
-        proxy.lock_dir(dir_str).await?;
+        // Lock the directory (no open files, so no flags)
+        let flags = proxy.lock_dir(dir_str).await?;
+        assert!(flags.is_empty());
 
         // You cannot lock an already locked directory
         assert!(proxy.lock_dir(dir_str).await.is_err());
@@ -1094,7 +1118,8 @@ mod tests {
         proxy.unlock_dir(dir_str, as_opts(&unlock_opts)).await?;
 
         // Lock it again (in order to release the key from the kernel)
-        proxy.lock_dir(dir_str).await?;
+        let flags = proxy.lock_dir(dir_str).await?;
+        assert!(flags.is_empty());
 
         Ok(())
     }
@@ -1135,6 +1160,60 @@ mod tests {
             as_opts(&str_dict([
                 ("protector", &prot_id),
             ]))).await.is_err());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_lock_dir_files_busy() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        let password = "pass1";
+
+        // Create and encrypt a directory
+        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir_str = dir.path().to_str().unwrap();
+        let prot_id = create_test_protector(&proxy, password).await?;
+        encrypt_test_dir(&proxy, dir.path(), &prot_id, password).await?;
+
+        // Create a file and keep it open
+        let open_file = std::fs::File::create(dir.path().join("busy.txt"))?;
+
+        // Lock should succeed but report files-busy
+        let flags = proxy.lock_dir(dir_str).await?;
+        assert!(flags.contains(&FILES_BUSY_FLAG.to_string()),
+                "expected {FILES_BUSY_FLAG} flag, got {flags:?}");
+
+        // The directory should be partially locked
+        let status = proxy.get_dir_status(dir_str).await?;
+        assert_eq!(expect_str(&status, "status")?, "partially-locked");
+
+        // Unlock the partially-locked directory (the file is still open)
+        let unlock_opts = str_dict([
+            ("protector", prot_id.as_str()),
+            ("password", password),
+        ]);
+        proxy.unlock_dir(dir_str, as_opts(&unlock_opts)).await?;
+        let status = proxy.get_dir_status(dir_str).await?;
+        assert_eq!(expect_str(&status, "status")?, "unlocked");
+
+        // Lock again while the file is still open
+        let flags = proxy.lock_dir(dir_str).await?;
+        assert!(flags.contains(&FILES_BUSY_FLAG.to_string()),
+                "expected {FILES_BUSY_FLAG} flag, got {flags:?}");
+        let status = proxy.get_dir_status(dir_str).await?;
+        assert_eq!(expect_str(&status, "status")?, "partially-locked");
+
+        // Drop the open file, lock, and verify it's fully locked
+        drop(open_file);
+        let flags = proxy.lock_dir(dir_str).await?;
+        assert!(flags.is_empty());
+
+        let status = proxy.get_dir_status(dir_str).await?;
+        assert_eq!(expect_str(&status, "status")?, "locked");
 
         Ok(())
     }
