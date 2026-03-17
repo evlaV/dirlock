@@ -698,7 +698,9 @@ async fn main() -> anyhow::Result<()> {
             e = rx.recv() => match e {
                 Some(ev) => {
                     let emitter = iface.signal_emitter();
-                    _ = iface.get_mut().await.handle_event(emitter, ev).await;
+                    if let Err(e) = iface.get_mut().await.handle_event(emitter, ev).await {
+                        eprintln!("Error handling event: {e}");
+                    }
                     Ok(())
                 },
                 None => Err(anyhow!("Event channel unexpectedly closed")),
