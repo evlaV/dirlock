@@ -10,7 +10,7 @@ use zbus::fdo::Result;
 use zbus::fdo::Error;
 use zeroize::Zeroizing;
 use std::collections::HashMap;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::num::NonZeroU32;
 use std::os::fd::AsFd;
 use std::path::Path;
@@ -120,6 +120,19 @@ fn get_secret(options: &HashMap<String, Value<'_>>, key: &str) -> zbus::fdo::Res
         return Ok(buf);
     }
     Ok(Zeroizing::new(get_str(options, key)?.into_bytes()))
+}
+
+/// Extract an optional fd from the options dict.
+fn get_opt_fd(options: &HashMap<String, Value<'_>>, key: &str) -> zbus::fdo::Result<Option<std::os::fd::OwnedFd>> {
+    match options.get(key) {
+        Some(Value::Fd(fd)) => {
+            let owned = fd.as_fd().try_clone_to_owned()
+                .map_err(|e| Error::Failed(format!("failed to clone '{key}': {e}")))?;
+            Ok(Some(owned))
+        }
+        Some(_) => Err(Error::InvalidArgs(format!("'{key}' must be a file descriptor"))),
+        None => Ok(None),
+    }
 }
 
 /// This is the D-Bus API version of [`DirStatus`]
@@ -386,11 +399,14 @@ fn do_add_protector_to_policy(
     dirlock::add_protector_to_policy(&policy_id, &protector_key, &unlock_with, unlock_with_pass, ks)
 }
 
-/// Add a recovery key to an encrypted directory
+/// Add a recovery key to an encrypted directory.
+/// If `out_fd` is provided, write the recovery key to it and return
+/// an empty string, avoiding the secret traveling over D-Bus.
 fn do_recovery_add(
     dir: &Path,
     protector_id: &str,
     pass: &[u8],
+    out_fd: Option<std::os::fd::OwnedFd>,
     ks: &Keystore,
 ) -> anyhow::Result<String> {
     let protector_id = ProtectorId::from_str(protector_id)?;
@@ -406,7 +422,14 @@ fn do_recovery_add(
     };
 
     let recovery = encrypted_dir.add_recovery_key(&protkey)?;
-    Ok(recovery.to_string())
+
+    if let Some(fd) = out_fd {
+        let mut f = std::fs::File::from(fd);
+        f.write_all(recovery.to_string().as_bytes())?;
+        Ok(String::new())
+    } else {
+        Ok(recovery.to_string())
+    }
 }
 
 /// Remove the recovery key from an encrypted directory
@@ -669,7 +692,8 @@ impl DirlockDaemon {
     ) -> Result<String> {
         let protector = get_str(&options, "protector")?;
         let pass = get_secret(&options, "password")?;
-        do_recovery_add(dir, &protector, &pass, &self.ks).into_dbus()
+        let out_fd = get_opt_fd(&options, "recovery-key-fd")?;
+        do_recovery_add(dir, &protector, &pass, out_fd, &self.ks).into_dbus()
     }
 
     async fn recovery_remove(
@@ -1605,6 +1629,48 @@ mod tests {
         assert_eq!(expect_bool(&status, "has-recovery-key")?, false);
 
         // Lock to release the key
+        proxy.lock_dir(dir_str).await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_recovery_add_fd() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        // Create and encrypt a directory
+        let password = "pass1";
+        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir_str = dir.path().to_str().unwrap();
+        let prot_id = create_test_protector(&proxy, password).await?;
+        encrypt_test_dir(&proxy, dir.path(), &prot_id, password).await?;
+
+        // Add a recovery key, using an fd to return it from the daemon
+        let (read_fd, write_fd) = nix::unistd::pipe()?;
+        let mut opts = str_dict([
+            ("protector", prot_id.as_str()),
+            ("password", password),
+        ]);
+        opts.push(("recovery-key-fd", Value::from(zvariant::Fd::from(write_fd))));
+
+        let ret = proxy.recovery_add(dir_str, as_opts(&opts)).await?;
+        drop(opts); // this drops write_fd, closing the write part of the pipe
+        assert!(ret.is_empty(), "return value should be empty when fd is used");
+
+        // Read the recovery key from the read end of the pipe
+        let mut buf = String::new();
+        std::fs::File::from(read_fd).read_to_string(&mut buf)?;
+        assert!(!buf.is_empty(), "recovery key should have been written to fd");
+
+        // Verify that the recovery key is set
+        let status = proxy.get_dir_status(dir_str).await?;
+        assert_eq!(expect_bool(&status, "has-recovery-key")?, true);
+
+        // Clean up
+        proxy.recovery_remove(dir_str).await?;
         proxy.lock_dir(dir_str).await?;
 
         Ok(())

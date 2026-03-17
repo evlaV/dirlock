@@ -317,8 +317,16 @@
           Alternatively, `password-fd` (h) can be used to pass the
           secret via a file descriptor. Both are mutually exclusive.
 
+        Optional keys:
+
+        - `recovery-key-fd` (h): If provided, the recovery key is
+          written to this file descriptor and @recovery_key is
+          returned as an empty string. This avoids sending the
+          secret over the D-Bus wire.
+
         @recovery_key: The recovery key string. This must be
         stored securely by the user; it cannot be retrieved later.
+        Empty if `recovery-key-fd` was used.
 
         Add a recovery key to an encrypted directory.
         The directory must not already have a recovery key.
