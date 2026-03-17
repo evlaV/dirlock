@@ -21,7 +21,7 @@ pub trait Dirlock1 {
     ) -> zbus::Result<()>;
 
     /// CancelJob method
-    fn cancel_job(&self, jobn: u32) -> zbus::Result<()>;
+    fn cancel_job(&self, jobid: u32) -> zbus::Result<()>;
 
     /// ChangeProtectorPassword method
     fn change_protector_password(
@@ -77,7 +77,7 @@ pub trait Dirlock1 {
     ) -> zbus::Result<std::collections::HashMap<String, zbus::zvariant::OwnedValue>>;
 
     /// JobStatus method
-    fn job_status(&self, jobn: u32) -> zbus::Result<i32>;
+    fn job_status(&self, jobid: u32) -> zbus::Result<i32>;
 
     /// LockDir method
     fn lock_dir(&self, dir: &str) -> zbus::Result<()>;

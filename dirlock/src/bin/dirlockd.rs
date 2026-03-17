@@ -559,21 +559,21 @@ impl DirlockDaemon {
 
     async fn cancel_job(
         &self,
-        jobn: u32,
+        jobid: u32,
     ) -> Result<()> {
-        match self.jobs.get(&jobn) {
+        match self.jobs.get(&jobid) {
             Some(job) => job.cancel().into_dbus(),
-            None => Err(Error::Failed(format!("Job {jobn} not found"))),
+            None => Err(Error::Failed(format!("Job {jobid} not found"))),
         }
     }
 
     async fn job_status(
         &self,
-        jobn: u32,
+        jobid: u32,
     ) -> Result<i32> {
-        match self.jobs.get(&jobn) {
+        match self.jobs.get(&jobid) {
             Some(job) => Ok(job.progress()),
-            None => Err(Error::Failed(format!("Job {jobn} not found"))),
+            None => Err(Error::Failed(format!("Job {jobid} not found"))),
         }
     }
 

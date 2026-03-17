@@ -107,23 +107,23 @@
 
     <!--
         CancelJob:
-        @jobn: ID of the job to cancel.
+        @jobid: ID of the job to cancel.
 
         Cancel a running conversion job.
     -->
     <method name="CancelJob">
-      <arg name="jobn" type="u" direction="in"/>
+      <arg name="jobid" type="u" direction="in"/>
     </method>
 
     <!--
         JobStatus:
-        @jobn: ID of the job to query.
+        @jobid: ID of the job to query.
         @progress: Progress percentage (0-100).
 
         Query the progress of a running conversion job.
     -->
     <method name="JobStatus">
-      <arg name="jobn" type="u" direction="in"/>
+      <arg name="jobid" type="u" direction="in"/>
       <arg name="progress" type="i" direction="out"/>
     </method>
 
