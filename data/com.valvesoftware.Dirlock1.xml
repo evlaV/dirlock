@@ -348,6 +348,26 @@
     </method>
 
     <!--
+        RecoveryVerify:
+        @dir: Path to an encrypted directory.
+        @options: Options dict. Required keys:
+
+        - `recovery-key` (s): The recovery key string.
+          Alternatively, `recovery-key-fd` (h) can be used to pass the
+          secret via a file descriptor. Both are mutually exclusive.
+
+        @valid: %TRUE if the recovery key is correct.
+
+        Verify a recovery key without unlocking or restoring anything.
+        The directory must have a recovery key set.
+    -->
+    <method name="RecoveryVerify">
+      <arg name="dir" type="s" direction="in"/>
+      <arg name="options" type="a{sv}" direction="in"/>
+      <arg name="valid" type="b" direction="out"/>
+    </method>
+
+    <!--
         RecoveryRestore:
         @dir: Path to an encrypted directory.
         @options: Options dict. Required keys:

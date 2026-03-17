@@ -252,6 +252,18 @@ impl EncryptedDir {
         Ok(false)
     }
 
+    /// Verify a recovery key without unlocking or restoring anything.
+    /// `pass` contains the bytes of the modhex-encoded recovery key.
+    pub fn verify_recovery_key(&self, pass: &[u8]) -> Result<bool> {
+        let Some(recovery) = &self.recovery else {
+            bail!("This directory does not have a recovery key");
+        };
+        let Ok(key) = RecoveryKey::from_ascii_bytes(pass) else {
+            return Ok(false);
+        };
+        Ok(recovery.unwrap_key(key.protector_key()).is_some())
+    }
+
     /// Unlocks a directory using a [`RecoveryKey`].
     /// `pass` contains the bytes of the modhex-encoded recovery key.
     pub fn unlock_with_recovery_key(&self, pass: &[u8]) -> Result<bool> {

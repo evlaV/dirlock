@@ -440,6 +440,16 @@ fn do_recovery_remove(dir: &Path, ks: &Keystore) -> anyhow::Result<()> {
     }
 }
 
+/// Verify a recovery key without unlocking or restoring anything
+fn do_recovery_verify(
+    dir: &Path,
+    recovery_key_str: &[u8],
+    ks: &Keystore,
+) -> anyhow::Result<bool> {
+    let encrypted_dir = EncryptedDir::open(dir, ks, LockState::Any)?;
+    encrypted_dir.verify_recovery_key(recovery_key_str)
+}
+
 /// Restore keystore access to a directory using its recovery key
 fn do_recovery_restore(
     dir: &Path,
@@ -701,6 +711,15 @@ impl DirlockDaemon {
         dir: &Path,
     ) -> Result<()> {
         do_recovery_remove(dir, &self.ks).into_dbus()
+    }
+
+    async fn recovery_verify(
+        &self,
+        dir: &Path,
+        options: HashMap<String, Value<'_>>,
+    ) -> Result<bool> {
+        let recovery_key = get_secret(&options, "recovery-key")?;
+        do_recovery_verify(dir, &recovery_key, &self.ks).into_dbus()
     }
 
     async fn recovery_restore(
@@ -1717,6 +1736,53 @@ mod tests {
 
         // Lock to release the key
         proxy.lock_dir(dir_str).await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_recovery_verify() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        // Create and encrypt a new directory
+        let password = "pass1";
+        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir_str = dir.path().to_str().unwrap();
+        let prot_id = create_test_protector(&proxy, password).await?;
+        encrypt_test_dir(&proxy, dir.path(), &prot_id, password).await?;
+
+        // Lock it already
+        proxy.lock_dir(dir_str).await?;
+
+        // Add a recovery key
+        let recovery_key = proxy.recovery_add(dir_str, as_opts(&str_dict([
+            ("protector", &prot_id),
+            ("password", password),
+        ]))).await?;
+
+        // Verify the correct recovery key
+        assert_eq!(proxy.recovery_verify(dir_str, as_opts(&str_dict([
+            ("recovery-key", &recovery_key),
+        ]))).await?, true);
+
+        // Try to verify the wrong recovery key (malformed key)
+        assert_eq!(proxy.recovery_verify(dir_str, as_opts(&str_dict([
+            ("recovery-key", "wrong-key"),
+        ]))).await?, false);
+
+        // Try to verify the wrong recovery key (valid but wrong key)
+        assert_eq!(proxy.recovery_verify(dir_str, as_opts(&str_dict([
+            ("recovery-key", &RecoveryKey::new_random().to_string()),
+        ]))).await?, false);
+
+        // Remove the recovery key and try to verify it again
+        proxy.recovery_remove(dir_str).await?;
+        assert!(proxy.recovery_verify(dir_str, as_opts(&str_dict([
+            ("recovery-key", &recovery_key),
+        ]))).await.is_err());
 
         Ok(())
     }

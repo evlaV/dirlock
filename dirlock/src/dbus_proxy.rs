@@ -92,6 +92,13 @@ pub trait Dirlock1 {
     /// RecoveryRemove method
     fn recovery_remove(&self, dir: &str) -> zbus::Result<()>;
 
+    /// RecoveryVerify method
+    fn recovery_verify(
+        &self,
+        dir: &str,
+        options: std::collections::HashMap<&str, &zbus::zvariant::Value<'_>>,
+    ) -> zbus::Result<bool>;
+
     /// RecoveryRestore method
     fn recovery_restore(
         &self,
