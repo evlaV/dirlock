@@ -347,6 +347,7 @@ enum RecoveryCommand {
     Add(RecoveryAddArgs),
     Remove(RecoveryRemoveArgs),
     Restore(RecoveryRestoreArgs),
+    Verify(RecoveryVerifyArgs),
 }
 
 #[derive(FromArgs)]
@@ -386,6 +387,15 @@ struct RecoveryRestoreArgs {
     /// owner of the protector and policy (default: current user)
     #[argh(option)]
     user: Option<String>,
+    /// directory
+    #[argh(positional)]
+    dir: PathBuf,
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "verify")]
+/// Verify a recovery key
+struct RecoveryVerifyArgs {
     /// directory
     #[argh(positional)]
     dir: PathBuf,
@@ -1045,6 +1055,15 @@ fn cmd_recovery_restore(args: &RecoveryRestoreArgs, ks: &Keystore) -> Result<()>
     Ok(())
 }
 
+fn cmd_recovery_verify(args: &RecoveryVerifyArgs, ks: &Keystore) -> Result<()> {
+    let encrypted_dir = EncryptedDir::open(&args.dir, ks, LockState::Any)?;
+    let pass = read_recovery_key()?;
+    if !encrypted_dir.verify_recovery_key(pass.as_bytes())? {
+        bail!("Wrong recovery key");
+    }
+    Ok(())
+}
+
 fn cmd_export_master_key(args: &ExportMasterKeyArgs, ks: &Keystore) -> Result<()> {
     use base64::prelude::*;
     let encrypted_dir = EncryptedDir::open(&args.dir, ks, LockState::Any)?;
@@ -1213,6 +1232,7 @@ fn main() -> Result<()> {
             RecoveryCommand::Add(args) => cmd_recovery_add(args, &ks),
             RecoveryCommand::Remove(args) => cmd_recovery_remove(args, &ks),
             RecoveryCommand::Restore(args) => cmd_recovery_restore(args, &ks),
+            RecoveryCommand::Verify(args) => cmd_recovery_verify(args, &ks),
         },
         Status(args) => cmd_status(args, &ks),
         Admin(args) => match &args.command {
@@ -1490,6 +1510,44 @@ mod tests {
         // Verify that the recovery key is gone
         let encrypted_dir = EncryptedDir::open(dir.path(), &ks, LockState::Locked)?;
         assert!(encrypted_dir.recovery.is_none());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_recovery_verify() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let ks_dir = TempDir::new("keystore")?;
+        let ks = Keystore::from_path(ks_dir.path());
+
+        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let password = "1234";
+
+        // Encrypt the directory and lock it
+        push_test_password(password);
+        cmd_encrypt(&test_encrypt_args(dir.path()), &ks)?;
+        cmd_lock(&LockArgs { dir: dir.path().into(), all_users: false }, &ks)?;
+
+        // Add a recovery key using the library API so we can capture its value
+        let mut encrypted_dir = EncryptedDir::open(dir.path(), &ks, LockState::Locked)?;
+        let protkey = encrypted_dir.protectors[0].protector
+            .unwrap_key(password.as_bytes())?.unwrap();
+        let recovery_key = encrypted_dir.add_recovery_key(&protkey)?;
+
+        let verify_args = RecoveryVerifyArgs { dir: dir.path().into() };
+
+        // Verify the correct recovery key
+        push_test_password(&recovery_key.to_string());
+        cmd_recovery_verify(&verify_args, &ks)?;
+
+        // Try to verify the wrong recovery key (malformed key)
+        push_test_password("wrong");
+        assert!(cmd_recovery_verify(&verify_args, &ks).is_err());
+
+        // Try to verify the wrong recovery key (valid but wrong key)
+        push_test_password(&RecoveryKey::new_random().to_string());
+        assert!(cmd_recovery_verify(&verify_args, &ks).is_err());
 
         Ok(())
     }
