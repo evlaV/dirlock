@@ -143,11 +143,23 @@ fn try_recovery_key(pamh: &Pam, dir: &EncryptedDir, pass: Option<&[u8]>) -> Resu
 /// Implementation of pam_sm_authenticate().
 ///
 /// Used for authentication.
-fn do_authenticate(pamh: Pam) -> Result<()> {
+fn do_authenticate(pamh: Pam, autologin: bool) -> Result<()> {
     let ks = Keystore::default();
     let user = get_user(&pamh)?;
     let homedir = get_home_data(user, &ks)?;
     let rhost = get_rhost(&pamh);
+
+    // If autologin is enabled we don't ask for a password.
+    // We succeed of fail depending on whether the home directory
+    // is already unlocked.
+    if autologin {
+        if homedir.key_status == dirlock::fscrypt::KeyStatus::Present {
+            log_info(&pamh, format!("autologin; home already unlocked for user {user}"));
+            return Ok(());
+        }
+        log_warning(&pamh, format!("autologin; home is locked for user {user}"));
+        return Err(PamError::AUTH_ERR);
+    }
 
     let mut available_protectors = false;
 
@@ -342,11 +354,16 @@ struct FscryptPam;
 pam_module!(FscryptPam);
 
 impl PamServiceModule for FscryptPam {
-    fn authenticate(pamh: Pam, _flags: PamFlags, _args: Vec<String>) -> PamError {
+    fn authenticate(pamh: Pam, _flags: PamFlags, args: Vec<String>) -> PamError {
         if ! pam_init(&pamh) {
             return PamError::SERVICE_ERR;
         }
-        do_authenticate(pamh).err().unwrap_or(PamError::SUCCESS)
+        let autologin = args.iter().any(|a| a == "autologin");
+        match do_authenticate(pamh, autologin).err().unwrap_or(PamError::SUCCESS) {
+            // autologin enabled and user not managed by dirlock -> succeed
+            PamError::USER_UNKNOWN if autologin => PamError::SUCCESS,
+            x => x,
+        }
     }
 
     fn open_session(pamh: Pam, _flags: PamFlags, _args: Vec<String>) -> PamError {
