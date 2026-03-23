@@ -23,9 +23,9 @@ use crate::policy::{
     WrappedPolicyKey,
 };
 
-pub use fido2::Fido2Protector as Fido2Protector;
-pub use password::PasswordProtector as PasswordProtector;
-pub use tpm2::Tpm2Protector as Tpm2Protector;
+pub use fido2::Fido2Protector;
+pub use password::PasswordProtector;
+pub use tpm2::Tpm2Protector;
 pub mod fido2;
 pub mod password;
 pub mod tpm2;
