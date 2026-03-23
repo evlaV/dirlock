@@ -7,7 +7,6 @@
 use anyhow::{anyhow, bail, Context, Result};
 use std::{
     collections::HashMap,
-    ffi::OsStr,
     fs,
     io::ErrorKind,
     io::Write,
@@ -51,36 +50,20 @@ impl Keystore {
 
     /// Return an iterator to the IDs of all policy keys available in the key store
     pub fn policy_key_ids(&self) -> std::io::Result<Vec<PolicyKeyId>> {
-        fn id_from_entry(d: fs::DirEntry) -> Option<PolicyKeyId> {
-            let path = d.path();
-            if let Some(path_str) = path.file_name().and_then(OsStr::to_str) {
-                path_str.parse::<PolicyKeyId>().ok()
-            } else {
-                None
-            }
-        }
-
-        match fs::read_dir(&self.policy_dir) {
-            Ok(d) => Ok(d.flatten().filter_map(id_from_entry).collect()),
-            Err(e) if e.kind() == ErrorKind::NotFound => Ok(vec![]),
-            Err(e) => Err(e),
-        }
+        Self::list_ids(&self.policy_dir)
     }
-
 
     /// Return an iterator to the IDs of all protectors available in the key store
     pub fn protector_ids(&self) -> std::io::Result<Vec<ProtectorId>> {
-        fn id_from_entry(d: fs::DirEntry) -> Option<ProtectorId> {
-            let path = d.path();
-            if let Some(path_str) = path.file_name().and_then(OsStr::to_str) {
-                path_str.parse::<ProtectorId>().ok()
-            } else {
-                None
-            }
-        }
+        Self::list_ids(&self.protector_dir)
+    }
 
-        match fs::read_dir(&self.protector_dir) {
-            Ok(d) => Ok(d.flatten().filter_map(id_from_entry).collect()),
+    /// Generic helper to read protector and policy IDs
+    fn list_ids<T: std::str::FromStr>(dir: &Path) -> std::io::Result<Vec<T>> {
+        match fs::read_dir(dir) {
+            Ok(d) => Ok(d.flatten()
+                .filter_map(|e| e.path().file_name()?.to_str()?.parse().ok())
+                .collect()),
             Err(e) if e.kind() == ErrorKind::NotFound => Ok(vec![]),
             Err(e) => Err(e),
         }
