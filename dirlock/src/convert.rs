@@ -312,7 +312,9 @@ impl ConvertJob {
         _ = nix::unistd::syncfs(syncfd.as_raw_fd());
 
         // Remove the original data, now under workdir/data
-        let _ = fs::remove_dir_all(&dstdir_2);
+        if let Err(e) = fs::remove_dir_all(&dstdir_2) {
+            eprintln!("Warning: failed to remove old data: {e}");
+        }
 
         // Remove the job from the convertdb.
         // This acquires the global lock.
@@ -320,9 +322,13 @@ impl ConvertJob {
         db.remove(&self.dirs.src_rel);
 
         // Remove the rest of workdir
-        let _ = fs::remove_dir_all(&self.workdir);
+        if let Err(e) = fs::remove_dir_all(&self.workdir) {
+            eprintln!("Warning: failed to remove workdir: {e}");
+        }
         // workdir is gone, write the updated convertdb to disk
-        let _ = db.commit();
+        if let Err(e) = db.commit() {
+            eprintln!("Warning: failed to update convertdb: {e}");
+        }
 
         Ok(self.keyid)
     }
