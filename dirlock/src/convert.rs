@@ -264,9 +264,20 @@ impl ConvertJob {
             status => bail!(status.error_msg()),
         }
 
+        // If a previous commit() crashed immediately before
+        // RENAME_EXCHANGE, workdir/data will exist as an orphan.
+        // Move it back so we can resync it.
+        let dstdir = workdir_e.join(Self::DSTDIR);
+        let orphan = workdir.join(Self::DSTDIR);
+        if orphan.exists() {
+            if dstdir.exists() {
+                fs::remove_dir_all(&dstdir)?;
+            }
+            fs::rename(&orphan, &dstdir)?;
+        }
+
         // Copy the source directory inside the encrypted directory.
         // This will encrypt the data in the process.
-        let dstdir = workdir_e.join(Self::DSTDIR);
         let cloner = DirectoryCloner::start(&dirs.src, &dstdir)?;
 
         Ok(Self { dirs, cloner, keyid, _lockfile, dstdir, workdir })
