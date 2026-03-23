@@ -90,11 +90,11 @@ impl Keystore {
     pub fn load_protector(&self, id: ProtectorId) -> std::io::Result<Protector> {
         let dir = &self.protector_dir;
         let protector_file = dir.join(id.to_string());
-        let Ok(md) = fs::metadata(&protector_file) else {
-            return Err(std::io::Error::new(ErrorKind::NotFound, "protector not found"));
-        };
+        let file = fs::File::open(protector_file)
+            .map_err(|e| std::io::Error::new(e.kind(), format!("error reading protector {id}: {e}")))?;
+        let md = file.metadata()?;
 
-        serde_json::from_reader(fs::File::open(protector_file)?)
+        serde_json::from_reader(file)
             .map(|data| Protector::from_data(id, data, Some(md.uid()), Some(md.gid())))
             .map_err(|e| std::io::Error::new(ErrorKind::InvalidData, e))
     }
@@ -123,11 +123,11 @@ impl Keystore {
     pub fn load_policy_data(&self, id: &PolicyKeyId) -> std::io::Result<PolicyData> {
         let dir = &self.policy_dir;
         let policy_file = dir.join(id.to_string());
-        let Ok(md) = fs::metadata(&policy_file) else {
-            return Err(std::io::Error::new(ErrorKind::NotFound, "policy not found"));
-        };
+        let file = fs::File::open(policy_file)
+            .map_err(|e| std::io::Error::new(e.kind(), format!("error reading policy {id}: {e}")))?;
+        let md = file.metadata()?;
 
-        serde_json::from_reader(fs::File::open(policy_file)?)
+        serde_json::from_reader(file)
             .map_err(|e| std::io::Error::new(ErrorKind::InvalidData, e))
             .and_then(|keys: HashMap<_,_>| {
                 if keys.is_empty() {
