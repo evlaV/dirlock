@@ -159,7 +159,10 @@ impl DirectoryCloner {
     /// Cancel the copy operation, killing the child rsync process
     pub fn cancel(&self) -> Result<()> {
         if ! self.is_finished() {
-            signal::kill(self.child_pid, Some(signal::SIGTERM))?;
+            match signal::kill(self.child_pid, Some(signal::SIGTERM)) {
+                Err(nix::errno::Errno::ESRCH) => (), // already exited
+                x => x?,
+            }
         }
         Ok(())
     }
