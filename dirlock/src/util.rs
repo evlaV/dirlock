@@ -296,10 +296,12 @@ mod tests {
         let path = tmpdir.path().join("test3");
         fs::write(&path, b"old")?;
         fs::set_permissions(&path, Permissions::from_mode(0o751))?;
+        let oldmd = fs::metadata(&path)?;
 
         let mut file = SafeFile::create(&path, None, None)?;
         _ = file.write(b"new")?;
         file.commit()?;
+        let newmd = fs::metadata(&path)?;
 
         assert_eq!(fs::read(path)?, b"new");
         assert_eq!(oldmd.permissions(), newmd.permissions());
@@ -312,10 +314,12 @@ mod tests {
         unix::fs::chown(&path, Some(1), Some(2))
             .expect("chown() failed. Run as root or with fakeroot");
         fs::set_permissions(&path, Permissions::from_mode(0o751))?;
+        let oldmd = fs::metadata(&path)?;
 
         let mut file = SafeFile::create(&path, None, None)?;
         _ = file.write(b"new")?;
         file.commit()?;
+        let newmd = fs::metadata(&path)?;
 
         assert_eq!(fs::read(path)?, b"new");
         assert_eq!(oldmd.permissions(), newmd.permissions());
