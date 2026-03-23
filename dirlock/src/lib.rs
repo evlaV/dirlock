@@ -303,7 +303,7 @@ impl EncryptedDir {
     }
 }
 
-/// Unlocks a directory with a encryption key.
+/// Unlocks a directory with an encryption key.
 pub(crate) fn unlock_dir_with_key(dir: &Path, master_key: &PolicyKey) -> Result<()> {
     if let Err(e) = fscrypt::add_key(dir, master_key.secret()) {
         bail!("Unable to unlock directory with master key: {}", e);
@@ -394,7 +394,7 @@ pub fn create_policy_data(protector: &Protector, protector_key: &ProtectorKey,
     Ok((policy, master_key))
 }
 
-/// Add a protector to an policy, loading it from disk if it exists.
+/// Add a protector to a policy, loading it from disk if it exists.
 pub fn protect_policy_key(protector: &Protector, protector_key: &ProtectorKey,
                           master_key: PolicyKey, ks: &Keystore) -> Result<()> {
     let id = master_key.get_id();
