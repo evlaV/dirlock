@@ -297,7 +297,7 @@ pub(super) fn get_fido2_device(cred: Option<&[u8]>) -> Result<Device> {
 fn parse_fido2_error(err: fido2_rs::error::FidoError) -> anyhow::Error {
     let msg = match err.code {
         FIDO_ERR_PIN_INVALID => "Invalid FIDO2 PIN",
-        FIDO_ERR_PIN_AUTH_BLOCKED => "FIDO2 token blocked, remove and reinsert it",
+        FIDO_ERR_PIN_AUTH_BLOCKED => "FIDO2 token blocked; remove and reinsert it",
         FIDO_ERR_ACTION_TIMEOUT => "FIDO2 timeout (user didn't interact with the token)",
         FIDO_ERR_UNSUPPORTED_OPTION => "Unsupported FIDO2 options",
         FIDO_ERR_UP_REQUIRED => "User presence required",
