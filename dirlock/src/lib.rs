@@ -224,7 +224,7 @@ impl EncryptedDir {
     /// as long as the password is correct.
     pub fn unlock(&self, password: &[u8], protector_id: &ProtectorId) -> Result<bool> {
         // If password looks like a recovery key, try it first
-        if self.unlock_with_recovery_key(password).unwrap_or(true) {
+        if self.unlock_with_recovery_key(password)? {
             return Ok(true);
         }
         let p = self.get_protected_policy_key(protector_id)?;
