@@ -97,7 +97,8 @@ impl DirectoryCloner {
         // What we do here in practice is ( cd $src ; rsync -aAXH ./ $dst/ )
         let mut child = Command::new("rsync")
             // This preserves ACLs (A), extended attributes (X) and hard links (H)
-            .args(["-aAXH", "--info=progress2", "--no-inc-recursive", "--delete"])
+            // We also use -x to stop at filesystem boundaries
+            .args(["-aAXHx", "--info=progress2", "--no-inc-recursive", "--delete"])
             .args([OsStr::new("./"), &dst])
             .current_dir(&src)
             .stdout(Stdio::piped())
