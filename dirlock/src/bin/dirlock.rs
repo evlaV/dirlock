@@ -852,6 +852,9 @@ fn cmd_policy_status(args: &PolicyStatusArgs, ks: &Keystore) -> Result<()> {
 }
 
 fn cmd_policy_purge(args: &PolicyPurgeArgs, ks: &Keystore) -> Result<()> {
+    if let Err(e) = args.mntpoint.metadata() {
+        bail!("Cannot open {}: {e}", args.mntpoint.display());
+    }
     let policies = match &args.policy {
         Some(policy) => vec![policy.clone()],
         None => ks.policy_key_ids()?,
