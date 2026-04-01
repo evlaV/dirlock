@@ -8,12 +8,13 @@ use anyhow::{Result, anyhow, bail};
 use nix::sys::signal;
 use nix::unistd::Pid;
 use std::{
-    ffi::OsStr,
+    ffi::{CStr, OsStr},
     fs::File,
     io::BufRead,
     io::BufReader,
     os::fd::AsRawFd,
-    path::Path,
+    os::unix::ffi::OsStrExt,
+    path::{Path, PathBuf},
     process::Child,
     process::ChildStdout,
     process::Command,
@@ -31,14 +32,15 @@ use crate::util;
 
 /// A background process that clones a directory with all its contents
 pub struct DirectoryCloner {
-    child_pid: Pid,
     state: Arc<ClonerState>,
 }
 
 struct ClonerState {
+    child_pid: Mutex<Option<Pid>>,
     progress: AtomicI32,
     finished: AtomicBool,
-    exit_status: Mutex<Option<std::io::Result<ExitStatus>>>,
+    cancelled: AtomicBool,
+    exit_status: Mutex<Option<Result<ExitStatus>>>,
     condvar: Condvar,
 }
 
@@ -46,16 +48,50 @@ impl DirectoryCloner {
     /// Create a new [`DirectoryCloner`] to copy of `src` as `dst`.
     /// If `dst` exists, its contents will be replaced. Use with caution.
     /// This returns immediately, the copy happens in the background.
+    /// The source directory is checked for encrypted subdirectories
+    /// and cross-filesystem mounts before starting the copy.
     pub fn start(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<Self> {
         // Canonicalize src and check if it's the root directory
         let src = src.as_ref().canonicalize()?;
         if src.parent().is_none() {
             bail!("The source path cannot be the root directory");
         }
+
         // Create the destination directory and canonicalize it
         util::create_dir_if_needed(dst.as_ref())?;
+        let dst = dst.as_ref().canonicalize()?;
         let dst_fd = std::fs::File::open(&dst)?;
-        let mut dst = dst.as_ref().canonicalize()?.into_os_string();
+
+        let state = Arc::new(ClonerState {
+            child_pid : Mutex::new(None),
+            progress : AtomicI32::new(0),
+            finished : AtomicBool::new(false),
+            cancelled : AtomicBool::new(false),
+            exit_status : Mutex::new(None),
+            condvar : Condvar::new(),
+        });
+
+        // Spawn the thread that does the actual work.
+        let state2 = state.clone();
+        std::thread::spawn(move || {
+            // An error here means that rsync didn't even start,
+            // so save it and set state.finished = true.
+            let status = Self::run(&state2, src, dst, dst_fd);
+            *state2.exit_status.lock().unwrap() = Some(status);
+            state2.finished.store(true, Relaxed);
+            state2.condvar.notify_all();
+        });
+
+        Ok(Self { state })
+    }
+
+    /// Validate the source directory, then launch rsync and monitor it.
+    /// Called from the background thread.
+    fn run(state: &ClonerState, src: PathBuf, dst: PathBuf, dst_fd: File) -> Result<ExitStatus> {
+        // Validate the source directory
+        Self::validate_src_dir(state, &src)?;
+
+        let mut dst = dst.into_os_string();
         dst.push(std::path::MAIN_SEPARATOR_STR);
 
         // What we do here in practice is ( cd $src ; rsync -aAXH ./ $dst/ )
@@ -74,26 +110,51 @@ impl DirectoryCloner {
             bail!("Failed to run rsync");
         };
 
-        let child_pid = Pid::from_raw(child.id() as i32);
+        let pid = Pid::from_raw(child.id() as i32);
+        *state.child_pid.lock().unwrap() = Some(pid);
 
-        // Parse the rsync output to get the progress status
-        let progress = AtomicI32::new(0);
-        let finished = AtomicBool::new(false);
-        let exit_status = Mutex::new(None);
-        let condvar = Condvar::new();
-        let state = Arc::new(ClonerState { progress, finished, exit_status, condvar });
-        let state2 = state.clone();
-        std::thread::spawn(move || {
-            Self::parse_rsync_ouput(child, stdout, state2, dst_fd)
-        });
+        // If the operation was cancelled before child_pid was set,
+        // make sure that rsync is killed.
+        // parse_rsync_ouput() will take care of the error code.
+        if state.cancelled.load(Relaxed) {
+            _ = signal::kill(pid, Some(signal::SIGTERM));
+        }
 
-        Ok(Self { child_pid, state })
+        Self::parse_rsync_ouput(child, stdout, state, dst_fd)
+    }
+
+    /// Check that all subdirectories in `src` are on the same filesystem
+    /// and not encrypted.
+    fn validate_src_dir(state: &ClonerState, src: &Path) -> Result<()> {
+        let mut buf = Vec::with_capacity(512);
+        buf.extend_from_slice(src.as_os_str().as_bytes());
+        buf.push(0);
+        let src_stx = util::Statx::from_path(CStr::from_bytes_with_nul(&buf)?)?;
+        for iter in walkdir::WalkDir::new(src).follow_links(false) {
+            if state.cancelled.load(Relaxed) {
+                bail!("operation cancelled");
+            }
+            let entry = iter?;
+            if ! entry.file_type().is_dir() {
+                continue;
+            }
+            buf.clear();
+            buf.extend_from_slice(entry.path().as_os_str().as_bytes());
+            buf.push(0);
+            let stx = util::Statx::from_path(CStr::from_bytes_with_nul(&buf)?)?;
+            if ! stx.same_dev(&src_stx) {
+                bail!("{} has contents in different filesystems", src.display());
+            }
+            if stx.is_encrypted() {
+                bail!("{} has encrypted content", src.display());
+            }
+        }
+        Ok(())
     }
 
     /// Parse the output of the rsync command and wait until it's done.
-    /// This runs on its own separate thread.
     fn parse_rsync_ouput(mut child: Child, stdout: ChildStdout,
-                         state: Arc<ClonerState>, syncfd: File) {
+                         state: &ClonerState, syncfd: File) -> Result<ExitStatus> {
         const REGEX : &str = r" *[0-9,]+ *([0-9]{1,3})% .* to-chk=([0-9]+)/";
         let re = regex::bytes::Regex::new(REGEX).unwrap();
         let mut reader = BufReader::new(stdout);
@@ -136,14 +197,11 @@ impl DirectoryCloner {
         };
 
         let child_status = child.wait();
-        let mut exit_status = state.exit_status.lock().unwrap();
-        *exit_status = match (child_status, read_status) {
-            (Err(e), _     ) => Some(Err(e)),
-            (_     , Err(e)) => Some(Err(e)),
-            (Ok(s),  Ok(())) => Some(Ok(s)),
-        };
-        state.finished.store(true, Relaxed);
-        state.condvar.notify_all();
+        match (child_status, read_status) {
+            (Err(e), _     ) => Err(e.into()),
+            (_     , Err(e)) => Err(e.into()),
+            (Ok(s),  Ok(())) => Ok(s),
+        }
     }
 
     /// Return the current progress percentage
@@ -158,10 +216,16 @@ impl DirectoryCloner {
 
     /// Cancel the copy operation, killing the child rsync process
     pub fn cancel(&self) -> Result<()> {
+        // If swap() returns true -> already cancelled, nothing to do
+        if self.state.cancelled.swap(true, Relaxed) {
+            return Ok(());
+        }
         if ! self.is_finished() {
-            match signal::kill(self.child_pid, Some(signal::SIGTERM)) {
-                Err(nix::errno::Errno::ESRCH) => (), // already exited
-                x => x?,
+            if let Some(pid) = *self.state.child_pid.lock().unwrap() {
+                match signal::kill(pid, Some(signal::SIGTERM)) {
+                    Err(nix::errno::Errno::ESRCH) => (), // already exited
+                    x => x?,
+                }
             }
         }
         Ok(())
@@ -172,6 +236,9 @@ impl DirectoryCloner {
         let mut exit_status = self.state.exit_status.lock().unwrap();
         while exit_status.is_none() {
             exit_status = self.state.condvar.wait(exit_status).unwrap();
+        }
+        if self.state.cancelled.load(Relaxed) {
+            bail!("operation cancelled");
         }
         let status = exit_status.as_ref().unwrap();
         match status.as_ref().map(|e| e.code()) {

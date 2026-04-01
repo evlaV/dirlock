@@ -122,6 +122,37 @@ pub fn fs_supports_encryption(fstype: &str) -> bool {
     matches!(fstype, "ext4" | "f2fs" | "ubifs" | "ceph")
 }
 
+/// Wrapper for the statx(2) system call
+pub struct Statx {
+    stx: statx_sys::statx,
+}
+
+impl Statx {
+    /// Call statx(2) on this path. The path must be absolute
+    pub fn from_path(path: &std::ffi::CStr) -> Result<Self> {
+        use statx_sys::*;
+        let mut stx : statx = unsafe { std::mem::zeroed() };
+        let ret = unsafe {
+            statx(-1, path.as_ptr(), AT_SYMLINK_NOFOLLOW, 0, &raw mut stx)
+        };
+        if ret != 0 {
+            bail!("statx({}) failed: {}", path.to_string_lossy(), std::io::Error::last_os_error());
+        }
+        Ok(Statx { stx })
+    }
+
+    /// Check if the path is encrypted
+    pub fn is_encrypted(&self) -> bool {
+        self.stx.stx_attributes & (statx_sys::STATX_ATTR_ENCRYPTED as u64) != 0
+    }
+
+    /// Check if both paths are in the same filesystem
+    pub fn same_dev(&self, other: &Statx) -> bool {
+        self.stx.stx_dev_major == other.stx.stx_dev_major &&
+        self.stx.stx_dev_minor == other.stx.stx_dev_minor
+    }
+}
+
 /// Helper to safely write the new version of a file to disk.
 ///
 /// This creates a temporary file on the same directory and all write

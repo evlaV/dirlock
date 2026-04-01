@@ -10,10 +10,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{ErrorKind, Write};
 use std::os::fd::AsRawFd;
-use std::os::linux::fs::MetadataExt;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use walkdir::WalkDir;
 
 use crate::{
     DirStatus,
@@ -21,7 +19,7 @@ use crate::{
     create_policy_data,
     cloner::DirectoryCloner,
     fscrypt::{self, KeyStatus, PolicyKeyId},
-    protector::{Protector, ProtectorId, ProtectorKey},
+    protector::{Protector, ProtectorKey},
     unlock_dir_with_key,
     util::{
         LockFile,
@@ -62,59 +60,6 @@ pub enum ConversionStatus {
 /// Returns the [`ConversionStatus`] of a given source directory
 pub fn conversion_status(dir: &Path) -> Result<ConversionStatus> {
     ConvertJob::status(dir)
-}
-
-/// Check if an unencrypted directory can be converted into an encrypted one.
-// TODO: this is used to warn the user before attempting a conversion, but
-// it should probably be part of the conversion job and run asynchronously.
-pub fn check_can_convert_dir(dir: &Path, protid: Option<&ProtectorId>, ks: &Keystore) -> Result<()> {
-    // First, it must be an actual directory
-    if ! is_real_dir(dir) {
-        bail!("{} is not a directory", dir.display());
-    }
-
-    // It cannot be the root directory of a filesystem
-    let dir = dir.canonicalize()?;
-    let dev = dir.metadata()?.st_dev();
-    let parent_dev = dir.parent().unwrap_or(&dir).metadata()?.st_dev();
-    if dev != parent_dev {
-        bail!("Cannot encrypt the root directory of a filesytem");
-    }
-
-    // Check that the directory is not being converted already
-    match ConvertJob::status(&dir)? {
-        ConversionStatus::None => (),
-        ConversionStatus::Ongoing(id) => {
-            bail!("Directory {} is alredy being converted with policy {id}", dir.display());
-        },
-        ConversionStatus::Interrupted(id) => {
-            let policy = ks.load_policy_data(&id)?;
-            if let Some(protid) = protid {
-                if ! policy.keys.contains_key(protid) {
-                    bail!("Directory {} is already being converted with policy {id} but protector {} cannot unlock it",
-                          dir.display(), protid);
-                }
-            }
-        },
-    }
-
-    // Check all subdirectories
-    for iter in WalkDir::new(&dir).follow_links(false) {
-        let entry = iter?;
-        if ! entry.file_type().is_dir() {
-            continue;
-        }
-        // All contents must be in the same filesystem
-        if entry.metadata()?.st_dev() != dev {
-            bail!("{} has contents in different filesystems", dir.display());
-        }
-        // All contents must be unencrypted
-        if fscrypt::get_policy(entry.path())?.is_some() {
-            bail!("{} has encrypted content", dir.display());
-        }
-    }
-
-    Ok(())
 }
 
 /// Convert an unencrypted directory into an encrypted one
@@ -159,6 +104,10 @@ impl ConvertJob {
 
     /// This canonicalizes the source dir and returns [`SrcDirData`]
     fn get_src_dir_data(dir: &Path) -> Result<SrcDirData> {
+        if ! is_real_dir(dir) {
+            bail!("{} is not a directory", dir.display());
+        }
+
         let src = dir.canonicalize()?;
         let mut base = fscrypt::get_mountpoint(&src)?;
         if base == src {

@@ -707,8 +707,6 @@ fn cmd_convert(args: &ConvertArgs, ks: &Keystore) -> Result<()> {
         },
     }
 
-    check_can_convert_dir(&args.dir, args.protector.as_ref(), ks)?;
-
     let (protector, protector_key, protector_is_new) = get_or_create_protector(
         args.protector, args.protector_type, args.protector_name.as_deref(), args.user.as_deref(),
         &args.dir, ks,
