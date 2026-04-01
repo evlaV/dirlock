@@ -6,6 +6,7 @@
 
 use anyhow::{Result, anyhow, bail};
 use nix::sys::signal;
+use nix::sys::statvfs::statvfs;
 use nix::unistd::Pid;
 use std::{
     ffi::{CStr, OsStr},
@@ -85,11 +86,11 @@ impl DirectoryCloner {
         Ok(Self { state })
     }
 
-    /// Validate the source directory, then launch rsync and monitor it.
+    /// Validate the directories, then launch rsync and monitor it.
     /// Called from the background thread.
     fn run(state: &ClonerState, src: PathBuf, dst: PathBuf, dst_fd: File) -> Result<ExitStatus> {
-        // Validate the source directory
-        Self::validate_src_dir(state, &src)?;
+        // Validate the source directory and check free space on the destination
+        Self::validate_dirs(state, &src, &dst)?;
 
         let mut dst = dst.into_os_string();
         dst.push(std::path::MAIN_SEPARATOR_STR);
@@ -124,19 +125,47 @@ impl DirectoryCloner {
         Self::parse_rsync_ouput(child, stdout, state, dst_fd)
     }
 
-    /// Check that all subdirectories in `src` are on the same filesystem
-    /// and not encrypted.
-    fn validate_src_dir(state: &ClonerState, src: &Path) -> Result<()> {
+    /// Check that all subdirectories in `src` are on the same filesystem and
+    /// not encrypted, and that `dst` has enough free space and inodes.
+    fn validate_dirs(state: &ClonerState, src: &Path, dst: &Path) -> Result<()> {
+        // It's not enough that `dst` can hold the contents of `src`,
+        // it must also have at least this amount of extra free space and inodes.
+        const MIN_FREE_BYTES: u64 = 512 * 1024 * 1024;
+        const MIN_FREE_INODES: u64 = 1000;
+
+        let vfs = statvfs(dst)?;
+        let free_bytes = vfs.blocks_available() as u64 * vfs.block_size() as u64;
+        // Some filesystems (e.g. btrfs) report 0 here to indicate no fixed inode limit
+        let free_inodes = vfs.files_available() as u64;
+        let check_inodes = free_inodes > 0;
+
         let mut buf = Vec::with_capacity(512);
         buf.extend_from_slice(src.as_os_str().as_bytes());
         buf.push(0);
         let src_stx = util::Statx::from_path(CStr::from_bytes_with_nul(&buf)?)?;
+        let mut total_bytes: u64 = MIN_FREE_BYTES;
+        let mut total_inodes: u64 = MIN_FREE_INODES;
         for iter in walkdir::WalkDir::new(src).follow_links(false) {
             if state.cancelled.load(Relaxed) {
                 bail!("operation cancelled");
             }
             let entry = iter?;
-            if ! entry.file_type().is_dir() {
+            let ft = entry.file_type();
+
+            if ft.is_file() {
+                total_bytes += entry.metadata()?.len();
+                if total_bytes > free_bytes {
+                    bail!("Not enough free space");
+                }
+            }
+            if check_inodes {
+                total_inodes += 1;
+                if total_inodes > free_inodes {
+                    bail!("Not enough free inodes");
+                }
+            }
+
+            if ! ft.is_dir() {
                 continue;
             }
             buf.clear();
