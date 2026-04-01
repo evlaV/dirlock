@@ -119,10 +119,10 @@ pub struct EncryptedDir {
 pub fn open_dir(path: &Path, ks: &Keystore) -> Result<DirStatus> {
     let policy = match fscrypt::get_policy(path).
         map_err(|e| anyhow!("Failed to get encryption policy: {e}"))? {
-        Some(Policy::V2(p)) => p,
-        Some(_) => return Ok(DirStatus::Unsupported),
-        None    => return Ok(DirStatus::Unencrypted),
-    };
+            Some(Policy::V2(p)) => p,
+            Some(_) => return Ok(DirStatus::Unsupported),
+            None    => return Ok(DirStatus::Unencrypted),
+        };
 
     let recovery = WrappedPolicyKey::load_xattr(path);
 

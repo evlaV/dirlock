@@ -143,7 +143,7 @@ impl ConvertJob {
 
     /// Start a new asynchronous job to convert `dir` to an encrypted folder
     pub fn start(dir: &Path, protector: &Protector, protector_key: ProtectorKey,
-             ks: &Keystore) -> Result<Self> {
+                 ks: &Keystore) -> Result<Self> {
         // Open the convertdb file. This acquires the global lock
         let dirs = Self::get_src_dir_data(dir)?;
         let mut db = ConvertDb::load(&dirs.base)?;
