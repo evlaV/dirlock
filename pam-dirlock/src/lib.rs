@@ -359,11 +359,7 @@ impl PamServiceModule for FscryptPam {
             return PamError::SERVICE_ERR;
         }
         let autologin = args.iter().any(|a| a == "autologin");
-        match do_authenticate(pamh, autologin).err().unwrap_or(PamError::SUCCESS) {
-            // autologin enabled and user not managed by dirlock -> succeed
-            PamError::USER_UNKNOWN if autologin => PamError::SUCCESS,
-            x => x,
-        }
+        do_authenticate(pamh, autologin).err().unwrap_or(PamError::SUCCESS)
     }
 
     fn open_session(pamh: Pam, _flags: PamFlags, _args: Vec<String>) -> PamError {
