@@ -222,6 +222,7 @@ impl WrappedPolicyKey {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tempdir::TempDir;
 
     #[test]
     fn test_wrapped_policy_key() -> Result<()> {
@@ -243,6 +244,33 @@ mod tests {
             let result = wrapped.unwrap_key(&protkey);
             assert!(result.is_none());
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_xattr_round_trip() -> Result<()> {
+        let tmpdir = TempDir::new("policy-xattr")?;
+        let dir = tmpdir.path();
+
+        let protkey = ProtectorKey::new_random();
+        let polkey = PolicyKey::new_random();
+        let wrapped = WrappedPolicyKey::new(polkey.clone(), &protkey);
+
+        // Write the wrapped key to an xattr and load it back
+        wrapped.write_xattr(dir)?;
+        let loaded = WrappedPolicyKey::load_xattr(dir)
+            .expect("Failed to load xattr");
+
+        // Verify that the loaded key is identical to the written one
+        assert_eq!(loaded.wrapped_key, wrapped.wrapped_key);
+        assert_eq!(loaded.iv.0, wrapped.iv.0);
+        assert_eq!(loaded.hmac.0, wrapped.hmac.0);
+
+        // Unwrap the loaded key and verify that it matches the original
+        let result = loaded.unwrap_key(&protkey);
+        assert!(result.is_some(), "Failed to unwrap loaded key");
+        assert_eq!(result.unwrap().secret(), polkey.secret());
 
         Ok(())
     }
