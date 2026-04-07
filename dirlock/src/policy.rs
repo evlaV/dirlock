@@ -326,4 +326,12 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_xattr_load_empty() {
+        let tmpdir = TempDir::new("policy-xattr").unwrap();
+
+        // Loading from a directory with no xattrs should return None
+        assert!(WrappedPolicyKey::load_xattr(tmpdir.path()).is_none());
+    }
 }
