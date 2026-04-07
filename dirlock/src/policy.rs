@@ -334,4 +334,12 @@ mod tests {
         // Loading from a directory with no xattrs should return None
         assert!(WrappedPolicyKey::load_xattr(tmpdir.path()).is_none());
     }
+
+    #[test]
+    fn test_xattr_remove_nonexistent() {
+        let tmpdir = TempDir::new("policy-xattr").unwrap();
+
+        // Removing from a directory with no recovery xattr should fail
+        assert!(WrappedPolicyKey::remove_xattr(tmpdir.path()).is_err());
+    }
 }
