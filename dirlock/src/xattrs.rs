@@ -60,3 +60,69 @@ impl Xattrs {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_find_slot_empty() {
+        let xattrs = Xattrs { slots: HashMap::new() };
+        assert!(xattrs.find_slot(Xattrs::TYPE_RECOVERY).is_none());
+    }
+
+    #[test]
+    fn test_find_slot_match() {
+        // Insert a couple of slots, one of them of type 'recovery'
+        let mut slots = HashMap::new();
+        slots.insert(0, "0:a".to_string());
+        slots.insert(3, "1:data:iv:hmac".to_string());
+        let xattrs = Xattrs { slots };
+
+        // Find the slot and check its value
+        let (index, value) = xattrs.find_slot(Xattrs::TYPE_RECOVERY)
+            .expect("slot not found");
+        assert_eq!(index, 3);
+        assert_eq!(value, "1:data:iv:hmac");
+    }
+
+    #[test]
+    fn test_find_slot_no_match() {
+        let mut slots = HashMap::new();
+        slots.insert(0, "2:some:other:data".to_string());
+        let xattrs = Xattrs { slots };
+        assert!(xattrs.find_slot(Xattrs::TYPE_RECOVERY).is_none());
+    }
+
+    #[test]
+    fn test_first_free_slot_empty() {
+        let xattrs = Xattrs { slots: HashMap::new() };
+        assert_eq!(xattrs.first_free_slot(), Some(0));
+    }
+
+    #[test]
+    fn test_first_free_slot_gap() {
+        let mut slots = HashMap::new();
+        slots.insert(0, "1:a".to_string());
+        slots.insert(1, "1:b".to_string());
+        slots.insert(3, "1:c".to_string());
+        slots.insert(11, "1:c".to_string());
+        let xattrs = Xattrs { slots };
+        assert_eq!(xattrs.first_free_slot(), Some(2));
+    }
+
+    #[test]
+    fn test_first_free_slot_full() {
+        let slots = (0..Xattrs::MAX_SLOTS).map(|i| (i, format!("1:slot{i}"))).collect();
+        let xattrs = Xattrs { slots };
+        assert!(xattrs.first_free_slot().is_none());
+    }
+
+    #[test]
+    fn test_load_no_xattrs() {
+        let tmpdir = tempdir::TempDir::new("xattrs").expect("tmpdir");
+        let xattrs = Xattrs::load(tmpdir.path());
+        assert!(xattrs.find_slot(Xattrs::TYPE_RECOVERY).is_none());
+        assert_eq!(xattrs.first_free_slot(), Some(0));
+    }
+}
