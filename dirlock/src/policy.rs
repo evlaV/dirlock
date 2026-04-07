@@ -28,6 +28,7 @@ use crate::{
         AesIv,
         Hmac,
     },
+    xattrs::Xattrs,
 };
 
 const POLICY_KEY_LEN: usize = fscrypt::MAX_KEY_SIZE;
@@ -137,8 +138,6 @@ pub struct WrappedPolicyKey {
 }
 
 impl WrappedPolicyKey {
-    const RECOVERY_KEY_XATTR: &str = "trusted.dirlock";
-
     /// Creates a new [`WrappedPolicyKey`] that wraps a [`PolicyKey`] with a [`ProtectorKey`]
     pub fn new(mut raw_key: PolicyKey, protector_key: &ProtectorKey) -> Self {
         let iv = AesIv::new_random();
@@ -151,14 +150,12 @@ impl WrappedPolicyKey {
         use base64::prelude::*;
 
         // Read the xattr containing the wrapped encryption key
-        let attr = match xattr::get(path, Self::RECOVERY_KEY_XATTR) {
-            Ok(Some(v)) => String::from_utf8_lossy(&v).into_owned(),
-            _ => return None,
-        };
+        let xattrs = Xattrs::load(path);
+        let (_, attr) = xattrs.find_slot(Xattrs::TYPE_RECOVERY)?;
         let values: Vec<&str> = attr.split(':').collect();
 
-        // Check the version and number of fields
-        if values[0] != "1" || values.len() != 4 {
+        // Check the number of fields
+        if values.len() != 4 {
             return None;
         }
 
@@ -186,25 +183,34 @@ impl WrappedPolicyKey {
         Some(WrappedPolicyKey { wrapped_key, iv, hmac })
     }
 
-    /// Write this [`WrappedPolicyKey`] to an xattr in `path` so it can be used for recovery
+    /// Write this [`WrappedPolicyKey`] to an xattr in `path` so it can be used for recovery.
+    /// If there is an existing recovery key it will be overwritten.
     pub fn write_xattr(&self, path: &Path) -> Result<()> {
         use base64::prelude::*;
 
+        let xattrs = Xattrs::load(path);
+        let slot = xattrs.find_slot(Xattrs::TYPE_RECOVERY).map(|(i, _)| i)
+            .or_else(|| xattrs.first_free_slot())
+            .ok_or_else(|| anyhow::anyhow!("No free xattr slots available"))?;
+
         let value = [
-            "1", // Entry version
+            Xattrs::TYPE_RECOVERY,
             &BASE64_STANDARD.encode(self.wrapped_key),
             &BASE64_STANDARD.encode(self.iv.0),
             &BASE64_STANDARD.encode(self.hmac.0),
         ].join(":");
 
-        xattr::set(path, Self::RECOVERY_KEY_XATTR, value.as_bytes())?;
+        Xattrs::set(path, slot, &value)?;
 
         Ok(())
     }
 
     /// Remove the recovery key xattr from `path`
     pub fn remove_xattr(path: &Path) -> Result<()> {
-        xattr::remove(path, Self::RECOVERY_KEY_XATTR)?;
+        let xattrs = Xattrs::load(path);
+        let (slot, _) = xattrs.find_slot(Xattrs::TYPE_RECOVERY)
+            .ok_or_else(|| anyhow::anyhow!("No recovery xattr found"))?;
+        Xattrs::remove(path, slot)?;
         Ok(())
     }
 

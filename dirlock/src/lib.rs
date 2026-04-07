@@ -16,6 +16,7 @@ pub mod policy;
 pub mod protector;
 pub mod recovery;
 pub mod util;
+pub(crate) mod xattrs;
 #[cfg(feature = "dbus")]
 pub mod dbus_proxy;
 
