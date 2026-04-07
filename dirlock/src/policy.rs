@@ -274,4 +274,37 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_xattr_overwrite() -> Result<()> {
+        let tmpdir = TempDir::new("policy-xattr")?;
+        let dir = tmpdir.path();
+
+        // Create two different policy keys
+        let protkey = ProtectorKey::new_random();
+        let polkey1 = PolicyKey::new_random();
+        let polkey2 = {
+            let mut key = polkey1.clone();
+            key.secret_mut()[0] ^= 1;
+            key
+        };
+
+        // Write the first key
+        let wrapped1 = WrappedPolicyKey::new(polkey1.clone(), &protkey);
+        wrapped1.write_xattr(dir)?;
+
+        // Overwrite with the second key
+        let wrapped2 = WrappedPolicyKey::new(polkey2.clone(), &protkey);
+        wrapped2.write_xattr(dir)?;
+
+        // Loading should return the second key
+        let loaded = WrappedPolicyKey::load_xattr(dir).expect("Failed to load xattr");
+        assert_eq!(loaded.wrapped_key, wrapped2.wrapped_key);
+        assert_eq!(loaded.iv.0, wrapped2.iv.0);
+        assert_eq!(loaded.hmac.0, wrapped2.hmac.0);
+        let result = loaded.unwrap_key(&protkey).expect("Failed to unwrap loaded key");
+        assert_eq!(result.secret(), polkey2.secret());
+
+        Ok(())
+    }
 }
