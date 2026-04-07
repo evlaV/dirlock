@@ -307,4 +307,23 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_xattr_remove() -> Result<()> {
+        let tmpdir = TempDir::new("policy-xattr")?;
+        let dir = tmpdir.path();
+
+        let protkey = ProtectorKey::new_random();
+        let polkey = PolicyKey::new_random();
+        let wrapped = WrappedPolicyKey::new(polkey, &protkey);
+
+        // Write and then remove the xattr
+        wrapped.write_xattr(dir)?;
+        WrappedPolicyKey::remove_xattr(dir)?;
+
+        // Loading should return None
+        assert!(WrappedPolicyKey::load_xattr(dir).is_none());
+
+        Ok(())
+    }
 }
