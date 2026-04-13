@@ -29,13 +29,11 @@ use dirlock::{
     EncryptedDir,
     Keystore,
     LockState,
+    PolicyKeyId,
     ProtectedPolicyKey,
+    RemovalStatusFlags,
+    RemoveKeyUsers,
     convert::ConvertJob,
-    fscrypt::{
-        self,
-        PolicyKeyId,
-        RemovalStatusFlags,
-    },
     protector::{
         Protector,
         ProtectorId,
@@ -205,7 +203,7 @@ fn removal_status_flags_to_strings(flags: RemovalStatusFlags) -> Vec<String> {
 /// Lock a directory
 fn do_lock_dir(dir: &Path, ks: &Keystore) -> anyhow::Result<Vec<String>> {
     let encrypted_dir = EncryptedDir::open(dir, ks, LockState::Unlocked)?;
-    let flags = encrypted_dir.lock(fscrypt::RemoveKeyUsers::CurrentUser)?;
+    let flags = encrypted_dir.lock(RemoveKeyUsers::CurrentUser)?;
     Ok(removal_status_flags_to_strings(flags))
 }
 

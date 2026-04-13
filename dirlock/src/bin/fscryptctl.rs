@@ -9,8 +9,13 @@ use std::io::Read;
 use argh::FromArgs;
 use std::path::PathBuf;
 
-use dirlock::fscrypt::{self, PolicyKeyId};
-use dirlock::policy::PolicyKey;
+use dirlock::{
+    KeyStatusFlags,
+    Policy,
+    PolicyKeyId,
+    RemoveKeyUsers,
+    policy::PolicyKey,
+};
 
 #[derive(FromArgs)]
 /// Disk encryption tool.
@@ -84,26 +89,26 @@ struct RemoveKeyArgs {
 }
 
 fn cmd_get_policy(args: &GetPolicyArgs) -> Result<()> {
-    match fscrypt::get_policy(&args.dir)? {
+    match dirlock::get_policy(&args.dir)? {
         None => println!("Directory not encrypted"),
-        Some(fscrypt::Policy::V1(p)) => println!("Policy v1, key id: {}", p.keyid),
-        Some(fscrypt::Policy::V2(p)) => println!("Policy v2, key id: {}", p.keyid),
-        Some(fscrypt::Policy::Unknown(v)) => println!("Encrypted with unknown policy ({v})"),
+        Some(Policy::V1(p)) => println!("Policy v1, key id: {}", p.keyid),
+        Some(Policy::V2(p)) => println!("Policy v2, key id: {}", p.keyid),
+        Some(Policy::Unknown(v)) => println!("Encrypted with unknown policy ({v})"),
     };
 
     Ok(())
 }
 
 fn cmd_set_policy(args: &SetPolicyArgs) -> Result<()> {
-    fscrypt::set_policy(&args.dir, &args.keyid)?;
+    dirlock::set_policy(&args.dir, &args.keyid)?;
     println!("Set policy {} in directory {}", args.keyid, &args.dir.display());
     Ok(())
 }
 
 fn cmd_key_status(args: &KeyStatusArgs) -> Result<()> {
-    let (status, flags) = fscrypt::get_key_status(&args.mountpoint, &args.keyid)?;
+    let (status, flags) = dirlock::get_key_status(&args.mountpoint, &args.keyid)?;
     println!("Got status of key {} in directory {}: {:?}", &args.keyid, args.mountpoint.display(), status);
-    if flags.contains(fscrypt::KeyStatusFlags::AddedBySelf) {
+    if flags.contains(KeyStatusFlags::AddedBySelf) {
         println!("(key added by self)");
     }
     Ok(())
@@ -113,13 +118,13 @@ fn cmd_add_key(args: &AddKeyArgs) -> Result<()> {
     let mut stdin = std::io::stdin();
     let key = PolicyKey::new_from_reader(&mut stdin)?;
     ensure!(stdin.read(&mut [0])? == 0, "Too much data when reading key from stdin");
-    let keyid = fscrypt::add_key(&args.mountpoint, key.secret())?;
+    let keyid = dirlock::add_key(&args.mountpoint, key.secret())?;
     println!("Added key {} to directory {}", keyid, args.mountpoint.display());
     Ok(())
 }
 
 fn cmd_remove_key(args: &RemoveKeyArgs) -> Result<()> {
-    fscrypt::remove_key(&args.mountpoint, &args.keyid, fscrypt::RemoveKeyUsers::CurrentUser)?;
+    dirlock::remove_key(&args.mountpoint, &args.keyid, RemoveKeyUsers::CurrentUser)?;
     println!("Removed key {} from directory {}", &args.keyid, args.mountpoint.display());
     Ok(())
 }

@@ -153,7 +153,7 @@ fn do_authenticate(pamh: Pam, autologin: bool) -> Result<()> {
     // We succeed of fail depending on whether the home directory
     // is already unlocked.
     if autologin {
-        if homedir.key_status == dirlock::fscrypt::KeyStatus::Present {
+        if homedir.key_status == dirlock::KeyStatus::Present {
             log_info(&pamh, format!("autologin; home already unlocked for user {user}"));
             return Ok(());
         }
@@ -316,7 +316,7 @@ fn do_open_session(pamh: Pam) -> Result<()> {
     let user = get_user(&pamh)?;
     let homedir = get_home_data(user, &ks)?;
     // If the home directory is already unlocked then we are done
-    if homedir.key_status == dirlock::fscrypt::KeyStatus::Present {
+    if homedir.key_status == dirlock::KeyStatus::Present {
         log_info(&pamh, format!("session opened for user {user}"));
         return Ok(());
     }

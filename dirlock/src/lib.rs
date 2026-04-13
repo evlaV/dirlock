@@ -8,7 +8,7 @@ pub(crate) mod config;
 pub(crate) mod cloner;
 pub mod convert;
 pub(crate) mod crypto;
-pub mod fscrypt;
+pub(crate) mod fscrypt;
 pub(crate) mod kdf;
 mod keystore;
 pub mod modhex;
@@ -22,7 +22,10 @@ pub mod dbus_proxy;
 
 use anyhow::{anyhow, bail, Result};
 pub use keystore::Keystore;
-use fscrypt::{KeyStatus, Policy, PolicyKeyId, RemoveKeyUsers, RemovalStatusFlags};
+pub use fscrypt::{
+    KeyStatus, KeyStatusFlags, Policy, PolicyKeyId,
+    PolicyV1, PolicyV2, RemoveKeyUsers, RemovalStatusFlags,
+};
 use policy::{
     PolicyData,
     PolicyKey,
@@ -104,12 +107,43 @@ pub struct UnusableProtector {
 /// Encryption data (policy, key status) of a given directory
 pub struct EncryptedDir {
     pub path: PathBuf,
-    pub policy: fscrypt::PolicyV2,
+    pub policy: PolicyV2,
     pub key_status: KeyStatus,
-    pub key_flags: fscrypt::KeyStatusFlags,
+    pub key_flags: KeyStatusFlags,
     pub protectors: Vec<ProtectedPolicyKey>,
     pub unusable: Vec<UnusableProtector>,
     pub recovery: Option<WrappedPolicyKey>,
+}
+
+/// Add an encryption key to the kernel for a given filesystem.
+/// Resolves the mountpoint from `dir`.
+pub fn add_key(dir: &Path, key: &[u8]) -> Result<PolicyKeyId> {
+    let mnt = util::get_mountpoint(dir)?;
+    fscrypt::add_key(&mnt, key)
+}
+
+/// Remove an encryption key from the kernel for a given filesystem.
+/// Resolves the mountpoint from `dir`.
+pub fn remove_key(dir: &Path, keyid: &PolicyKeyId, user: RemoveKeyUsers) -> Result<RemovalStatusFlags> {
+    let mnt = util::get_mountpoint(dir)?;
+    fscrypt::remove_key(&mnt, keyid, user)
+}
+
+/// Check if a directory is encrypted and return its encryption policy
+pub fn get_policy(dir: &Path) -> Result<Option<Policy>> {
+    fscrypt::get_policy(dir)
+}
+
+/// Enable encryption on a directory by setting a new policy
+pub fn set_policy(dir: &Path, keyid: &PolicyKeyId) -> Result<()> {
+    fscrypt::set_policy(dir, keyid)
+}
+
+/// Check if an encryption key is loaded into the kernel for a given filesystem.
+/// Resolves the mountpoint from `dir`.
+pub fn get_key_status(dir: &Path, keyid: &PolicyKeyId) -> Result<(KeyStatus, KeyStatusFlags)> {
+    let mnt = util::get_mountpoint(dir)?;
+    fscrypt::get_key_status(&mnt, keyid)
 }
 
 /// Gets the encryption status of a directory.
@@ -132,7 +166,7 @@ pub fn open_dir(path: &Path, ks: &Keystore) -> Result<DirStatus> {
         return Ok(DirStatus::KeyMissing(policy.keyid));
     };
 
-    let (key_status, key_flags) = fscrypt::get_key_status(path, &policy.keyid)
+    let (key_status, key_flags) = get_key_status(path, &policy.keyid)
         .map_err(|e| anyhow!("Failed to get key status: {e}"))?;
 
     Ok(DirStatus::Encrypted(EncryptedDir { path: path.into(), policy, key_status, key_flags, protectors, unusable, recovery }))
@@ -287,7 +321,7 @@ impl EncryptedDir {
             bail!("The directory {} is already locked", self.path.display());
         }
 
-        fscrypt::remove_key(&self.path, &self.policy.keyid, user)
+        remove_key(&self.path, &self.policy.keyid, user)
             .map_err(|e|anyhow!("Unable to lock directory: {e}"))
     }
 
@@ -306,7 +340,7 @@ impl EncryptedDir {
 
 /// Unlocks a directory with an encryption key.
 pub(crate) fn unlock_dir_with_key(dir: &Path, master_key: &PolicyKey) -> Result<()> {
-    if let Err(e) = fscrypt::add_key(dir, master_key.secret()) {
+    if let Err(e) = add_key(dir, master_key.secret()) {
         bail!("Unable to unlock directory with master key: {}", e);
     }
     Ok(())
@@ -315,7 +349,7 @@ pub(crate) fn unlock_dir_with_key(dir: &Path, master_key: &PolicyKey) -> Result<
 /// Encrypts a directory with an existing encryption key.
 pub fn encrypt_dir_with_key(path: &Path, master_key: &PolicyKey) -> Result<()> {
     let keyid = master_key.get_id();
-    fscrypt::add_key(path, master_key.secret())
+    add_key(path, master_key.secret())
         .and_then(|id| {
             if id == keyid {
                 fscrypt::set_policy(path, &id)
@@ -342,7 +376,7 @@ pub fn encrypt_dir(path: &Path, protector: &Protector, protector_key: ProtectorK
     encrypt_dir_with_key(path, &master_key)
         .map_err(|e| {
             let user = RemoveKeyUsers::CurrentUser;
-            let _ = fscrypt::remove_key(path, &policy.id, user);
+            let _ = remove_key(path, &policy.id, user);
             let _ = ks.remove_policy(&policy.id);
             anyhow!("Failed to encrypt directory: {e}")
         })?;

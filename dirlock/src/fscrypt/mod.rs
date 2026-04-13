@@ -15,11 +15,8 @@ use serde_with::{serde_as, hex::Hex};
 use std::{
     fs::File,
     mem,
-    os::{
-        fd::AsRawFd,
-        linux::fs::MetadataExt,
-    },
-    path::{Path, PathBuf},
+    os::fd::AsRawFd,
+    path::Path,
 };
 use zeroize::Zeroize;
 
@@ -260,7 +257,7 @@ pub fn add_key(dir: &Path, key: &[u8]) -> Result<PolicyKeyId> {
         return Err(describe_error(Errno::EINVAL));
     }
 
-    let fd = File::open(get_mountpoint(dir)?)?;
+    let fd = File::open(dir)?;
 
     let mut arg : fscrypt_add_key_arg_full = unsafe { mem::zeroed() };
     arg.key_spec.type_ = FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER;
@@ -278,7 +275,7 @@ pub fn add_key(dir: &Path, key: &[u8]) -> Result<PolicyKeyId> {
 
 /// Remove an encryption key from the kernel for a given filesystem
 pub fn remove_key(dir: &Path, keyid: &PolicyKeyId, user: RemoveKeyUsers) -> Result<RemovalStatusFlags> {
-    let fd = File::open(get_mountpoint(dir)?)?;
+    let fd = File::open(dir)?;
 
     let mut arg : fscrypt_remove_key_arg = unsafe { mem::zeroed() };
     arg.key_spec.type_ = FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER;
@@ -350,7 +347,7 @@ pub fn set_policy(dir: &Path, keyid: &PolicyKeyId) -> Result<()> {
 
 /// Check if a key with the given [`PolicyKeyId`] is loaded into the kernel for a given filesystem
 pub fn get_key_status(dir: &Path, keyid: &PolicyKeyId) -> Result<(KeyStatus, KeyStatusFlags)> {
-    let fd = File::open(get_mountpoint(dir)?)?;
+    let fd = File::open(dir)?;
 
     let mut arg : fscrypt_get_key_status_arg = unsafe { mem::zeroed() };
     arg.key_spec.type_ = FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER;
@@ -369,26 +366,6 @@ pub fn get_key_status(dir: &Path, keyid: &PolicyKeyId) -> Result<(KeyStatus, Key
     Ok((key_status, KeyStatusFlags::from_bits_truncate(arg.status_flags)))
 }
 
-
-/// Get the mount point of the file system that contains `dir`
-pub fn get_mountpoint(dir: &Path) -> std::io::Result<PathBuf> {
-    let mut current = dir.canonicalize()?;
-    loop {
-        // Compare a directory's metadata with its parent's
-        let parent = current.parent().unwrap_or(&current);
-        let md1 = std::fs::metadata(&current)?;
-        let md2 = std::fs::metadata(parent)?;
-        // Same inode? => We reached the root directory
-        if md2.st_ino() == md1.st_ino() {
-            return Ok(current);
-        }
-        // Different device? => The parent is in a different filesystem
-        if md2.st_dev() != md1.st_dev() {
-            return Ok(current);
-        }
-        current.pop();
-    }
-}
 
 /// Describe the errors returned by the fscrypt ioctls
 fn describe_error(err: Errno) -> anyhow::Error {

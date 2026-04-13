@@ -18,7 +18,7 @@ use crate::{
     Keystore,
     create_policy_data,
     cloner::DirectoryCloner,
-    fscrypt::{self, KeyStatus, PolicyKeyId},
+    fscrypt::{KeyStatus, PolicyKeyId},
     protector::{Protector, ProtectorKey},
     unlock_dir_with_key,
     util::{
@@ -26,6 +26,7 @@ use crate::{
         SafeFile,
         create_dir_if_needed,
         dir_is_empty,
+        get_mountpoint,
         is_real_dir,
     },
 };
@@ -109,7 +110,7 @@ impl ConvertJob {
         }
 
         let src = dir.canonicalize()?;
-        let mut base = fscrypt::get_mountpoint(&src)?;
+        let mut base = get_mountpoint(&src)?;
         if base == src {
             bail!("Cannot encrypt the root directory of a filesystem");
         };

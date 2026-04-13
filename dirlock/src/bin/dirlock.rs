@@ -15,13 +15,12 @@ use dirlock::{
     DirStatus,
     EncryptedDir,
     Host,
+    KeyStatus,
     Keystore,
     LockState,
-    recovery::RecoveryKey,
-    fscrypt::{
-        PolicyKeyId,
-        self,
-    },
+    PolicyKeyId,
+    RemovalStatusFlags,
+    RemoveKeyUsers,
     policy::PolicyKey,
     protector::{
         Protector,
@@ -33,6 +32,7 @@ use dirlock::{
             ProtectorOptsBuilder,
         },
     },
+    recovery::RecoveryKey,
     util::{
         dir_is_empty,
         fs_supports_encryption,
@@ -533,17 +533,17 @@ fn cmd_lock(args: &LockArgs, ks: &Keystore) -> Result<()> {
     let encrypted_dir = EncryptedDir::open(&args.dir, ks, LockState::Unlocked)?;
 
     let user = if args.all_users {
-        fscrypt::RemoveKeyUsers::AllUsers
+        RemoveKeyUsers::AllUsers
     } else {
-        fscrypt::RemoveKeyUsers::CurrentUser
+        RemoveKeyUsers::CurrentUser
     };
     let flags = encrypted_dir.lock(user)?;
 
-    if flags.contains(fscrypt::RemovalStatusFlags::FilesBusy) {
+    if flags.contains(RemovalStatusFlags::FilesBusy) {
         println!("Key removed, but some files are still busy");
     };
 
-    if flags.contains(fscrypt::RemovalStatusFlags::OtherUsers) {
+    if flags.contains(RemovalStatusFlags::OtherUsers) {
         println!("Only this user's claim was removed");
     };
 
@@ -767,8 +767,8 @@ fn cmd_list_policies(ks: &Keystore) -> Result<()> {
     for id in &policies {
         let unlocked = fs.iter()
             .filter(|path| {
-                fscrypt::get_key_status(Path::new(path), id)
-                    .map(|(s, _)| s == fscrypt::KeyStatus::Present)
+                dirlock::get_key_status(Path::new(path), id)
+                    .map(|(s, _)| s == KeyStatus::Present)
                     .unwrap_or(false)
             });
         for mnt in unlocked {
@@ -843,7 +843,7 @@ fn cmd_policy_status(args: &PolicyStatusArgs, ks: &Keystore) -> Result<()> {
     println!("Policy                              Status");
     println!("------------------------------------------");
     for id in &policies {
-        match fscrypt::get_key_status(&args.mntpoint, id) {
+        match dirlock::get_key_status(&args.mntpoint, id) {
             Ok((status, _)) => println!("{id}    {status}"),
             Err(e) => println!("{id}    error ({e})"),
         }
@@ -865,10 +865,10 @@ fn cmd_policy_purge(args: &PolicyPurgeArgs, ks: &Keystore) -> Result<()> {
     println!("Policy                              Action");
     println!("------------------------------------------");
     for id in &policies {
-        use fscrypt::{KeyStatus::*, RemoveKeyUsers, RemovalStatusFlags};
-        match fscrypt::get_key_status(&args.mntpoint, id) {
+        use KeyStatus::*;
+        match dirlock::get_key_status(&args.mntpoint, id) {
             Ok((Present, _)) | Ok((IncompletelyRemoved, _)) => {
-                match fscrypt::remove_key(&args.mntpoint, id, RemoveKeyUsers::CurrentUser) {
+                match dirlock::remove_key(&args.mntpoint, id, RemoveKeyUsers::CurrentUser) {
                     Ok(flags) if flags.contains(RemovalStatusFlags::FilesBusy) => {
                         println!("{id}    partially removed (still in use)");
                     },
@@ -1164,7 +1164,7 @@ fn cmd_tpm2_test(ks: &Keystore) -> Result<()> {
 
 fn cmd_fscrypt_enabled(args: &FscryptEnabledArgs) -> Result<()> {
     let id = PolicyKeyId::default();
-    fscrypt::get_key_status(&args.dir, &id)?;
+    dirlock::get_key_status(&args.dir, &id)?;
     println!("enabled");
     Ok(())
 }
@@ -1265,7 +1265,7 @@ fn main() -> Result<()> {
 mod tests {
     use super::*;
     use dirlock::util::push_test_password;
-    use fscrypt::{RemoveKeyUsers, RemovalStatusFlags};
+    use dirlock::{RemoveKeyUsers, RemovalStatusFlags};
     use tempdir::TempDir;
 
     // Filesystem where to run the tests. It must support fscrypt.
@@ -1745,7 +1745,7 @@ mod tests {
 
         // encrypt leaves the directory unlocked
         let encrypted_dir = EncryptedDir::open(dir.path(), &ks, LockState::Unlocked)?;
-        assert_eq!(encrypted_dir.key_status, fscrypt::KeyStatus::Present);
+        assert_eq!(encrypted_dir.key_status, KeyStatus::Present);
 
         // purge removes the key from memory (locking the directory)
         cmd_policy_purge(&PolicyPurgeArgs {
@@ -1753,7 +1753,7 @@ mod tests {
             mntpoint: dir.path().into()
         }, &ks)?;
         let encrypted_dir = EncryptedDir::open(dir.path(), &ks, LockState::Locked)?;
-        assert_eq!(encrypted_dir.key_status, fscrypt::KeyStatus::Absent);
+        assert_eq!(encrypted_dir.key_status, KeyStatus::Absent);
 
         Ok(())
     }
