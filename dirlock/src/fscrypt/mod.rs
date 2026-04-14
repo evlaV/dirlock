@@ -20,8 +20,8 @@ use std::{
 };
 use zeroize::Zeroize;
 
-/// All our keys use the maximum length allowed by fscrypt
-pub use linux::FSCRYPT_MAX_KEY_SIZE as MAX_KEY_SIZE;
+/// The maximum size of an encryption key allowed by the kernel
+pub const MAX_KEY_SIZE: usize = linux::FSCRYPT_MAX_KEY_SIZE;
 
 /// An 8-byte key descriptor for v1 fscrypt policies
 #[derive(derive_more::Display)]
@@ -230,7 +230,7 @@ struct fscrypt_add_key_arg_full {
     raw_size: u32,
     key_id: u32,
     __reserved: [u32; 8],
-    raw: [u8; FSCRYPT_MAX_KEY_SIZE]
+    raw: [u8; MAX_KEY_SIZE]
 }
 
 impl Drop for fscrypt_add_key_arg_full {
@@ -253,7 +253,7 @@ mod ioctl {
 
 /// Add an encryption key to the kernel for a given filesystem
 pub fn add_key(dir: &Path, key: &[u8]) -> Result<PolicyKeyId> {
-    if key.is_empty() || key.len() > FSCRYPT_MAX_KEY_SIZE {
+    if key.is_empty() || key.len() > MAX_KEY_SIZE {
         return Err(describe_error(Errno::EINVAL));
     }
 
@@ -437,7 +437,7 @@ mod tests {
 
         // Test keys of different sizes
         for i in 0..5 {
-            let mut key = vec![0u8; FSCRYPT_MAX_KEY_SIZE - 8 * i];
+            let mut key = vec![0u8; MAX_KEY_SIZE - 8 * i];
             OsRng.fill_bytes(&mut key);
             do_test_key(&key, &mntpoint)?;
         }
@@ -450,7 +450,7 @@ mod tests {
         let mntpoint = std::path::Path::new("/tmp");
         let workdir = tempdir::TempDir::new_in(mntpoint, "encrypted")?;
 
-        let mut key = vec![0u8; FSCRYPT_MAX_KEY_SIZE];
+        let mut key = vec![0u8; MAX_KEY_SIZE];
         OsRng.fill_bytes(&mut key);
         let id = PolicyKeyId::new_from_key(&key);
 
