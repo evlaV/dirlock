@@ -25,10 +25,16 @@ pub use error::{Error, PolicyIdParseError, Result};
 /// The maximum size of an encryption key allowed by the kernel
 pub const MAX_KEY_SIZE: usize = linux::FSCRYPT_MAX_KEY_SIZE;
 
+/// The size of an fscrypt key descriptor (for v1 policies)
+pub const KEY_DESCRIPTOR_SIZE: usize = linux::FSCRYPT_KEY_DESCRIPTOR_SIZE;
+
+/// The size of an fscrypt key identifier (for v2 policies)
+pub const KEY_IDENTIFIER_SIZE: usize = linux::FSCRYPT_KEY_IDENTIFIER_SIZE;
+
 /// An 8-byte key descriptor for v1 fscrypt policies
 #[derive(derive_more::Display)]
 #[display("{}", hex::encode(_0))]
-pub struct PolicyKeyDescriptor([u8; FSCRYPT_KEY_DESCRIPTOR_SIZE]);
+pub struct PolicyKeyDescriptor([u8; KEY_DESCRIPTOR_SIZE]);
 
 /// A 16-byte key identifier for v2 fscrypt policies
 #[serde_as]
@@ -36,7 +42,7 @@ pub struct PolicyKeyDescriptor([u8; FSCRYPT_KEY_DESCRIPTOR_SIZE]);
 #[display("{}", hex::encode(_0))]
 pub struct PolicyKeyId(
     #[serde_as(as = "Hex")]
-    [u8; FSCRYPT_KEY_IDENTIFIER_SIZE]
+    [u8; KEY_IDENTIFIER_SIZE]
 );
 
 impl std::str::FromStr for PolicyKeyId {
@@ -463,7 +469,7 @@ mod tests {
             filenames_encryption_mode: FSCRYPT_MODE_AES_256_CTS,
             flags: FSCRYPT_POLICY_FLAGS_PAD_32,
             __reserved: [0u8; 4],
-            master_key_identifier: [0u8; FSCRYPT_KEY_IDENTIFIER_SIZE],
+            master_key_identifier: [0u8; KEY_IDENTIFIER_SIZE],
         };
         let result = unsafe {
             ioctl::fscrypt_set_policy(fd.as_raw_fd(), &raw mut arg as *mut fscrypt_policy_v1)
