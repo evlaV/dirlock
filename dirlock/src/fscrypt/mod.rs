@@ -1,13 +1,13 @@
 /*
- * Copyright © 2025 Valve Corporation
+ * Copyright © 2025-2026 Valve Corporation
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
+mod error;
 mod linux;
 use linux::*;
 
-use anyhow::{anyhow, bail, Result};
 use nix::errno::Errno;
 use num_enum::{FromPrimitive, TryFromPrimitive};
 use serde::{Serialize, Deserialize};
@@ -19,6 +19,8 @@ use std::{
     path::Path,
 };
 use zeroize::Zeroize;
+
+pub use error::{Error, PolicyIdParseError, Result};
 
 /// The maximum size of an encryption key allowed by the kernel
 pub const MAX_KEY_SIZE: usize = linux::FSCRYPT_MAX_KEY_SIZE;
@@ -38,12 +40,11 @@ pub struct PolicyKeyId(
 );
 
 impl std::str::FromStr for PolicyKeyId {
-    type Err = anyhow::Error;
+    type Err = PolicyIdParseError;
     /// Create a key identifier from an hex string
-    fn from_str(s: &str) -> Result<Self> {
+    fn from_str(s: &str) -> std::result::Result<Self, PolicyIdParseError> {
         let mut ret = PolicyKeyId::default();
-        hex::decode_to_slice(s, &mut ret.0)
-            .map_err(|_| anyhow!("Invalid policy ID: {s}"))?;
+        hex::decode_to_slice(s, &mut ret.0).map_err(|_| PolicyIdParseError)?;
         Ok(ret)
     }
 }
@@ -254,7 +255,7 @@ mod ioctl {
 /// Add an encryption key to the kernel for a given filesystem
 pub fn add_key(dir: &Path, key: &[u8]) -> Result<PolicyKeyId> {
     if key.is_empty() || key.len() > MAX_KEY_SIZE {
-        return Err(describe_error(Errno::EINVAL));
+        return Err(Error::InvalidPolicy);
     }
 
     let fd = File::open(dir)?;
@@ -268,7 +269,7 @@ pub fn add_key(dir: &Path, key: &[u8]) -> Result<PolicyKeyId> {
     let raw_fd = fd.as_raw_fd();
     let argptr = &raw mut arg as *mut fscrypt_add_key_arg;
     match unsafe { ioctl::fscrypt_add_key(raw_fd, argptr) } {
-        Err(x) => Err(describe_error(x)),
+        Err(x) => Err(Error::from(x)),
         _ => Ok(PolicyKeyId(unsafe { arg.key_spec.u.identifier }))
     }
 }
@@ -283,17 +284,22 @@ pub fn remove_key(dir: &Path, keyid: &PolicyKeyId, user: RemoveKeyUsers) -> Resu
 
     let raw_fd = fd.as_raw_fd();
     let argptr = &raw mut arg;
-    if let Err(x) = match user {
+    match user {
         RemoveKeyUsers::CurrentUser => unsafe { ioctl::fscrypt_remove_key(raw_fd, argptr) },
         RemoveKeyUsers::AllUsers => unsafe { ioctl::fscrypt_remove_key_all_users(raw_fd, argptr) },
-    } {
-        return Err(describe_error(x));
-    }
+    }.map_err(Error::from)?;
 
     Ok(RemovalStatusFlags::from_bits_truncate(arg.removal_status_flags))
 }
 
-/// Check if a directory is encrypted and return its [`Policy`] if that's the case
+/// Check if a directory is encrypted and return its [`Policy`] if that's the case.
+///
+/// Returns [`Error::NotSupported`] or [`Error::NotEnabled`] if the filesystem
+/// does not support encryption or it is not enabled in the kernel.
+///
+/// If the kernel does not have encryption enabled but callers still want to know
+/// if the directory is actually encrypted, they must handle it themselves
+/// (e.g. by using `statx(2)` and checking the `STATX_ATTR_ENCRYPTED` attribute).
 pub fn get_policy(dir: &Path) -> Result<Option<Policy>> {
     let fd = File::open(dir)?;
 
@@ -304,22 +310,7 @@ pub fn get_policy(dir: &Path) -> Result<Option<Policy>> {
     let argptr = &raw mut arg as *mut fscrypt_get_policy_ex_arg_ioctl;
     match unsafe { ioctl::fscrypt_get_policy_ex(raw_fd, argptr) } {
         Err(Errno::ENODATA) => Ok(None),
-        Err(x) if x == Errno::EOPNOTSUPP || x == Errno::ENOTTY => {
-            // This can mean that the directory is encrypted but the kernel
-            // is old or does not have encryption enabled.
-            // We use statx(2) to see if that's the case.
-            use statx_sys::*;
-            let mut buf : statx = unsafe { mem::zeroed() };
-            let ret = unsafe {
-                statx(raw_fd, c"".as_ptr(), AT_EMPTY_PATH, 0, &raw mut buf)
-            };
-            if ret == 0 && buf.stx_attributes & (STATX_ATTR_ENCRYPTED as u64) == 0 {
-                Ok(None)
-            } else {
-                Err(describe_error(x))
-            }
-        },
-        Err(x) => Err(describe_error(x)),
+        Err(x) => Err(Error::from(x)),
         Ok(_) => Ok(Some(arg.policy.into()))
     }
 }
@@ -340,7 +331,7 @@ pub fn set_policy(dir: &Path, keyid: &PolicyKeyId) -> Result<()> {
     let raw_fd = fd.as_raw_fd();
     let argptr = &raw mut arg as *mut fscrypt_policy_v1;
     match unsafe { ioctl::fscrypt_set_policy(raw_fd, argptr) } {
-        Err(x) => Err(describe_error(x)),
+        Err(x) => Err(Error::from(x)),
         _ => Ok(())
     }
 }
@@ -355,30 +346,15 @@ pub fn get_key_status(dir: &Path, keyid: &PolicyKeyId) -> Result<(KeyStatus, Key
 
     let raw_fd = fd.as_raw_fd();
     let argptr = &raw mut arg;
-    if let Err(x) = unsafe { ioctl::fscrypt_get_key_status(raw_fd, argptr) } {
-        return Err(describe_error(x));
-    };
+    unsafe { ioctl::fscrypt_get_key_status(raw_fd, argptr) }.map_err(Error::from)?;
 
-    let Ok(key_status) = KeyStatus::try_from(arg.status) else {
-        bail!("Unknown key status: {}", arg.status);
-    };
+    let key_status = KeyStatus::try_from(arg.status)
+        .map_err(|_| Error::UnknownKeyStatus(arg.status))?;
 
     Ok((key_status, KeyStatusFlags::from_bits_truncate(arg.status_flags)))
 }
 
 
-/// Describe the errors returned by the fscrypt ioctls
-fn describe_error(err: Errno) -> anyhow::Error {
-    let msg = match err {
-        Errno::EEXIST => "Already encrypted with a different key",
-        Errno::EINVAL => "Invalid or unsupported encryption policy",
-        Errno::ENOTTY => "This filesystem does not support encryption",
-        Errno::EOPNOTSUPP => "Encryption not enabled in the filesystem or in the kernel",
-        Errno::EPERM => "This directory cannot be encrypted (is it the root of that filesystem?)",
-        e => e.desc(), // The default message is fine for everything else
-    };
-    anyhow::anyhow!(msg)
-}
 
 #[cfg(test)]
 mod tests {
@@ -432,7 +408,7 @@ mod tests {
         let mntpoint = match std::env::var(MNTPOINT_ENV_VAR) {
             Ok(x) if x == "skip" => return Ok(()),
             Ok(x) => std::path::PathBuf::from(&x),
-            _ => bail!("Environment variable '{MNTPOINT_ENV_VAR}' not set"),
+            _ => panic!("Environment variable '{MNTPOINT_ENV_VAR}' not set"),
         };
 
         // Test keys of different sizes
@@ -456,7 +432,7 @@ mod tests {
 
         assert!(add_key(mntpoint, &key).is_err());
         assert!(set_policy(workdir.path(), &id).is_err());
-        assert!(get_policy(workdir.path())?.is_none());
+        assert!(get_policy(workdir.path()).is_err());
         assert!(get_key_status(mntpoint, &id).is_err());
         assert!(remove_key(mntpoint, &id, RemoveKeyUsers::CurrentUser).is_err());
 

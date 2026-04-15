@@ -45,6 +45,7 @@ xattr = "1.6.1"
 
 [dev-dependencies]
 futures-lite = "2.6.1"
+libc = "0.2"
 
 [features]
 tpm2 = ["dep:tss-esapi", "dep:tss-esapi-sys"]

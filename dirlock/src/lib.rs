@@ -118,32 +118,55 @@ pub struct EncryptedDir {
 /// Add an encryption key to the kernel for a given filesystem.
 /// Resolves the mountpoint from `dir`.
 pub fn add_key(dir: &Path, key: &[u8]) -> Result<PolicyKeyId> {
-    let mnt = util::get_mountpoint(dir)?;
-    fscrypt::add_key(&mnt, key)
+    let mnt = util::get_mountpoint(dir)
+        .map_err(|e| anyhow!("Error opening {}: {e}", dir.display()))?;
+    Ok(fscrypt::add_key(&mnt, key)?)
 }
 
 /// Remove an encryption key from the kernel for a given filesystem.
 /// Resolves the mountpoint from `dir`.
 pub fn remove_key(dir: &Path, keyid: &PolicyKeyId, user: RemoveKeyUsers) -> Result<RemovalStatusFlags> {
-    let mnt = util::get_mountpoint(dir)?;
-    fscrypt::remove_key(&mnt, keyid, user)
+    let mnt = util::get_mountpoint(dir)
+        .map_err(|e| anyhow!("Error opening {}: {e}", dir.display()))?;
+    Ok(fscrypt::remove_key(&mnt, keyid, user)?)
 }
 
 /// Check if a directory is encrypted and return its encryption policy
 pub fn get_policy(dir: &Path) -> Result<Option<Policy>> {
-    fscrypt::get_policy(dir)
+    match fscrypt::get_policy(dir) {
+        Ok(p) => Ok(p),
+        // This can mean that the directory is encrypted but the kernel
+        // is old or does not have encryption enabled.
+        // We use statx(2) to see if that's the case.
+        Err(fscrypt::Error::NotSupported | fscrypt::Error::NotEnabled) => {
+            use statx_sys::*;
+            use std::os::fd::AsRawFd;
+            let fd = std::fs::File::open(dir)?;
+            let mut buf: statx = unsafe { std::mem::zeroed() };
+            let ret = unsafe {
+                statx(fd.as_raw_fd(), c"".as_ptr(), AT_EMPTY_PATH, 0, &raw mut buf)
+            };
+            if ret == 0 && buf.stx_attributes & (STATX_ATTR_ENCRYPTED as u64) == 0 {
+                Ok(None)
+            } else {
+                Err(anyhow!("Encryption not enabled in the filesystem or in the kernel"))
+            }
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// Enable encryption on a directory by setting a new policy
 pub fn set_policy(dir: &Path, keyid: &PolicyKeyId) -> Result<()> {
-    fscrypt::set_policy(dir, keyid)
+    Ok(fscrypt::set_policy(dir, keyid)?)
 }
 
 /// Check if an encryption key is loaded into the kernel for a given filesystem.
 /// Resolves the mountpoint from `dir`.
 pub fn get_key_status(dir: &Path, keyid: &PolicyKeyId) -> Result<(KeyStatus, KeyStatusFlags)> {
-    let mnt = util::get_mountpoint(dir)?;
-    fscrypt::get_key_status(&mnt, keyid)
+    let mnt = util::get_mountpoint(dir)
+        .map_err(|e| anyhow!("Error opening {}: {e}", dir.display()))?;
+    Ok(fscrypt::get_key_status(&mnt, keyid)?)
 }
 
 /// Gets the encryption status of a directory.
@@ -352,13 +375,14 @@ pub fn encrypt_dir_with_key(path: &Path, master_key: &PolicyKey) -> Result<()> {
     add_key(path, master_key.secret())
         .and_then(|id| {
             if id == keyid {
-                fscrypt::set_policy(path, &id)
+                set_policy(path, &id)
             } else {
                 // This should never happen, it means that the kernel and
                 // PolicyKey::get_id() use a different algorithm.
                 Err(anyhow!("fscrypt::add_key() returned an unexpected ID!!"))
             }
         })
+        .map_err(|e| anyhow!("Failed to encrypt directory: {e}"))
 }
 
 /// Encrypts a directory generating a new master encryption key.
@@ -374,11 +398,10 @@ pub fn encrypt_dir(path: &Path, protector: &Protector, protector_key: ProtectorK
     let (policy, master_key) = create_policy_data(protector, &protector_key, ks)?;
     // Add the key to the kernel and encrypt the directory
     encrypt_dir_with_key(path, &master_key)
-        .map_err(|e| {
+        .inspect_err(|_| {
             let user = RemoveKeyUsers::CurrentUser;
             let _ = remove_key(path, &policy.id, user);
             let _ = ks.remove_policy(&policy.id);
-            anyhow!("Failed to encrypt directory: {e}")
         })?;
 
     Ok(policy.id)

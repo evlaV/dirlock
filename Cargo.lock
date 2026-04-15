@@ -499,6 +499,7 @@ dependencies = [
  "hkdf",
  "hmac",
  "homedir",
+ "libc",
  "libfido2-sys",
  "nix",
  "num_enum",
