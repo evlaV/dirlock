@@ -47,7 +47,7 @@ pub struct PolicyKeyId(
 
 impl std::str::FromStr for PolicyKeyId {
     type Err = PolicyIdParseError;
-    /// Create a key identifier from an hex string
+    /// Create a key identifier from a hex string
     fn from_str(s: &str) -> std::result::Result<Self, PolicyIdParseError> {
         let mut ret = PolicyKeyId::default();
         hex::decode_to_slice(s, &mut ret.0).map_err(|_| PolicyIdParseError)?;
@@ -81,7 +81,7 @@ pub enum Policy {
     Unknown(u8)
 }
 
-/// A (deprecated) v1 encryption policy. They can be queried but are otherwise unsupported by this tool.
+/// A (deprecated) v1 encryption policy. They can be queried but are otherwise unsupported by this module.
 pub struct PolicyV1 {
     pub contents_mode: EncryptionMode,
     pub filenames_mode: EncryptionMode,
@@ -89,7 +89,7 @@ pub struct PolicyV1 {
     pub keyid: PolicyKeyDescriptor
 }
 
-/// A v2 encryption policy. This is the one supported by this tool.
+/// A v2 encryption policy. This is the one supported by this module.
 pub struct PolicyV2 {
     pub contents_mode: EncryptionMode,
     pub filenames_mode: EncryptionMode,
