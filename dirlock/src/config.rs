@@ -83,6 +83,7 @@ impl Config {
         Config::get().unwrap().keystore_dir.as_path()
     }
 
+    #[cfg_attr(not(feature = "tpm2"), allow(dead_code))]
     pub fn tpm2_min_local_tries() -> u32 {
         Config::get().unwrap().tpm2_min_local_tries
     }
