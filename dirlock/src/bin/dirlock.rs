@@ -1202,6 +1202,14 @@ fn cmd_status(args: &StatusArgs, ks: &Keystore) -> Result<()> {
     println!("Contents: {}",  encrypted_dir.policy.contents_mode);
     println!("Filenames: {}", encrypted_dir.policy.filenames_mode);
     println!("Padding: {}",   encrypted_dir.policy.flags.pad);
+    match 2u32.checked_pow(encrypted_dir.policy.log2_data_unit_size as u32) {
+        Some(1) => println!("Data unit: fs block size"),
+        // The kernel says this should be within [2^9, fs block size],
+        // we just report the raw values.
+        Some(x) => println!("Data unit: {x} bytes"),
+        None =>    println!("Data unit: 2^{} bytes",
+                            encrypted_dir.policy.log2_data_unit_size),
+    }
 
     if encrypted_dir.policy.flags.flags.is_empty() {
         println!("Flags: None");

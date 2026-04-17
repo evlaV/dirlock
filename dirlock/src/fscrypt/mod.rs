@@ -94,6 +94,7 @@ pub struct PolicyV2 {
     pub contents_mode: EncryptionMode,
     pub filenames_mode: EncryptionMode,
     pub flags: PolicyFlags,
+    pub log2_data_unit_size: u8,
     pub keyid: PolicyKeyId
 }
 
@@ -114,6 +115,7 @@ impl From<&fscrypt_policy_v2> for PolicyV2 {
             contents_mode: p.contents_encryption_mode.into(),
             filenames_mode: p.filenames_encryption_mode.into(),
             flags: p.flags.into(),
+            log2_data_unit_size: p.log2_data_unit_size,
             keyid: PolicyKeyId(p.master_key_identifier),
         }
     }
@@ -215,16 +217,14 @@ bitflags::bitflags! {
 #[repr(u8)]
 /// Encryption mode
 pub enum EncryptionMode {
-    Invalid = FS_ENCRYPTION_MODE_INVALID,
-    AES_256_XTS = FS_ENCRYPTION_MODE_AES_256_XTS,
-    AES_256_GCM = FS_ENCRYPTION_MODE_AES_256_GCM,
-    AES_256_CBC = FS_ENCRYPTION_MODE_AES_256_CBC,
-    AES_256_CTS = FS_ENCRYPTION_MODE_AES_256_CTS,
-    AES_128_CBC = FS_ENCRYPTION_MODE_AES_128_CBC,
-    AES_128_CTS = FS_ENCRYPTION_MODE_AES_128_CTS,
-    SPECK128_256_XTS = FS_ENCRYPTION_MODE_SPECK128_256_XTS,
-    SPECK128_256_CTS = FS_ENCRYPTION_MODE_SPECK128_256_CTS,
-    Adiantum = FS_ENCRYPTION_MODE_ADIANTUM,
+    AES_256_XTS = FSCRYPT_MODE_AES_256_XTS,
+    AES_256_CTS = FSCRYPT_MODE_AES_256_CTS,
+    AES_128_CBC = FSCRYPT_MODE_AES_128_CBC,
+    AES_128_CTS = FSCRYPT_MODE_AES_128_CTS,
+    SM4_XTS = FSCRYPT_MODE_SM4_XTS,
+    SM4_CTS = FSCRYPT_MODE_SM4_CTS,
+    Adiantum = FSCRYPT_MODE_ADIANTUM,
+    AES_256_HCTR2 = FSCRYPT_MODE_AES_256_HCTR2,
     #[display("Unknown({_0})")]
     #[num_enum(catch_all)]
     Unknown(u8)
@@ -236,7 +236,8 @@ struct fscrypt_add_key_arg_full {
     key_spec: fscrypt_key_specifier,
     raw_size: u32,
     key_id: u32,
-    __reserved: [u32; 8],
+    flags: u32,
+    __reserved: [u32; 7],
     raw: [u8; MAX_KEY_SIZE]
 }
 
@@ -270,6 +271,7 @@ pub fn add_key(dir: &Path, key: &[u8]) -> Result<PolicyKeyId> {
     arg.key_spec.type_ = FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER;
     arg.raw_size = key.len() as u32;
     arg.key_id = 0;
+    arg.flags = 0;
     arg.raw[..key.len()].copy_from_slice(key);
 
     let raw_fd = fd.as_raw_fd();
@@ -330,7 +332,8 @@ pub fn set_policy(dir: &Path, keyid: &PolicyKeyId) -> Result<()> {
         contents_encryption_mode : FSCRYPT_MODE_AES_256_XTS,
         filenames_encryption_mode : FSCRYPT_MODE_AES_256_CTS,
         flags : FSCRYPT_POLICY_FLAGS_PAD_32,
-        __reserved : [0u8; 4],
+        log2_data_unit_size: 0,
+        __reserved : [0u8; 3],
         master_key_identifier : keyid.0
     };
 
@@ -468,7 +471,8 @@ mod tests {
             contents_encryption_mode: 0xFF, // invalid
             filenames_encryption_mode: FSCRYPT_MODE_AES_256_CTS,
             flags: FSCRYPT_POLICY_FLAGS_PAD_32,
-            __reserved: [0u8; 4],
+            log2_data_unit_size: 0,
+            __reserved: [0u8; 3],
             master_key_identifier: [0u8; KEY_IDENTIFIER_SIZE],
         };
         let result = unsafe {

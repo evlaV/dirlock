@@ -1,5 +1,5 @@
 /*
- * Copyright © 2025 Valve Corporation
+ * Copyright © 2025-2026 Valve Corporation
  *
  * SPDX-License-Identifier: BSD-3-Clause
  */
@@ -11,6 +11,8 @@ pub const FSCRYPT_POLICY_V2: u8 = 2;
 pub const FSCRYPT_KEY_DESCRIPTOR_SIZE: usize = 8;
 pub const FSCRYPT_KEY_IDENTIFIER_SIZE: usize = 16;
 pub const FSCRYPT_MAX_KEY_SIZE: usize = 64;
+#[allow(unused)]
+pub const FSCRYPT_KEY_SPEC_TYPE_DESCRIPTOR: u32 = 1;
 pub const FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER: u32 = 2;
 pub const FSCRYPT_KEY_REMOVAL_STATUS_FLAG_FILES_BUSY: u32 = 1;
 pub const FSCRYPT_KEY_REMOVAL_STATUS_FLAG_OTHER_USERS: u32 = 2;
@@ -18,6 +20,12 @@ pub const FSCRYPT_KEY_STATUS_FLAG_ADDED_BY_SELF: u32 = 0x00000001;
 
 pub const FSCRYPT_MODE_AES_256_XTS: u8 = 1;
 pub const FSCRYPT_MODE_AES_256_CTS: u8 = 4;
+pub const FSCRYPT_MODE_AES_128_CBC: u8 = 5;
+pub const FSCRYPT_MODE_AES_128_CTS: u8 = 6;
+pub const FSCRYPT_MODE_SM4_XTS: u8 = 7;
+pub const FSCRYPT_MODE_SM4_CTS: u8 = 8;
+pub const FSCRYPT_MODE_ADIANTUM: u8 = 9;
+pub const FSCRYPT_MODE_AES_256_HCTR2: u8 = 10;
 
 pub const FSCRYPT_POLICY_FLAGS_PAD_4: u8 = 0;
 pub const FSCRYPT_POLICY_FLAGS_PAD_8: u8 = 1;
@@ -27,18 +35,8 @@ pub const FSCRYPT_POLICY_FLAGS_PAD_MASK: u8 = 3;
 pub const FSCRYPT_POLICY_FLAG_DIRECT_KEY: u8 = 4;
 pub const FSCRYPT_POLICY_FLAG_IV_INO_LBLK_64: u8 = 8;
 pub const FSCRYPT_POLICY_FLAG_IV_INO_LBLK_32: u8 = 16;
-
-pub const FS_ENCRYPTION_MODE_INVALID: u8 = 0;
-pub const FS_ENCRYPTION_MODE_AES_256_XTS: u8 = 1;
-pub const FS_ENCRYPTION_MODE_AES_256_GCM: u8 = 2;
-pub const FS_ENCRYPTION_MODE_AES_256_CBC: u8 = 3;
-pub const FS_ENCRYPTION_MODE_AES_256_CTS: u8 = 4;
-pub const FS_ENCRYPTION_MODE_AES_128_CBC: u8 = 5;
-pub const FS_ENCRYPTION_MODE_AES_128_CTS: u8 = 6;
-pub const FS_ENCRYPTION_MODE_SPECK128_256_XTS: u8 = 7;
-pub const FS_ENCRYPTION_MODE_SPECK128_256_CTS: u8 = 8;
-pub const FS_ENCRYPTION_MODE_ADIANTUM: u8 = 9;
-
+#[allow(unused)]
+pub const FSCRYPT_ADD_KEY_FLAG_HW_WRAPPED: u32 = 1;
 pub const FSCRYPT_KEY_STATUS_ABSENT: u32 = 1;
 pub const FSCRYPT_KEY_STATUS_PRESENT: u32 = 2;
 pub const FSCRYPT_KEY_STATUS_INCOMPLETELY_REMOVED: u32 = 3;
@@ -60,7 +58,8 @@ pub struct fscrypt_policy_v2 {
     pub contents_encryption_mode: u8,
     pub filenames_encryption_mode: u8,
     pub flags: u8,
-    pub __reserved: [u8; 4],
+    pub log2_data_unit_size: u8,
+    pub __reserved: [u8; 3],
     pub master_key_identifier: [u8; FSCRYPT_KEY_IDENTIFIER_SIZE],
 }
 
@@ -120,5 +119,6 @@ pub struct fscrypt_add_key_arg {
     pub key_spec: fscrypt_key_specifier,
     pub raw_size: u32,
     pub key_id: u32,
-    pub __reserved: [u32; 8],
+    pub flags: u32,
+    pub __reserved: [u32; 7],
 }
