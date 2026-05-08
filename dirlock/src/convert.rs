@@ -373,3 +373,97 @@ impl ConvertDb {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anyhow::{bail, Result};
+    use std::fs;
+    use std::os::unix::fs::MetadataExt;
+    use std::path::PathBuf;
+    use tempdir::TempDir;
+    use crate::{Keystore, CreateOpts, EncryptedDir, LockState, RemoveKeyUsers};
+    use crate::protector::{Protector, ProtectorKey, opts::ProtectorOptsBuilder};
+
+    /// Filesystem where to run the tests. It must support fscrypt.
+    /// Set to 'skip' to skip these tests.
+    const MNTPOINT_ENV_VAR: &str = "DIRLOCK_TEST_FS";
+
+    fn get_mntpoint() -> Result<Option<PathBuf>> {
+        match std::env::var(MNTPOINT_ENV_VAR) {
+            Ok(x) if x == "skip" => Ok(None),
+            Ok(x) => Ok(Some(PathBuf::from(x))),
+            _ => bail!("Environment variable '{MNTPOINT_ENV_VAR}' not set"),
+        }
+    }
+
+    /// Helper: create a basic password protector
+    fn make_test_protector(ks: &Keystore) -> Result<(Protector, ProtectorKey)> {
+        let opts = ProtectorOptsBuilder::new()
+            .with_name("test".into())
+            .with_kdf_iter(std::num::NonZeroU32::new(1))
+            .build()?;
+        crate::create_protector(opts, b"pass", CreateOpts::CreateAndSave, ks)
+    }
+
+    #[test]
+    fn test_convert() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let ks_dir = TempDir::new("keystore")?;
+        let ks = Keystore::from_path(ks_dir.path());
+
+        // Create a directory and populate it with some files
+        let dir = TempDir::new_in(&mntpoint, "dir-with-data")?;
+        let path = dir.path();
+
+        // One of them deep in the hierarchy
+        fs::create_dir_all(path.join("a/b"))?;
+        fs::write(path.join("a/b/deep.txt"), "deep")?;
+        let md_before = fs::metadata(path.join("a/b/deep.txt"))?;
+
+        // Another gets one hard link and one symbolic link
+        fs::write(path.join("original.txt"), "linked")?;
+        fs::hard_link(path.join("original.txt"), path.join("hardlink.txt"))?;
+        std::os::unix::fs::symlink("original.txt", path.join("symlink.txt"))?;
+
+        // Set xattrs
+        xattr::set(path.join("original.txt"), "user.test", b"xattr-value")?;
+
+        // Do the conversion job
+        let (protector, protector_key) = make_test_protector(&ks)?;
+        let job = ConvertJob::start(path, &protector, protector_key, &ks)?;
+        let _policy = job.commit()?;
+
+        // The directory show now be encrypted
+        let encrypted_dir = EncryptedDir::open(path, &ks, LockState::Unlocked)?;
+
+        // Check that the metadata is preserved
+        let md_after = fs::metadata(path.join("a/b/deep.txt"))?;
+        assert_eq!(md_before.modified()?, md_after.modified()?);
+        assert_eq!(md_before.file_type(), md_after.file_type());
+        assert_eq!(md_before.permissions(), md_after.permissions());
+
+        // Check the contents of the files
+        assert_eq!(fs::read_to_string(path.join("a/b/deep.txt"))?, "deep");
+        assert_eq!(fs::read_to_string(path.join("original.txt"))?, "linked");
+        assert_eq!(fs::read_to_string(path.join("hardlink.txt"))?, "linked");
+        assert_eq!(fs::read_to_string(path.join("symlink.txt"))?, "linked");
+
+        // Check that the hard linked files have the same inode
+        let orig_ino = fs::metadata(path.join("original.txt"))?.ino();
+        let link_ino = fs::metadata(path.join("hardlink.txt"))?.ino();
+        assert_eq!(orig_ino, link_ino, "hard link relationship not preserved");
+
+        // Check that the symlink points to the original file
+        assert_eq!(fs::read_link(path.join("symlink.txt"))?, Path::new("original.txt"));
+
+        // Check the value of the xattr
+        assert_eq!(xattr::get(path.join("original.txt"), "user.test")?,
+                   Some(b"xattr-value".to_vec()), "xattrs not preserved");
+
+        encrypted_dir.lock(RemoveKeyUsers::CurrentUser)?;
+
+        Ok(())
+    }
+}
