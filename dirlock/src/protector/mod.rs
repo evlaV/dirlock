@@ -426,6 +426,7 @@ mod tests {
 
     #[test]
     fn test_protectors() -> Result<()> {
+        crate::init()?;
         let tpm = tpm2::tests::Swtpm::new()?;
         for t in PROTECTOR_TYPE_NAMES {
             let ptype = t.1;
