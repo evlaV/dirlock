@@ -244,6 +244,8 @@ impl ConvertJob {
     }
 
     /// Cancel the operation
+    // TODO: this leaves the conversion as interrupted,
+    // it would be nice to have a way to abort it completely.
     pub fn cancel(&self) -> Result<()> {
         self.cloner.cancel()
     }
@@ -491,6 +493,47 @@ mod tests {
 
         // The directory show now be encrypted
         let encrypted_dir = EncryptedDir::open(path, &ks, LockState::Unlocked)?;
+        encrypted_dir.lock(RemoveKeyUsers::CurrentUser)?;
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_cancel_and_resume() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+        crate::init()?;
+
+        let ks_dir = TempDir::new("keystore")?;
+        let ks = Keystore::from_path(ks_dir.path());
+
+        // Create a directory with data
+        let dir = TempDir::new_in(&mntpoint, "convert")?;
+        let path = dir.path();
+        std::fs::write(path.join("file.txt"), "hello")?;
+
+        // Create a protector
+        let (protector, protector_key) = make_test_protector(&ks)?;
+
+        // Start a conversion job, then cancel it
+        let job = ConvertJob::start(path, &protector, protector_key.clone(), &ks)?;
+        job.cancel()?;
+        drop(job);
+
+        // The original directory should remain unmodified
+        crate::ensure_unencrypted(path, &ks)?;
+        assert_eq!(std::fs::read_to_string(path.join("file.txt"))?, "hello");
+
+        // Check the conversion status
+        assert!(matches!(conversion_status(path)?, ConversionStatus::Interrupted(_)));
+
+        // Start the job again, but let it finish this time
+        let job = ConvertJob::start(path, &protector, protector_key, &ks)?;
+        assert!(matches!(conversion_status(path)?, ConversionStatus::Ongoing(_)));
+        job.commit()?;
+
+        let encrypted_dir = EncryptedDir::open(path, &ks, LockState::Unlocked)?;
+        assert_eq!(std::fs::read_to_string(path.join("file.txt"))?, "hello");
+        assert!(matches!(conversion_status(path)?, ConversionStatus::None));
         encrypted_dir.lock(RemoveKeyUsers::CurrentUser)?;
 
         Ok(())
