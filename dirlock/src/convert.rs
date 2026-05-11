@@ -538,4 +538,39 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_concurrent_start_rejected() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+        crate::init()?;
+
+        let ks_dir = TempDir::new("keystore")?;
+        let ks = Keystore::from_path(ks_dir.path());
+
+        // Create a directory with data
+        let dir = TempDir::new_in(&mntpoint, "convert")?;
+        let path = dir.path();
+        std::fs::write(dir.path().join("file.txt"), "hello")?;
+
+        // Create a protector
+        let (protector, protector_key) = make_test_protector(&ks)?;
+
+        // Start a conversion job
+        let job = ConvertJob::start(path, &protector, protector_key.clone(), &ks)?;
+        assert!(matches!(conversion_status(path)?, ConversionStatus::Ongoing(_)));
+
+        // Try to start another job while the first one is ongoing
+        assert!(ConvertJob::start(path, &protector, protector_key, &ks).is_err());
+
+        // Finish the first job
+        job.commit()?;
+
+        // Check that everying is in its expected status
+        let encrypted_dir = EncryptedDir::open(path, &ks, LockState::Unlocked)?;
+        assert_eq!(std::fs::read_to_string(path.join("file.txt"))?, "hello");
+        assert!(matches!(conversion_status(path)?, ConversionStatus::None));
+        encrypted_dir.lock(RemoveKeyUsers::CurrentUser)?;
+
+        Ok(())
+    }
 }
