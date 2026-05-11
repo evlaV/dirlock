@@ -9,6 +9,7 @@ pub(crate) mod cloner;
 pub mod convert;
 pub(crate) mod crypto;
 pub(crate) mod fscrypt;
+pub(crate) mod inject;
 pub(crate) mod kdf;
 mod keystore;
 pub mod modhex;

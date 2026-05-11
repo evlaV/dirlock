@@ -19,6 +19,7 @@ use crate::{
     create_policy_data,
     cloner::DirectoryCloner,
     fscrypt::{KeyStatus, PolicyKeyId},
+    inject::{check_injected_error, InjectedError},
     protector::{Protector, ProtectorKey},
     unlock_dir_with_key,
     util::{
@@ -267,6 +268,8 @@ impl ConvertJob {
         let dstdir_2 = self.workdir.join(Self::DSTDIR);
         fs::rename(&self.dstdir, &dstdir_2)?;
 
+        check_injected_error(InjectedError::ConvertCommitBeforeExchange)?;
+
         // Exchange atomically the source directory and its encrypted copy
         let syncfd = fs::File::open(&self.dirs.base)?;
         _ = nix::unistd::syncfs(syncfd.as_raw_fd());
@@ -385,6 +388,7 @@ mod tests {
     use std::path::PathBuf;
     use tempdir::TempDir;
     use crate::{Keystore, CreateOpts, EncryptedDir, LockState, RemoveKeyUsers};
+    use crate::inject::{clear_injected_error, inject_error};
     use crate::protector::{Protector, ProtectorKey, opts::ProtectorOptsBuilder};
 
     /// Filesystem where to run the tests. It must support fscrypt.
@@ -569,6 +573,53 @@ mod tests {
         let encrypted_dir = EncryptedDir::open(path, &ks, LockState::Unlocked)?;
         assert_eq!(std::fs::read_to_string(path.join("file.txt"))?, "hello");
         assert!(matches!(conversion_status(path)?, ConversionStatus::None));
+        encrypted_dir.lock(RemoveKeyUsers::CurrentUser)?;
+
+        Ok(())
+    }
+
+    // Test a crash between fs::rename and RENAME_EXCHANGE.
+    // - The source directory is still unencrypted
+    // - The encrypted copy is orphaned at workdir/data.
+    // - start() should detect the orphan, move it back, re-run rsync, and
+    //   allow commit() to complete successfully.
+    #[test]
+    fn test_crash_before_exchange() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+        crate::init()?;
+
+        let ks_dir = TempDir::new("keystore")?;
+        let ks = Keystore::from_path(ks_dir.path());
+
+        // Create a directory with data
+        let dir = TempDir::new_in(&mntpoint, "convert")?;
+        let path = dir.path();
+        std::fs::write(path.join("file.txt"), "hello")?;
+
+        // Create a protector
+        let (protector, protector_key) = make_test_protector(&ks)?;
+
+        // Simulate a crash between fs::rename and RENAME_EXCHANGE:
+        inject_error(InjectedError::ConvertCommitBeforeExchange);
+        let job = ConvertJob::start(path, &protector, protector_key.clone(), &ks)?;
+        let workdir = job.workdir.clone();
+        assert!(job.commit().is_err());
+
+        // workdir/data is left as an orphan, source is still unencrypted.
+        assert!(workdir.join(ConvertJob::DSTDIR).exists());
+        crate::ensure_unencrypted(path, &ks)?;
+        assert!(matches!(conversion_status(path)?, ConversionStatus::Interrupted(_)));
+
+        // start() moves the orphan back and re-runs rsync; commit() finishes the job
+        clear_injected_error();
+        let job = ConvertJob::start(path, &protector, protector_key, &ks)?;
+        job.commit()?;
+
+        // Check that everying is in its expected status
+        let encrypted_dir = EncryptedDir::open(path, &ks, LockState::Unlocked)?;
+        assert_eq!(std::fs::read_to_string(path.join("file.txt"))?, "hello");
+        assert!(matches!(conversion_status(path)?, ConversionStatus::None));
+        assert!(!workdir.exists());
         encrypted_dir.lock(RemoveKeyUsers::CurrentUser)?;
 
         Ok(())
