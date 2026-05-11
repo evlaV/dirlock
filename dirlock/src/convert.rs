@@ -466,4 +466,33 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_conversion_status_lifecycle() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let ks_dir = TempDir::new("keystore")?;
+        let ks = Keystore::from_path(ks_dir.path());
+
+        // Create a directory with data
+        let dir = TempDir::new_in(&mntpoint, "convert")?;
+        let path = dir.path();
+        std::fs::write(path.join("file.txt"), "hello")?;
+
+        // Create a protector
+        let (protector, protector_key) = make_test_protector(&ks)?;
+
+        // Check the conversion status before, during and after the job
+        assert!(matches!(conversion_status(path)?, ConversionStatus::None));
+        let job = ConvertJob::start(path, &protector, protector_key, &ks)?;
+        assert!(matches!(conversion_status(path)?, ConversionStatus::Ongoing(_)));
+        job.commit()?;
+        assert!(matches!(conversion_status(path)?, ConversionStatus::None));
+
+        // The directory show now be encrypted
+        let encrypted_dir = EncryptedDir::open(path, &ks, LockState::Unlocked)?;
+        encrypted_dir.lock(RemoveKeyUsers::CurrentUser)?;
+
+        Ok(())
+    }
 }
