@@ -735,6 +735,9 @@ impl DirlockDaemon {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dirlock::init()?;
+    if let Err(e) = dirlock::convert::cleanup_all() {
+        eprintln!("Warning: failed to clean up stale conversion entries: {e}");
+    }
     let (tx, mut rx) = mpsc::channel::<Event>(2);
     let builder = zbus::connection::Builder::session()?;
     let conn = builder.name(DIRLOCK_DBUS_SERVICE)?
