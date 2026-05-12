@@ -21,6 +21,9 @@ pub enum InjectedError {
     /// This leaves workdir/data as an orphan while the source
     /// directory is still unencrypted.
     ConvertCommitBeforeExchange,
+    /// ConvertJob::commit(), between RENAME_EXCHANGE and cleanup.
+    /// The directory is encrypted but the convertdb entry is still there.
+    ConvertCommitAfterExchange,
 }
 
 /// In non-test builds this a no-op and gets optimized away.

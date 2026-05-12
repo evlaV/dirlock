@@ -128,14 +128,27 @@ impl ConvertJob {
         if ! dirs.base.exists() {
             return Ok(ConversionStatus::None);
         }
-        let db = ConvertDb::load(&dirs.base)?;
+        let mut db = ConvertDb::load(&dirs.base)?;
         let status = match db.get(&dirs.src_rel) {
             Some(id) => {
                 let mut lockfile = dirs.base.join(id.to_string());
                 lockfile.push(Self::LOCKFILE);
                 match LockFile::try_new(&lockfile) {
                     Ok(None) => ConversionStatus::Ongoing(id.clone()),
-                    _ => ConversionStatus::Interrupted(id.clone())
+                    _ => {
+                        // No active job. If the directory is already encrypted,
+                        // a previous commit() completed the exchange but crashed
+                        // before removing the db entry. Clean up and report None.
+                        if crate::get_policy(&dirs.src)?.is_some() {
+                            let workdir = dirs.base.join(id.to_string());
+                            let _ = fs::remove_dir_all(workdir);
+                            db.remove(&dirs.src_rel);
+                            let _ = db.commit();
+                            ConversionStatus::None
+                        } else {
+                            ConversionStatus::Interrupted(id.clone())
+                        }
+                    }
                 }
             },
             None => ConversionStatus::None,
@@ -276,6 +289,8 @@ impl ConvertJob {
         fcntl::renameat2(None, &self.dirs.src, None, &dstdir_2,
                          fcntl::RenameFlags::RENAME_EXCHANGE)?;
         _ = nix::unistd::syncfs(syncfd.as_raw_fd());
+
+        check_injected_error(InjectedError::ConvertCommitAfterExchange)?;
 
         // Remove the original data, now under workdir/data
         if let Err(e) = fs::remove_dir_all(&dstdir_2) {
@@ -620,6 +635,54 @@ mod tests {
         assert_eq!(std::fs::read_to_string(path.join("file.txt"))?, "hello");
         assert!(matches!(conversion_status(path)?, ConversionStatus::None));
         assert!(!workdir.exists());
+        encrypted_dir.lock(RemoveKeyUsers::CurrentUser)?;
+
+        Ok(())
+    }
+
+    // Test a crash after RENAME_EXCHANGE but before convertdb is updated
+    // - The source directory is already encrypted
+    // - workdir still exists, and there's an entry in the convertdb file
+    // - conversion_status() should clean things up and report None
+    #[test]
+    fn test_crash_after_exchange() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+        crate::init()?;
+
+        let ks_dir = TempDir::new("keystore")?;
+        let ks = Keystore::from_path(ks_dir.path());
+
+        // Create a directory with data
+        let dir = TempDir::new_in(&mntpoint, "convert")?;
+        let path = dir.path();
+        std::fs::write(path.join("file.txt"), "hello")?;
+
+        // Create a protector
+        let (protector, protector_key) = make_test_protector(&ks)?;
+
+        // Simulate a crash between RENAME_EXCHANGE and db.commit():
+        inject_error(InjectedError::ConvertCommitAfterExchange);
+        let job = ConvertJob::start(path, &protector, protector_key.clone(), &ks)?;
+        let workdir = job.workdir.clone();
+        assert!(job.commit().is_err());
+
+        // The directory is now encrypted
+        let encrypted_dir = EncryptedDir::open(path, &ks, LockState::Unlocked)?;
+        assert_eq!(std::fs::read_to_string(path.join("file.txt"))?, "hello");
+
+        // Restarting a conversion job fails because of that
+        let Err(err) = ConvertJob::start(path, &protector, protector_key, &ks) else {
+            bail!("Expected error when restarting finished job");
+        };
+        assert_eq!(err.to_string(), "Directory already encrypted");
+
+        // But the work directory still exists because this crashed before db.commit()
+        assert!(workdir.exists());
+
+        // conversion_status() detects the stale entry and cleans everything up
+        assert!(matches!(conversion_status(path)?, ConversionStatus::None));
+        assert!(!workdir.exists());
+
         encrypted_dir.lock(RemoveKeyUsers::CurrentUser)?;
 
         Ok(())
