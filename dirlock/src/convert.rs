@@ -406,9 +406,17 @@ pub fn cleanup(dir: &Path) -> Result<usize> {
     if ! base.exists() {
         return Ok(0);
     }
-    let entries: Vec<PathBuf> = {
+    let entries = {
         let db = ConvertDb::load(&base)?;
-        db.keys().map(|src_rel| mntpoint.join(src_rel)).collect()
+        let entries : Vec<PathBuf> =
+            db.keys().map(|src_rel| mntpoint.join(src_rel)).collect();
+        // If convertdb is empty remove the base dir and return
+        if entries.is_empty() {
+            // We only want to remove *empty* directories
+            _ = fs::remove_dir(base);
+            return Ok(0);
+        }
+        entries
     };
     let mut count = 0;
     for src in entries {
