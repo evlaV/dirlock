@@ -354,6 +354,10 @@ impl ConvertDb {
         self.db.insert(PathBuf::from(dir), keyid);
     }
 
+    fn keys(&self) -> impl Iterator<Item = &PathBuf> {
+        self.db.keys()
+    }
+
     /// Remove the [`PolicyKeyId`] for `dir` from the database
     fn remove(&mut self, dir: &Path) -> bool {
         self.dirty = true;
@@ -392,6 +396,37 @@ impl ConvertDb {
             file.commit()
         }
     }
+}
+
+/// Remove stale conversion entries for the filesystem containing `dir`.
+/// Returns the number of entries removed.
+pub fn cleanup(dir: &Path) -> Result<usize> {
+    let mntpoint = get_mountpoint(&dir.canonicalize()?)?;
+    let base = mntpoint.join(ConvertJob::BASEDIR);
+    if ! base.exists() {
+        return Ok(0);
+    }
+    let entries: Vec<PathBuf> = {
+        let db = ConvertDb::load(&base)?;
+        db.keys().map(|src_rel| mntpoint.join(src_rel)).collect()
+    };
+    let mut count = 0;
+    for src in entries {
+        if matches!(conversion_status(&src)?, ConversionStatus::None) {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+/// Remove stale conversion entries across all mounted filesystems.
+/// Returns the total number of entries removed.
+pub fn cleanup_all() -> Result<usize> {
+    let mut total = 0;
+    for m in crate::util::get_unique_mounts()? {
+        total += cleanup(m.fs_mounted_on.as_ref())?;
+    }
+    Ok(total)
 }
 
 #[cfg(test)]

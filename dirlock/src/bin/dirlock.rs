@@ -79,6 +79,7 @@ enum AdminCommand {
     ExportMasterKey(ExportMasterKeyArgs),
     ImportMasterKey(ImportMasterKeyArgs),
     FscryptEnabled(FscryptEnabledArgs),
+    Cleanup(CleanupArgs),
 }
 
 #[derive(FromArgs)]
@@ -430,6 +431,15 @@ struct FscryptEnabledArgs {
     /// directory
     #[argh(positional)]
     dir: PathBuf,
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "cleanup")]
+/// Remove stale directory conversion entries
+struct CleanupArgs {
+    /// path within the filesystem to clean up (default: all mounted filesystems)
+    #[argh(positional)]
+    dir: Option<PathBuf>,
 }
 
 #[derive(FromArgs)]
@@ -1162,6 +1172,17 @@ fn cmd_fscrypt_enabled(args: &FscryptEnabledArgs) -> Result<()> {
     Ok(())
 }
 
+fn cmd_cleanup(args: &CleanupArgs) -> Result<()> {
+    let n = match &args.dir {
+        Some(dir) => dirlock::convert::cleanup(dir)?,
+        None => dirlock::convert::cleanup_all()?,
+    };
+    if n > 0 {
+        println!("Removed {n} stale conversion entr{}", if n == 1 { "y" } else { "ies" });
+    }
+    Ok(())
+}
+
 fn cmd_status(args: &StatusArgs, ks: &Keystore) -> Result<()> {
     let Some(dir) = &args.dir else {
         if args.brief {
@@ -1258,6 +1279,7 @@ fn main() -> Result<()> {
             AdminCommand::ExportMasterKey(args) => cmd_export_master_key(args, &ks),
             AdminCommand::ImportMasterKey(_) => cmd_import_master_key(&ks),
             AdminCommand::FscryptEnabled(args) => cmd_fscrypt_enabled(args),
+            AdminCommand::Cleanup(args) => cmd_cleanup(args),
         },
     }
 }
