@@ -137,6 +137,16 @@ pub fn read_password_for_protector(prot: &Protector) -> Result<Zeroizing<String>
     Ok(pass)
 }
 
+/// Return the list of mounted filesystems, deduplicated by source device
+/// to avoid processing the same filesystem twice due to bind mounts.
+pub fn get_unique_mounts() -> Result<Vec<get_sys_info::Filesystem>> {
+    use get_sys_info::Platform;
+    let mut mounts = get_sys_info::System::new().mounts()?;
+    mounts.sort_by(|a, b| a.fs_mounted_from.cmp(&b.fs_mounted_from));
+    mounts.dedup_by(|a, b| a.fs_mounted_from == b.fs_mounted_from);
+    Ok(mounts)
+}
+
 /// Return true if a filesystem has fscrypt support
 pub fn fs_supports_encryption(fstype: &str) -> bool {
     matches!(fstype, "ext4" | "f2fs" | "ubifs" | "ceph")

@@ -6,7 +6,6 @@
 
 use anyhow::{bail, Result};
 use argh::FromArgs;
-use get_sys_info::Platform;
 use std::io::{self, ErrorKind, Write};
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
@@ -36,6 +35,7 @@ use dirlock::{
     util::{
         dir_is_empty,
         fs_supports_encryption,
+        get_unique_mounts,
         read_password_for_protector,
         read_new_password_for_protector,
         read_recovery_key,
@@ -750,17 +750,10 @@ fn cmd_list_policies(ks: &Keystore) -> Result<()> {
     }
 
     // List of mounted filesystems that support fscrypt
-    let fs : Vec<_> = {
-        let mut mounts = get_sys_info::System::new().mounts()?;
-        // Use only one mount by source device in order to avoid
-        // duplicate entries due to bind mounts.
-        mounts.sort_by(|a, b| a.fs_mounted_from.cmp(&b.fs_mounted_from));
-        mounts.dedup_by(|a, b| a.fs_mounted_from == b.fs_mounted_from);
-
-        mounts.into_iter()
-            .filter_map(|m| fs_supports_encryption(&m.fs_type).then_some(m.fs_mounted_on))
-        .collect()
-    };
+    let fs : Vec<_> = get_unique_mounts()?
+        .into_iter()
+        .filter_map(|m| fs_supports_encryption(&m.fs_type).then_some(m.fs_mounted_on))
+        .collect();
 
     // Check what policies are unlocked in each filesystem
     let mut unlocked_policies = false;
