@@ -150,7 +150,7 @@ fn do_authenticate(pamh: Pam, autologin: bool) -> Result<()> {
     let rhost = get_rhost(&pamh);
 
     // If autologin is enabled we don't ask for a password.
-    // We succeed of fail depending on whether the home directory
+    // We succeed or fail depending on whether the home directory
     // is already unlocked.
     if autologin {
         if homedir.key_status == dirlock::KeyStatus::Present {
