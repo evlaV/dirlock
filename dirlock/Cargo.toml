@@ -40,12 +40,12 @@ get_sys_info = "0.1.21"
 zbus = { version = "5.9.0", features = [ "tokio" ], optional = true }
 tokio = { version = "1.47.0", features = ["macros", "rt-multi-thread", "signal", "time"], optional = true }
 statx-sys = "0.4.1"
+libc = "0.2"
 regex = "1.11.1"
 xattr = "1.6.1"
 
 [dev-dependencies]
 futures-lite = "2.6.1"
-libc = "0.2"
 
 [features]
 tpm2 = ["dep:tss-esapi", "dep:tss-esapi-sys"]

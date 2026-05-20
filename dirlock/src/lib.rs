@@ -16,6 +16,7 @@ pub mod modhex;
 pub mod policy;
 pub mod protector;
 pub mod recovery;
+pub(crate) mod systemd;
 pub mod util;
 pub(crate) mod xattrs;
 #[cfg(feature = "dbus")]
@@ -27,6 +28,7 @@ pub use fscrypt::{
     KeyStatus, KeyStatusFlags, Policy, PolicyKeyId,
     PolicyV1, PolicyV2, RemoveKeyUsers, RemovalStatusFlags,
 };
+pub use systemd::user_manager_active;
 use policy::{
     PolicyData,
     PolicyKey,
