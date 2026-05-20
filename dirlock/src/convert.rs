@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::{ErrorKind, Write};
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 use crate::{
@@ -122,6 +122,20 @@ impl ConvertJob {
         Ok(SrcDirData { src, src_rel, base })
     }
 
+    /// Return the owner UID of `dir` iff `dir` is that owner's passwd
+    /// home directory. `dir` must already be canonicalized.
+    ///
+    /// Returns `Ok(Some(uid))` on success, `Ok(None)` if the home does
+    /// not match or no passwd entry is found.
+    fn home_owner_uid(dir: &Path) -> Result<Option<u32>> {
+        use nix::unistd::{Uid, User};
+        let uid = fs::symlink_metadata(dir)?.uid();
+        let Some(user) = User::from_uid(Uid::from_raw(uid))? else {
+            return Ok(None);
+        };
+        Ok((user.dir.canonicalize()? == dir).then_some(uid))
+    }
+
     /// Returns the [`ConversionStatus`] of a given source directory
     fn status(dir: &Path) -> Result<ConversionStatus> {
         let dirs = Self::get_src_dir_data(dir)?;
@@ -197,6 +211,22 @@ impl ConvertJob {
         let Some(_lockfile) = LockFile::try_new(&workdir.join(Self::LOCKFILE))? else {
             bail!("Directory {} is already being converted", dirs.src.display());
         };
+
+        // If we're converting a home directory and the owner is not
+        // completely logged out, mark the conversion dirty.
+        // If the owner logs in later during the conversion, the dirty
+        // flag is set by the PAM module (TODO).
+        if let Some(uid) = Self::home_owner_uid(&dirs.src)? {
+            let active = crate::user_manager_active(uid).unwrap_or(true);
+            if active {
+                Self::create_dirty_flag(&workdir)?;
+            }
+        }
+
+        // Check if the dirty flag is set (by the code above, or by a
+        // previous run).
+        let verify_content = Self::dirty_flag_exists(&workdir);
+
         // Release the global lock
         drop(db);
 
@@ -243,7 +273,9 @@ impl ConvertJob {
 
         // Copy the source directory inside the encrypted directory.
         // This will encrypt the data in the process.
-        let cloner = DirectoryCloner::start(&dirs.src, &dstdir, false)?;
+        // If the conversion is dirty (e.g. resumed after the user
+        // was active), verify the content.
+        let cloner = DirectoryCloner::start(&dirs.src, &dstdir, verify_content)?;
 
         Ok(Self { dirs, cloner, keyid, _lockfile, dstdir, workdir })
     }
@@ -277,7 +309,6 @@ impl ConvertJob {
     }
 
     /// Check if a dirty flag exists. This must happen under the global lock
-    #[allow(dead_code)]
     fn dirty_flag_exists(workdir: &Path) -> bool {
         workdir.join(Self::DIRTY).exists()
     }
