@@ -243,7 +243,7 @@ impl ConvertJob {
 
         // Copy the source directory inside the encrypted directory.
         // This will encrypt the data in the process.
-        let cloner = DirectoryCloner::start(&dirs.src, &dstdir)?;
+        let cloner = DirectoryCloner::start(&dirs.src, &dstdir, false)?;
 
         Ok(Self { dirs, cloner, keyid, _lockfile, dstdir, workdir })
     }

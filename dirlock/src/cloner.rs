@@ -51,7 +51,12 @@ impl DirectoryCloner {
     /// This returns immediately, the copy happens in the background.
     /// The source directory is checked for encrypted subdirectories
     /// and cross-filesystem mounts before starting the copy.
-    pub fn start(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> Result<Self> {
+    ///
+    /// If `verify_content` is `true`, files are compared by content
+    /// rather than by mtime+size. Use when `dst` is already a partial
+    /// clone of `src` but the original contents might have changed.
+    pub fn start(src: impl AsRef<Path>, dst: impl AsRef<Path>,
+                 verify_content: bool) -> Result<Self> {
         // Canonicalize src and check if it's the root directory
         let src = src.as_ref().canonicalize()?;
         if src.parent().is_none() {
@@ -77,7 +82,7 @@ impl DirectoryCloner {
         std::thread::spawn(move || {
             // An error here means that rsync didn't even start,
             // so save it and set state.finished = true.
-            let status = Self::run(&state2, src, dst, dst_fd);
+            let status = Self::run(&state2, src, dst, dst_fd, verify_content);
             *state2.exit_status.lock().unwrap() = Some(status);
             state2.finished.store(true, Relaxed);
             state2.condvar.notify_all();
@@ -88,7 +93,8 @@ impl DirectoryCloner {
 
     /// Validate the directories, then launch rsync and monitor it.
     /// Called from the background thread.
-    fn run(state: &ClonerState, src: PathBuf, dst: PathBuf, dst_fd: File) -> Result<ExitStatus> {
+    fn run(state: &ClonerState, src: PathBuf, dst: PathBuf, dst_fd: File,
+           verify_content: bool) -> Result<ExitStatus> {
         // Validate the source directory and check free space on the destination
         Self::validate_dirs(state, &src, &dst)?;
 
@@ -100,6 +106,7 @@ impl DirectoryCloner {
             // This preserves ACLs (A), extended attributes (X) and hard links (H)
             // We also use -x to stop at filesystem boundaries
             .args(["-aAXHx", "--info=progress2", "--no-inc-recursive", "--delete"])
+            .args(verify_content.then_some("--checksum"))
             .args([OsStr::new("./"), &dst])
             .current_dir(&src)
             .stdout(Stdio::piped())
