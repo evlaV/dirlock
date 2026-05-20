@@ -103,6 +103,7 @@ impl ConvertJob {
     const LOCKFILE : &str = "lock";
     const ENCRYPTED : &str = "encrypted";
     const DSTDIR : &str = "data";
+    const DIRTY : &str = "dirty";
 
     /// This canonicalizes the source dir and returns [`SrcDirData`]
     fn get_src_dir_data(dir: &Path) -> Result<SrcDirData> {
@@ -267,6 +268,52 @@ impl ConvertJob {
     /// Wail until the operation is done
     pub fn wait(&self) -> Result<()> {
         self.cloner.wait()
+    }
+
+    /// Create a dirty flag. This must happen under the global lock
+    fn create_dirty_flag(workdir: &Path) -> std::io::Result<()> {
+        fs::File::create(workdir.join(Self::DIRTY))?;
+        Ok(())
+    }
+
+    /// Check if a dirty flag exists. This must happen under the global lock
+    #[allow(dead_code)]
+    fn dirty_flag_exists(workdir: &Path) -> bool {
+        workdir.join(Self::DIRTY).exists()
+    }
+
+    /// Remove a dirty flag. This must happen under the global lock
+    #[allow(dead_code)]
+    fn remove_dirty_flag(workdir: &Path) -> std::io::Result<()> {
+        match fs::remove_file(workdir.join(Self::DIRTY)) {
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
+            r => r,
+        }
+    }
+
+    /// Mark the conversion of `dir` as dirty.
+    ///
+    /// If there is a conversion job (in whatever state) for `dir`, create
+    /// a file under workdir to indicate that it's dirty (i.e the user may
+    /// have modified the source directory).
+    /// The process is protected by the global [`ConvertDb`] lock.
+    ///
+    /// Returns `true` if the flag was created, `false` otherwise.
+    pub fn mark_dirty(dir: &Path) -> Result<bool> {
+        let dirs = Self::get_src_dir_data(dir)?;
+        if ! dirs.base.exists() {
+            return Ok(false);
+        }
+        let db = ConvertDb::load(&dirs.base)?;
+        let Some(id) = db.get(&dirs.src_rel) else {
+            return Ok(false);
+        };
+        let workdir = dirs.base.join(id.to_string());
+        match Self::create_dirty_flag(&workdir) {
+            Ok(()) => Ok(true),
+            Err(e) if e.kind() == ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(e.into()),
+        }
     }
 
     /// Wait for the conversion job to finish and replace the original
