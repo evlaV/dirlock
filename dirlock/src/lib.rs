@@ -210,6 +210,18 @@ pub fn open_home(user: &str, ks: &Keystore) -> Result<Option<DirStatus>> {
     }
 }
 
+/// If a conversion is in progress for the user's home directory, mark it
+/// as dirty so `ConvertJob::commit()` will defer or restart accordingly.
+///
+/// Returns `true` if the flag was created (a conversion is in progress),
+/// `false` otherwise (no conversion, or the user does not exist).
+pub fn mark_home_dirty(user: &str) -> Result<bool> {
+    match util::get_homedir(user)? {
+        Some(dir) => convert::ConvertJob::mark_dirty(&dir),
+        None => Ok(false),
+    }
+}
+
 /// Return an error if the directory is encrypted or uses an unsupported mechanism.
 pub fn ensure_unencrypted(path: &Path, ks: &Keystore) -> Result<()> {
     match open_dir(path, ks)? {

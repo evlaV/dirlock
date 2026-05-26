@@ -250,7 +250,7 @@ impl ConvertJob {
         // If we're converting a home directory and the owner is not
         // completely logged out, mark the conversion dirty.
         // If the owner logs in later during the conversion, the dirty
-        // flag is set by the PAM module (TODO).
+        // flag is set by the PAM module.
         if let Some(uid) = home_owner {
             let active = user_manager_active(uid).unwrap_or(true);
             if active {

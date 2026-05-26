@@ -314,6 +314,24 @@ fn do_chauthtok(pamh: Pam, flags: PamFlags) -> Result<()> {
 fn do_open_session(pamh: Pam) -> Result<()> {
     let ks = Keystore::default();
     let user = get_user(&pamh)?;
+
+    // If a conversion is in progress for this user's home, mark it as
+    // dirty and let them log in (the directory is still unencrypted
+    // so there's no need to unlock it).
+    // TODO: if the conversion was interrupted due to e.g. a system crash
+    // it must be manually restarted. Maybe notify the user about it?
+    match dirlock::mark_home_dirty(user) {
+        Ok(true) => {
+            log_info(&pamh, format!("session opened during conversion for user {user}"));
+            return Ok(());
+        }
+        Ok(false) => (),  // No conversion in progress; fall through.
+        Err(e) => {
+            log_warning(&pamh, format!("error checking conversion for user {user}: {e}"));
+            return Err(PamError::SERVICE_ERR);
+        }
+    }
+
     let homedir = get_home_data(user, &ks)?;
     // If the home directory is already unlocked then we are done
     if homedir.key_status == dirlock::KeyStatus::Present {
