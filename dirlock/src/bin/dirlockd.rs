@@ -33,7 +33,7 @@ use dirlock::{
     ProtectedPolicyKey,
     RemovalStatusFlags,
     RemoveKeyUsers,
-    convert::ConvertJob,
+    convert::{CommitOutcome, ConvertJob},
     protector::{
         Protector,
         ProtectorId,
@@ -503,8 +503,13 @@ impl DirlockDaemon {
                 let Some(job) = self.jobs.remove(&jobid) else {
                     return Err(zbus::Error::Failure(format!("Job {jobid} not found")));
                 };
+                // TODO: handle Deferred and Restarted
                 match Arc::into_inner(job).unwrap().commit() {
-                    Ok(keyid) => Self::job_finished(emitter, jobid, keyid.to_string()).await,
+                    Ok(CommitOutcome::Committed(keyid)) =>
+                        Self::job_finished(emitter, jobid, keyid.to_string()).await,
+                    Ok(CommitOutcome::Deferred(_)) | Ok(CommitOutcome::Restarted(_)) =>
+                        Self::job_failed(emitter, jobid,
+                            "Conversion deferred; daemon retry not yet implemented".to_string()).await,
                     Err(e) => Self::job_failed(emitter, jobid, e.to_string()).await,
                 }
             }

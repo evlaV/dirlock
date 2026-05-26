@@ -22,6 +22,7 @@ use crate::{
     inject::{check_injected_error, InjectedError},
     protector::{Protector, ProtectorKey},
     unlock_dir_with_key,
+    user_manager_active,
     util::{
         LockFile,
         SafeFile,
@@ -48,6 +49,8 @@ pub struct ConvertJob {
     /// workdir itself is unencrypted but it contains
     /// an encrypted directory inside, {workdir}/encrypted
     workdir: PathBuf,
+    /// Owner UID if `dirs.src` is a home directory
+    home_owner: Option<u32>,
     /// Lock file held for the duration of the job
     _lockfile: LockFile,
 }
@@ -59,6 +62,20 @@ pub enum ConversionStatus {
     Interrupted(PolicyKeyId),
 }
 
+/// The outcome of a [`ConvertJob::commit`] call.
+pub enum CommitOutcome {
+    /// Conversion successful. Contains the encryption policy.
+    Committed(PolicyKeyId),
+    /// Conversion deferred: the user is still active.
+    /// The caller should call `commit()` again once the user
+    /// is logged out.
+    Deferred(ConvertJob),
+    /// Conversion restarted: the user was active during the
+    /// operation. The caller should wait for the new conversion
+    /// pass to finish and then call `commit()` again.
+    Restarted(ConvertJob),
+}
+
 /// Returns the [`ConversionStatus`] of a given source directory
 pub fn conversion_status(dir: &Path) -> Result<ConversionStatus> {
     ConvertJob::status(dir)
@@ -67,23 +84,38 @@ pub fn conversion_status(dir: &Path) -> Result<ConversionStatus> {
 /// Convert an unencrypted directory into an encrypted one
 pub fn convert_dir(dir: &Path, protector: &Protector, protector_key: ProtectorKey,
                    ks: &Keystore) -> Result<PolicyKeyId> {
-    let job = ConvertJob::start(dir, protector, protector_key, ks)?;
+    let mut job = ConvertJob::start(dir, protector, protector_key, ks)?;
     let mut stdout = std::io::stdout();
-    let mut total = 0;
-    // Display a progress indicator every half a second
-    while ! job.is_finished() {
-        std::thread::sleep(std::time::Duration::from_millis(500));
-        let current = job.progress() / 5;
-        if current > total {
-            print!(".{}%", current * 5);
-            total = current;
-        } else {
-            print!(".");
+    loop {
+        let mut total = 0;
+        // Display a progress indicator every half a second
+        while ! job.is_finished() {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            let current = job.progress() / 5;
+            if current > total {
+                print!(".{}%", current * 5);
+                total = current;
+            } else {
+                print!(".");
+            }
+            _ = stdout.flush();
         }
-        _ = stdout.flush();
+        println!();
+        match job.commit()? {
+            CommitOutcome::Committed(id) => return Ok(id),
+            CommitOutcome::Restarted(j) => {
+                // The user logged in during the conversion, so the job had
+                // to be restarted to ensure that all new changes are sync'ed.
+                job = j;
+            }
+            CommitOutcome::Deferred(j) => {
+                // The user is still logged in, we have to wait.
+                job = j;
+                println!("Conversion deferred: waiting for user to log out...");
+                job.wait_until_idle()?;
+            }
+        }
     }
-    println!();
-    job.commit()
 }
 
 struct SrcDirData {
@@ -212,12 +244,15 @@ impl ConvertJob {
             bail!("Directory {} is already being converted", dirs.src.display());
         };
 
+        // If the source dir is a home directory, get the owner's uid.
+        let home_owner = Self::home_owner_uid(&dirs.src)?;
+
         // If we're converting a home directory and the owner is not
         // completely logged out, mark the conversion dirty.
         // If the owner logs in later during the conversion, the dirty
         // flag is set by the PAM module (TODO).
-        if let Some(uid) = Self::home_owner_uid(&dirs.src)? {
-            let active = crate::user_manager_active(uid).unwrap_or(true);
+        if let Some(uid) = home_owner {
+            let active = user_manager_active(uid).unwrap_or(true);
             if active {
                 Self::create_dirty_flag(&workdir)?;
             }
@@ -277,7 +312,7 @@ impl ConvertJob {
         // was active), verify the content.
         let cloner = DirectoryCloner::start(&dirs.src, &dstdir, verify_content)?;
 
-        Ok(Self { dirs, cloner, keyid, _lockfile, dstdir, workdir })
+        Ok(Self { dirs, cloner, keyid, _lockfile, dstdir, workdir, home_owner })
     }
 
     /// Return the current progress percentage
@@ -302,6 +337,28 @@ impl ConvertJob {
         self.cloner.wait()
     }
 
+    /// Returns `true` if we're converting a home directory and the
+    /// owner is active.
+    /// Returns `false` for non-home directories or when the owner
+    /// is fully logged out.
+    pub fn is_owner_active(&self) -> Result<bool> {
+        match self.home_owner {
+            Some(uid) => user_manager_active(uid),
+            None => Ok(false),
+        }
+    }
+
+    /// If the source is a home directory, block until the owner is
+    /// completely logged out. Returns immediately if the source is
+    /// not a home directory.
+    pub fn wait_until_idle(&self) -> Result<()> {
+        while self.is_owner_active()? {
+            // TODO: don't use a polling loop
+            std::thread::sleep(std::time::Duration::from_secs(5));
+        }
+        Ok(())
+    }
+
     /// Create a dirty flag. This must happen under the global lock
     fn create_dirty_flag(workdir: &Path) -> std::io::Result<()> {
         fs::File::create(workdir.join(Self::DIRTY))?;
@@ -314,7 +371,6 @@ impl ConvertJob {
     }
 
     /// Remove a dirty flag. This must happen under the global lock
-    #[allow(dead_code)]
     fn remove_dirty_flag(workdir: &Path) -> std::io::Result<()> {
         match fs::remove_file(workdir.join(Self::DIRTY)) {
             Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
@@ -349,12 +405,50 @@ impl ConvertJob {
 
     /// Wait for the conversion job to finish and replace the original
     /// directory with the encrypted one.
-    pub fn commit(self) -> Result<PolicyKeyId> {
+    ///
+    /// Returns a different [`CommitOutcome`] depending on the result.
+    pub fn commit(mut self) -> Result<CommitOutcome> {
         // Wait until the data is copied
         if let Err(e) = self.cloner.wait() {
             bail!("Error encrypting data: {e}");
         }
 
+        // Pre-flush dirty pages outside the global lock
+        // so later we only have to do it for the rename part
+        let syncfd = fs::File::open(&self.dirs.base)?;
+        _ = nix::unistd::syncfs(syncfd.as_raw_fd());
+
+        // Acquire the global lock during the dirty-flag check and the
+        // RENAME_EXCHANGE, so that a concurrent mark_dirty() cannot
+        // race between our check and the exchange.
+        let mut db = ConvertDb::load(&self.dirs.base)?;
+
+        // If the dirty flag is set, we cannot complete the conversion.
+        if Self::dirty_flag_exists(&self.workdir) {
+            // The previous conversion ran with the user active, or a
+            // stale flag survived a crash.
+            let user_active = match self.home_owner {
+                // Err is treated as active: we'd rather defer than
+                // exchange under a user whose state we can't read.
+                Some(uid) => !matches!(user_manager_active(uid), Ok(false)),
+                // Not a home dir but the flag is set. This should not happen,
+                // so best clear the flag and re-sync.
+                None => false,
+            };
+            if user_active {
+                // Defer, the caller must wait until the user is logged out
+                return Ok(CommitOutcome::Deferred(self));
+            }
+            // User inactive: clear the flag and restart a cloner with
+            // verify_content=true. The previous (partial) clone is
+            // unreliable because the user was active while it happened.
+            Self::remove_dirty_flag(&self.workdir)?;
+            drop(db); // We can release the global lock already
+            self.cloner = DirectoryCloner::start(&self.dirs.src, &self.dstdir, true)?;
+            return Ok(CommitOutcome::Restarted(self));
+        }
+
+        // The dirty flag is unset: let's finish the conversion.
         // Move the encrypted copy from workdir/encrypted/ to workdir/
         let dstdir_2 = self.workdir.join(Self::DSTDIR);
         fs::rename(&self.dstdir, &dstdir_2)?;
@@ -362,34 +456,27 @@ impl ConvertJob {
         check_injected_error(InjectedError::ConvertCommitBeforeExchange)?;
 
         // Exchange atomically the source directory and its encrypted copy
-        let syncfd = fs::File::open(&self.dirs.base)?;
-        _ = nix::unistd::syncfs(syncfd.as_raw_fd());
         fcntl::renameat2(None, &self.dirs.src, None, &dstdir_2,
                          fcntl::RenameFlags::RENAME_EXCHANGE)?;
         _ = nix::unistd::syncfs(syncfd.as_raw_fd());
 
         check_injected_error(InjectedError::ConvertCommitAfterExchange)?;
 
-        // Remove the original data, now under workdir/data
-        if let Err(e) = fs::remove_dir_all(&dstdir_2) {
-            eprintln!("Warning: failed to remove old data: {e}");
-        }
-
-        // Remove the job from the convertdb.
-        // This acquires the global lock.
-        let mut db = ConvertDb::load(&self.dirs.base)?;
+        // Remove the convertdb entry and release the global lock.
+        // If mark_dirty() arrives later there's no entry so it's a no-op.
         db.remove(&self.dirs.src_rel);
-
-        // Remove the rest of workdir
-        if let Err(e) = fs::remove_dir_all(&self.workdir) {
-            eprintln!("Warning: failed to remove workdir: {e}");
-        }
-        // workdir is gone, write the updated convertdb to disk
         if let Err(e) = db.commit() {
             eprintln!("Warning: failed to update convertdb: {e}");
         }
+        drop(db);
 
-        Ok(self.keyid)
+        // Now we can remove the workdir outside the lock.
+        // TODO: if we crash here, the workdir is leaked
+        if let Err(e) = fs::remove_dir_all(&self.workdir) {
+            eprintln!("Warning: failed to remove workdir: {e}");
+        }
+
+        Ok(CommitOutcome::Committed(self.keyid))
     }
 }
 
