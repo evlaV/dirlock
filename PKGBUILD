@@ -653,9 +653,6 @@ build () {
 }
 
 package() {
-  # Runtime dependency
-  depends+=('qt6-virtualkeyboard')
-
   cd "$srcdir/$pkgname"
 
   # Data dir
