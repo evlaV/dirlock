@@ -170,6 +170,21 @@
     </signal>
 
     <!--
+        JobDeferred:
+        @jobid: ID of the deferred job.
+        @reason: Human-readable reason for the deferral.
+
+        Emitted when a conversion job cannot be completed yet because
+        the home directory being converted is still in use. The daemon
+        retries automatically; the job eventually completes (JobFinished)
+        or fails (JobFailed).
+    -->
+    <signal name="JobDeferred">
+      <arg name="jobid" type="u"/>
+      <arg name="reason" type="s"/>
+    </signal>
+
+    <!--
         CreateProtector:
         @options: Options dict. Required keys:
 

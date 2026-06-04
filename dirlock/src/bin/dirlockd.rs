@@ -18,6 +18,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::signal::unix::{signal, SignalKind};
 use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
 use zbus::{
     interface,
     object_server::InterfaceRef,
@@ -52,12 +53,21 @@ const OTHER_USERS_FLAG: &str = "other-users";
 
 /// Events sent by background tasks to the main thread
 enum Event {
+    /// The job has finished converting the data; it's time to call commit().
     JobFinished(u32),
+    /// A deferred job should be retried
+    JobRetry(u32),
+}
+
+/// A running conversion job with the background task that watches it
+struct JobHandle {
+    job: Arc<ConvertJob>,
+    task: JoinHandle<()>,
 }
 
 /// Global state of the dirlock D-Bus daemon
 struct DirlockDaemon {
-    jobs: HashMap<u32, Arc<ConvertJob>>,
+    jobs: HashMap<u32, JobHandle>,
     last_jobid: u32,
     tx: mpsc::Sender<Event>,
     ks: Keystore,
@@ -498,22 +508,88 @@ fn do_remove_protector_from_policy(
 impl DirlockDaemon {
     /// Handle events sent by background tasks
     async fn handle_event(&mut self, emitter: &SignalEmitter<'_>, ev: Event) -> zbus::Result<()> {
-        match ev {
-            Event::JobFinished(jobid) => {
-                let Some(job) = self.jobs.remove(&jobid) else {
-                    return Err(zbus::Error::Failure(format!("Job {jobid} not found")));
-                };
-                // TODO: handle Deferred and Restarted
-                match Arc::into_inner(job).unwrap().commit() {
-                    Ok(CommitOutcome::Committed(keyid)) =>
-                        Self::job_finished(emitter, jobid, keyid.to_string()).await,
-                    Ok(CommitOutcome::Deferred(_)) | Ok(CommitOutcome::Restarted(_)) =>
-                        Self::job_failed(emitter, jobid,
-                            "Conversion deferred; daemon retry not yet implemented".to_string()).await,
-                    Err(e) => Self::job_failed(emitter, jobid, e.to_string()).await,
+        let jobid = match ev {
+            Event::JobFinished(jobid) | Event::JobRetry(jobid) => jobid,
+        };
+        let Some(handle) = self.jobs.remove(&jobid) else {
+            // The job was cancelled before we got here, so nothing to do
+            return Ok(());
+        };
+        // Whoever sent this event (watch_job / schedule_retry)
+        // dropped its Arc before sending it so this is the last
+        // remaining reference and Arc::into_inner() cannot fail.
+        let Some(job) = Arc::into_inner(handle.job) else {
+            return Err(zbus::Error::Failure(format!("BUG: job {jobid} is still referenced")));
+        };
+        match job.commit() {
+            Ok(CommitOutcome::Committed(keyid)) =>
+                // The job finished successfully
+                Self::job_finished(emitter, jobid, keyid.to_string()).await,
+            Ok(CommitOutcome::Deferred(job)) => {
+                // The user is still logged in. Schedule a retry.
+                let job = Arc::new(job);
+                let task = Self::schedule_retry(job.clone(), jobid, self.tx.clone());
+                self.jobs.insert(jobid, JobHandle { job, task });
+                Self::job_deferred(emitter, jobid,
+                    "directory is still in use; deferring".to_string()).await
+            }
+            Ok(CommitOutcome::Restarted(job)) => {
+                // The job was restarted. Wait for it to complete.
+                let job = Arc::new(job);
+                let task = Self::watch_job(job.clone(), jobid, emitter.to_owned(), self.tx.clone());
+                self.jobs.insert(jobid, JobHandle { job, task });
+                Self::job_deferred(emitter, jobid,
+                    "directory was in use; restarting".to_string()).await
+            }
+            Err(e) => Self::job_failed(emitter, jobid, e.to_string()).await,
+        }
+    }
+
+    /// Spawn a background task that watches a running job.
+    /// It emits [`JobProgress`] as it advances, and sends a
+    /// [`Event::JobFinished`] event once it's ready.
+    fn watch_job(job: Arc<ConvertJob>,
+                 jobid: u32,
+                 emitter: SignalEmitter<'static>,
+                 tx: mpsc::Sender<Event>,
+    ) -> JoinHandle<()> {
+        tokio::task::spawn(async move {
+            let duration = std::time::Duration::new(2, 0);
+            let mut progress = 0;
+            while ! job.is_finished() {
+                tokio::time::sleep(duration).await;
+                let new_progress = job.progress();
+                if new_progress > progress {
+                    progress = new_progress;
+                    _ = Self::job_progress(&emitter, jobid, progress).await;
                 }
             }
-        }
+            // Once the job is finished, drop this reference and emit
+            // the JobFinished signal.
+            _ = job.wait();
+            drop(job);
+            _ = tx.send(Event::JobFinished(jobid)).await;
+        })
+    }
+
+    /// Spawn a background task that waits for the job owner to log out
+    /// before restarting it.
+    // TODO: don't use a polling loop
+    fn schedule_retry(
+        job: Arc<ConvertJob>,
+        jobid: u32,
+        tx: mpsc::Sender<Event>,
+    ) -> JoinHandle<()> {
+        let retry_interval = std::time::Duration::from_secs(60);
+        tokio::task::spawn(async move {
+            // unwrap_or(true): wait if is_owner_active() returns an error
+            while job.is_owner_active().unwrap_or(true) {
+                tokio::time::sleep(retry_interval).await;
+            }
+            // Drop our reference so handle_event's Arc::into_inner succeeds.
+            drop(job);
+            _ = tx.send(Event::JobRetry(jobid)).await;
+        })
     }
 }
 
@@ -588,41 +664,27 @@ impl DirlockDaemon {
             .into_dbus()?;
         self.last_jobid += 1;
         let jobid = self.last_jobid;
-        self.jobs.insert(jobid, job.clone());
 
         // Launch a task that reports the status of the job
         let emitter = emitter.into_owned();
-        let tx = self.tx.clone();
-        tokio::task::spawn(async move {
-            let duration = std::time::Duration::new(2, 0);
-            let mut progress = 0;
-            while ! job.is_finished() {
-                tokio::time::sleep(duration).await;
-                let new_progress = job.progress();
-                if new_progress > progress {
-                    progress = new_progress;
-                    _ = Self::job_progress(&emitter, jobid, progress).await;
-                }
-            }
-            // Once the job is finished, drop this reference and emit
-            // the JobFinished signal.
-            _ = job.wait();
-            drop(job);
-            _ = tx.send(Event::JobFinished(jobid)).await;
-        });
+        let task = Self::watch_job(job.clone(), jobid, emitter, self.tx.clone());
+        self.jobs.insert(jobid, JobHandle { job, task });
 
         // Return the job ID to the caller
         Ok(jobid)
     }
 
     async fn cancel_job(
-        &self,
+        &mut self,
         jobid: u32,
     ) -> Result<()> {
-        match self.jobs.get(&jobid) {
-            Some(job) => job.cancel().into_dbus(),
-            None => Err(Error::Failed(format!("Job {jobid} not found"))),
-        }
+        let Some(handle) = self.jobs.remove(&jobid) else {
+            return Err(Error::Failed(format!("Job {jobid} not found")));
+        };
+        // Cancel the job and kill its background watcher task
+        let result = handle.job.cancel().into_dbus();
+        handle.task.abort();
+        result
     }
 
     async fn job_status(
@@ -630,7 +692,7 @@ impl DirlockDaemon {
         jobid: u32,
     ) -> Result<i32> {
         match self.jobs.get(&jobid) {
-            Some(job) => Ok(job.progress()),
+            Some(handle) => Ok(handle.job.progress()),
             None => Err(Error::Failed(format!("Job {jobid} not found"))),
         }
     }
@@ -643,6 +705,9 @@ impl DirlockDaemon {
 
     #[zbus(signal)]
     async fn job_progress(e: &SignalEmitter<'_>, jobid: u32, progress: i32) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn job_deferred(e: &SignalEmitter<'_>, jobid: u32, reason: String) -> zbus::Result<()>;
 
     async fn create_protector(
         &self,
@@ -871,7 +936,7 @@ mod tests {
     struct TestService {
         _keystore_dir: TempDir,
         _server_conn: zbus::Connection,
-        _event_task: tokio::task::JoinHandle<()>,
+        _event_task: JoinHandle<()>,
         client_conn: zbus::Connection,
         service_name: String,
     }
