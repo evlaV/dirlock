@@ -178,31 +178,45 @@ impl ConvertJob {
             return Ok(ConversionStatus::None);
         }
         let mut db = ConvertDb::load(&dirs.base)?;
-        let status = match db.get(&dirs.src_rel) {
-            Some(id) => {
-                let mut lockfile = dirs.base.join(id.to_string());
-                lockfile.push(Self::LOCKFILE);
-                match LockFile::try_new(&lockfile) {
-                    Ok(None) => ConversionStatus::Ongoing(id.clone()),
-                    _ => {
-                        // No active job. If the directory is already encrypted,
-                        // a previous commit() completed the exchange but crashed
-                        // before removing the db entry. Clean up and report None.
-                        if crate::get_policy(&dirs.src)?.is_some() {
-                            let workdir = dirs.base.join(id.to_string());
-                            let _ = fs::remove_dir_all(workdir);
-                            db.remove(&dirs.src_rel);
-                            let _ = db.commit();
-                            ConversionStatus::None
-                        } else {
-                            ConversionStatus::Interrupted(id.clone())
-                        }
-                    }
-                }
-            },
-            None => ConversionStatus::None,
+        let Some(id) = db.get(&dirs.src_rel).cloned() else {
+            return Ok(ConversionStatus::None);
         };
-        Ok(status)
+
+        // If the workdir lock can't be acquired there's a live job.
+        let mut lockfile = dirs.base.join(id.to_string());
+        lockfile.push(Self::LOCKFILE);
+        if let Ok(None) = LockFile::try_new(&lockfile) {
+            return Ok(ConversionStatus::Ongoing(id));
+        }
+
+        // No active job. If the directory is not encrypted yet then the
+        // conversion was interrupted and can be resumed later.
+        if crate::get_policy(&dirs.src)?.is_none() {
+            return Ok(ConversionStatus::Interrupted(id));
+        }
+
+        // The directory is already encrypted: a previous commit()
+        // completed the exchange but crashed before removing the db
+        // entry. Move the leftover workdir into .trash and update the db.
+        let workdir = dirs.base.join(id.to_string());
+        let trashdir = dirs.base.join(Self::TRASHDIR);
+        let trash_target = trashdir.join(id.to_string());
+        if create_dir_if_needed(&trashdir).is_ok() {
+            let _ = fs::rename(&workdir, &trash_target);
+        }
+        db.remove(&dirs.src_rel);
+        let _ = db.commit();
+        drop(db);
+
+        // Remove the leftover data outside the lock.
+        // Try also removing workdir in case fs::rename() failed.
+        let _ = fs::remove_dir_all(&workdir);
+        let _ = fs::remove_dir_all(&trash_target);
+        if let Ok(lock) = GlobalLockFile::new() {
+            ConvertJob::try_remove_base_dirs(&dirs.base, &lock);
+        }
+
+        Ok(ConversionStatus::None)
     }
 
     /// Start a new asynchronous job to convert `dir` to an encrypted folder
