@@ -279,8 +279,6 @@ pub struct LockFile {
 }
 
 impl LockFile {
-    const GLOBAL_LOCKFILE : &str = "dirlock.lock";
-
     /// Acquire a lock file.
     /// Blocks until the file is available.
     pub fn new(path: &Path) -> std::io::Result<Self> {
@@ -297,13 +295,6 @@ impl LockFile {
         }
     }
 
-    /// Acquire a global, system-wide lockfile.
-    /// Blocks until the file is available.
-    pub fn global() -> std::io::Result<Self> {
-        let lockfile = Config::runtime_dir().join(Self::GLOBAL_LOCKFILE);
-        Self::new(&lockfile)
-    }
-
     // Actual constructor, private
     fn new_full(path: &Path, flags: std::ffi::c_int) -> std::io::Result<Self> {
         // Open the file if it already exists, else create it
@@ -317,6 +308,21 @@ impl LockFile {
     }
 }
 
+/// A global, system-wide lock file
+#[allow(dead_code)]
+pub struct GlobalLockFile(LockFile);
+
+impl GlobalLockFile {
+    const GLOBAL_LOCKFILE : &str = "dirlock.lock";
+
+    /// Acquire a global, system-wide lockfile.
+    /// Blocks until the file is available.
+    pub fn new() -> std::io::Result<Self> {
+        let path = Config::runtime_dir().join(Self::GLOBAL_LOCKFILE);
+        let lockfile = LockFile::new(&path)?;
+        Ok(Self(lockfile))
+    }
+}
 
 #[cfg(test)]
 mod tests {

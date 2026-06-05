@@ -24,6 +24,7 @@ use crate::{
     unlock_dir_with_key,
     user_manager_active,
     util::{
+        GlobalLockFile,
         LockFile,
         SafeFile,
         create_dir_if_needed,
@@ -136,6 +137,7 @@ impl ConvertJob {
     const ENCRYPTED : &str = "encrypted";
     const DSTDIR : &str = "data";
     const DIRTY : &str = "dirty";
+    const TRASHDIR : &str = ".trash";
 
     /// This canonicalizes the source dir and returns [`SrcDirData`]
     fn get_src_dir_data(dir: &Path) -> Result<SrcDirData> {
@@ -378,6 +380,17 @@ impl ConvertJob {
         }
     }
 
+    /// Try to remove the trash and base directories. This is a
+    /// best-effort removal done during cleanup, it's safe to call
+    /// multiple times and failures are ignored.
+    /// It must be called under the global lock, because other jobs
+    /// could be trying to create it at the same time.
+    /// The `&GlobalLockFile` argument proves that the caller is holding it.
+    fn try_remove_base_dirs(base: &Path, _lock: &GlobalLockFile) {
+        let _ = fs::remove_dir(base.join(Self::TRASHDIR));
+        let _ = fs::remove_dir(base);
+    }
+
     /// Mark the conversion of `dir` as dirty.
     ///
     /// If there is a conversion job (in whatever state) for `dir`, create
@@ -462,6 +475,15 @@ impl ConvertJob {
 
         check_injected_error(InjectedError::ConvertCommitAfterExchange)?;
 
+        // The conversion is done. workdir contains the original data
+        // that can be removed. Move it into .trash first with a
+        // simple rename so we can call db.remove() and quickly
+        // release the global lock.
+        let trashdir = self.dirs.base.join(Self::TRASHDIR);
+        create_dir_if_needed(&trashdir)?;
+        let trash_target = trashdir.join(self.keyid.to_string());
+        fs::rename(&self.workdir, &trash_target)?;
+
         // Remove the convertdb entry and release the global lock.
         // If mark_dirty() arrives later there's no entry so it's a no-op.
         db.remove(&self.dirs.src_rel);
@@ -470,10 +492,16 @@ impl ConvertJob {
         }
         drop(db);
 
-        // Now we can remove the workdir outside the lock.
-        // TODO: if we crash here, the workdir is leaked
-        if let Err(e) = fs::remove_dir_all(&self.workdir) {
-            eprintln!("Warning: failed to remove workdir: {e}");
+        // Now we can remove the trashed workdir outside the lock.
+        if let Err(e) = fs::remove_dir_all(&trash_target) {
+            if e.kind() != ErrorKind::NotFound {
+                eprintln!("Warning: failed to remove workdir: {e}");
+            }
+        }
+
+        // And we can finally remove the base dir
+        if let Ok(lock) = GlobalLockFile::new() {
+            ConvertJob::try_remove_base_dirs(&self.dirs.base, &lock);
         }
 
         Ok(CommitOutcome::Committed(self.keyid))
@@ -489,7 +517,7 @@ impl ConvertJob {
 struct ConvertDb {
     filename: PathBuf,
     db: HashMap<PathBuf, PolicyKeyId>,
-    _lock: LockFile,
+    _lock: GlobalLockFile,
     dirty: bool,
 }
 
@@ -498,7 +526,7 @@ impl ConvertDb {
     /// doesn't exist)
     fn load(basedir: &Path) -> std::io::Result<Self> {
         let filename = basedir.join("convertdb");
-        let _lock = LockFile::global()?;
+        let _lock = GlobalLockFile::new()?;
         let db = if filename.exists() {
             serde_json::from_reader(fs::File::open(&filename)?)
                 .map_err(|e| std::io::Error::new(ErrorKind::InvalidData, e))?
@@ -540,9 +568,7 @@ impl ConvertDb {
             if self.filename.exists() {
                 fs::remove_file(&self.filename)?;
             }
-            if dir_is_empty(basedir).unwrap_or(false) {
-                _ = fs::remove_dir(basedir);
-            }
+            ConvertJob::try_remove_base_dirs(basedir, &self._lock);
             Ok(())
         } else {
             // Create /mnt/.dirlock if it doesn't exist
@@ -571,17 +597,20 @@ pub fn cleanup(dir: &Path) -> Result<usize> {
     if ! base.exists() {
         return Ok(0);
     }
-    let entries = {
-        let db = ConvertDb::load(&base)?;
-        let entries : Vec<PathBuf> =
-            db.keys().map(|src_rel| mntpoint.join(src_rel)).collect();
-        // If convertdb is empty remove the base dir and return
-        if entries.is_empty() {
-            // We only want to remove *empty* directories
-            _ = fs::remove_dir(base);
-            return Ok(0);
+
+    // 1. Purge any leftover trashed workdirs from crashed commits.
+    //    This does not need the global lock.
+    if let Ok(trash_entries) = fs::read_dir(base.join(ConvertJob::TRASHDIR)) {
+        for entry in trash_entries.flatten() {
+            let _ = fs::remove_dir_all(entry.path());
         }
-        entries
+    }
+
+    // 2. Clean stale convertdb entries (conversion_status() detects
+    //    them and removes the data)
+    let entries : Vec<PathBuf> = {
+        let db = ConvertDb::load(&base)?;
+        db.keys().map(|src_rel| mntpoint.join(src_rel)).collect()
     };
     let mut count = 0;
     for src in entries {
@@ -589,6 +618,12 @@ pub fn cleanup(dir: &Path) -> Result<usize> {
             count += 1;
         }
     }
+
+    // 3. Remove .trash and the base dir if they are now empty
+    if let Ok(lock) = GlobalLockFile::new() {
+        ConvertJob::try_remove_base_dirs(&base, &lock);
+    }
+
     Ok(count)
 }
 
