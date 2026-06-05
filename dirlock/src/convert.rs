@@ -578,11 +578,10 @@ impl ConvertDb {
         }
         let basedir = self.filename.parent().unwrap();
         if self.db.is_empty() {
-            // Remove the db file and the parent directory if they're empty
+            // Remove the db file. The base dir must be cleaned by the caller
             if self.filename.exists() {
                 fs::remove_file(&self.filename)?;
             }
-            ConvertJob::try_remove_base_dirs(basedir, &self._lock);
             Ok(())
         } else {
             // Create /mnt/.dirlock if it doesn't exist
