@@ -5,7 +5,6 @@
  */
 
 pub(crate) mod config;
-pub(crate) mod cloner;
 pub mod convert;
 pub(crate) mod crypto;
 pub(crate) mod fscrypt;
