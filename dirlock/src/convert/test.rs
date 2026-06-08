@@ -355,3 +355,53 @@ fn test_mark_dirty_restarts_commit() -> Result<()> {
 
     Ok(())
 }
+
+// Test a crash after the workdir is moved to .trash but before the
+// convertdb entry is removed.
+// - The source directory is already encrypted
+// - The old workdir has been moved to .trash
+// - The convertdb entry is still there
+// - conversion_status() should remove the trashed data and return None
+#[test]
+fn test_crash_after_trash_rename() -> Result<()> {
+    let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+    crate::init()?;
+
+    let ks_dir = TempDir::new("keystore")?;
+    let ks = Keystore::from_path(ks_dir.path());
+
+    // Create a directory with data
+    let dir = TempDir::new_in(&mntpoint, "convert")?;
+    let path = dir.path();
+    std::fs::write(path.join("file.txt"), "hello")?;
+
+    // Create a protector
+    let (protector, protector_key) = make_test_protector(&ks)?;
+
+    // Simulate a crash after the workdir is trashed but before db.commit():
+    inject_error(InjectedError::ConvertCommitAfterTrashRename);
+    let job = ConvertJob::start(path, &protector, protector_key, &ks)?;
+    let workdir = job.workdir.clone();
+    assert!(job.commit().is_err());
+    clear_injected_error();
+
+    // The directory is now encrypted
+    let encrypted_dir = EncryptedDir::open(path, &ks, LockState::Unlocked)?;
+    assert_eq!(std::fs::read_to_string(path.join("file.txt"))?, "hello");
+    encrypted_dir.lock(RemoveKeyUsers::CurrentUser)?;
+
+    // The workdir was moved into .trash: its old location is gone but the
+    // trashed copy is still on disk (to be reclaimed during cleanup).
+    let trash_entry = workdir.parent().unwrap()
+        .join(ConvertJob::TRASHDIR)
+        .join(workdir.file_name().unwrap());
+    assert!(!workdir.exists());
+    assert!(trash_entry.exists());
+
+    // conversion_status() detects the stale entry, removes the trashed
+    // data and reports None
+    assert!(matches!(conversion_status(path)?, ConversionStatus::None));
+    assert!(!trash_entry.exists());
+
+    Ok(())
+}

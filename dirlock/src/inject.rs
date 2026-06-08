@@ -24,6 +24,10 @@ pub enum InjectedError {
     /// ConvertJob::commit(), between RENAME_EXCHANGE and cleanup.
     /// The directory is encrypted but the convertdb entry is still there.
     ConvertCommitAfterExchange,
+    /// ConvertJob::commit(), after the workdir is moved to .trash but
+    /// before the convertdb entry is removed. The directory is encrypted,
+    /// the old workdir is gone, and the convertdb entry is still there.
+    ConvertCommitAfterTrashRename,
 }
 
 /// In non-test builds this a no-op and gets optimized away.

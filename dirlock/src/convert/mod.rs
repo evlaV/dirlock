@@ -500,6 +500,8 @@ impl ConvertJob {
         let trash_target = trashdir.join(self.keyid.to_string());
         fs::rename(&self.workdir, &trash_target)?;
 
+        check_injected_error(InjectedError::ConvertCommitAfterTrashRename)?;
+
         // Remove the convertdb entry and release the global lock.
         // If mark_dirty() arrives later there's no entry so it's a no-op.
         db.remove(&self.dirs.src_rel);
