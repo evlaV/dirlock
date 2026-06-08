@@ -295,3 +295,63 @@ fn test_crash_after_exchange() -> Result<()> {
 
     Ok(())
 }
+
+// If a conversion job is marked dirty then commit() restarts it, and
+// a second commit() updates the data and completes the conversion.
+#[test]
+fn test_mark_dirty_restarts_commit() -> Result<()> {
+    let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+    crate::init()?;
+
+    let ks_dir = TempDir::new("keystore")?;
+    let ks = Keystore::from_path(ks_dir.path());
+
+    // Create a directory with data
+    let dir = TempDir::new_in(&mntpoint, "convert")?;
+    let path = dir.path();
+    std::fs::write(path.join("file.txt"), "hello")?;
+    std::fs::write(path.join("gone.txt"), "to be deleted")?;
+
+    // Create a protector
+    let (protector, protector_key) = make_test_protector(&ks)?;
+
+    // This does nothing if no conversion started yet
+    assert!(!ConvertJob::mark_dirty(path)?);
+
+    // Start the conversion. No dirty flag yet
+    let job = ConvertJob::start(path, &protector, protector_key, &ks)?;
+    assert!(!ConvertJob::dirty_flag_exists(&job.workdir));
+
+    // Wait for the copy to finish, then mark the conversion dirty
+    job.wait()?;
+    assert!(ConvertJob::mark_dirty(path)?);
+    assert!(ConvertJob::dirty_flag_exists(&job.workdir));
+
+    // Modify the original file, add a new one and remove gone.txt
+    std::fs::write(path.join("file.txt"), "goodbye")?;
+    std::fs::write(path.join("new.txt"), "new file")?;
+    std::fs::remove_file(path.join("gone.txt"))?;
+
+    // It's safe to call mark_dirty() multiple times
+    assert!(ConvertJob::mark_dirty(path)?);
+    assert!(ConvertJob::mark_dirty(path)?);
+
+    // With the dirty flag set, commit() restarts the job
+    let CommitOutcome::Restarted(job) = job.commit()? else {
+        bail!("dirty conversion job was not restarted");
+    };
+
+    // The restart cleared the flag, now the conversion can complete
+    assert!(!ConvertJob::dirty_flag_exists(&job.workdir));
+    assert!(matches!(job.commit()?, CommitOutcome::Committed(_)));
+
+    // The encrypted directory contains the modified file
+    let encrypted_dir = EncryptedDir::open(path, &ks, LockState::Unlocked)?;
+    assert_eq!(std::fs::read_to_string(path.join("file.txt"))?, "goodbye");
+    assert_eq!(std::fs::read_to_string(path.join("new.txt"))?, "new file");
+    assert!(!path.join("gone.txt").exists());
+    assert!(matches!(conversion_status(path)?, ConversionStatus::None));
+    encrypted_dir.lock(RemoveKeyUsers::CurrentUser)?;
+
+    Ok(())
+}
