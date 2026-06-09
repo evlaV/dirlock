@@ -405,3 +405,67 @@ fn test_crash_after_trash_rename() -> Result<()> {
 
     Ok(())
 }
+
+// When the source is a home directory whose owner is logged in, a dirty
+// conversion must be deferred rather than exchanged. Once the owner logs
+// out it restarts and then completes. user_manager_active() is forced
+// here since the test directory is not a real home.
+#[test]
+fn test_dirty_conversion_is_deferred() -> Result<()> {
+    let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+    crate::init()?;
+
+    let ks_dir = TempDir::new("keystore")?;
+    let ks = Keystore::from_path(ks_dir.path());
+
+    // Create a directory with data
+    let dir = TempDir::new_in(&mntpoint, "convert")?;
+    let path = dir.path();
+    std::fs::write(path.join("file.txt"), "hello")?;
+
+    // Create a protector
+    let (protector, protector_key) = make_test_protector(&ks)?;
+
+    // Pretend that the source is a home directory
+    let mut job = ConvertJob::start(path, &protector, protector_key, &ks)?;
+    job.home_owner = Some(std::fs::metadata(path)?.uid());
+
+    // Fake a login mid-conversion, marking the job dirty
+    inject(Injected::UserManagerActive(true));
+    assert!(ConvertJob::mark_dirty(path)?);
+
+    // commit() defers while the owner is active
+    let CommitOutcome::Deferred(job) = job.commit()? else {
+        bail!("expected the conversion to be deferred");
+    };
+    crate::ensure_unencrypted(path, &ks)?;
+    assert!(ConvertJob::dirty_flag_exists(&job.workdir));
+
+    // Same result, no matter how often we try
+    let CommitOutcome::Deferred(job) = job.commit()? else {
+        bail!("expected the conversion to be deferred");
+    };
+    crate::ensure_unencrypted(path, &ks)?;
+    assert!(ConvertJob::dirty_flag_exists(&job.workdir));
+
+    // The owner logs out: commit() now restarts the copy
+    inject(Injected::UserManagerActive(false));
+    let CommitOutcome::Restarted(job) = job.commit()? else {
+        bail!("expected the conversion to be restarted after logout");
+    };
+
+    // The dirty flag is now gone
+    assert!(!ConvertJob::dirty_flag_exists(&job.workdir));
+
+    // Now the job can complete successfully
+    assert!(matches!(job.commit()?, CommitOutcome::Committed(_)));
+    clear_injected();
+
+    // The directory is encrypted with the data intact.
+    let encrypted_dir = EncryptedDir::open(path, &ks, LockState::Unlocked)?;
+    assert_eq!(std::fs::read_to_string(path.join("file.txt"))?, "hello");
+    assert!(matches!(conversion_status(path)?, ConversionStatus::None));
+    encrypted_dir.lock(RemoveKeyUsers::CurrentUser)?;
+
+    Ok(())
+}

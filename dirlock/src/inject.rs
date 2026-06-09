@@ -28,6 +28,10 @@ pub enum Injected {
     /// before the convertdb entry is removed. The directory is encrypted,
     /// the old workdir is gone, and the convertdb entry is still there.
     ConvertCommitAfterTrashRename,
+    /// user_manager_active() returns this instead of querying systemd.
+    /// Only constructed from tests, it's dead code in normal builds.
+    #[allow(dead_code)]
+    UserManagerActive(bool),
 }
 
 /// Returns the currently injected condition, if any.

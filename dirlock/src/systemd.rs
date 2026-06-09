@@ -6,6 +6,7 @@
 
 use std::ffi::{c_char, c_int, c_void, CStr};
 use anyhow::{Result, bail};
+use crate::inject::{check_injected_value, Injected};
 
 #[link(name = "systemd")]
 extern "C" {
@@ -18,6 +19,9 @@ extern "C" {
 /// Returns `true` if systemd's user manager for the given uid
 /// is active (i.e. not completely offline).
 pub fn user_manager_active(uid: u32) -> Result<bool> {
+    if let Some(Injected::UserManagerActive(active)) = check_injected_value() {
+        return Ok(active);
+    }
     let mut state: *mut c_char = std::ptr::null_mut();
     let ret = unsafe { sd_uid_get_state(uid, &mut state) };
     if ret < 0 || state.is_null() {
