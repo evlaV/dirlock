@@ -11,7 +11,7 @@ use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
 use tempdir::TempDir;
 use crate::{Keystore, CreateOpts, EncryptedDir, LockState, RemoveKeyUsers};
-use crate::inject::{clear_injected_error, inject_error};
+use crate::inject::{clear_injected, inject, Injected};
 use crate::protector::{Protector, ProtectorKey, opts::ProtectorOptsBuilder};
 
 /// Filesystem where to run the tests. It must support fscrypt.
@@ -223,7 +223,7 @@ fn test_crash_before_exchange() -> Result<()> {
     let (protector, protector_key) = make_test_protector(&ks)?;
 
     // Simulate a crash between fs::rename and RENAME_EXCHANGE:
-    inject_error(InjectedError::ConvertCommitBeforeExchange);
+    inject(Injected::ConvertCommitBeforeExchange);
     let job = ConvertJob::start(path, &protector, protector_key.clone(), &ks)?;
     let workdir = job.workdir.clone();
     assert!(job.commit().is_err());
@@ -234,7 +234,7 @@ fn test_crash_before_exchange() -> Result<()> {
     assert!(matches!(conversion_status(path)?, ConversionStatus::Interrupted(_)));
 
     // start() moves the orphan back and re-runs rsync; commit() finishes the job
-    clear_injected_error();
+    clear_injected();
     let job = ConvertJob::start(path, &protector, protector_key, &ks)?;
     job.commit()?;
 
@@ -269,7 +269,7 @@ fn test_crash_after_exchange() -> Result<()> {
     let (protector, protector_key) = make_test_protector(&ks)?;
 
     // Simulate a crash between RENAME_EXCHANGE and db.commit():
-    inject_error(InjectedError::ConvertCommitAfterExchange);
+    inject(Injected::ConvertCommitAfterExchange);
     let job = ConvertJob::start(path, &protector, protector_key.clone(), &ks)?;
     let workdir = job.workdir.clone();
     assert!(job.commit().is_err());
@@ -379,11 +379,11 @@ fn test_crash_after_trash_rename() -> Result<()> {
     let (protector, protector_key) = make_test_protector(&ks)?;
 
     // Simulate a crash after the workdir is trashed but before db.commit():
-    inject_error(InjectedError::ConvertCommitAfterTrashRename);
+    inject(Injected::ConvertCommitAfterTrashRename);
     let job = ConvertJob::start(path, &protector, protector_key, &ks)?;
     let workdir = job.workdir.clone();
     assert!(job.commit().is_err());
-    clear_injected_error();
+    clear_injected();
 
     // The directory is now encrypted
     let encrypted_dir = EncryptedDir::open(path, &ks, LockState::Unlocked)?;

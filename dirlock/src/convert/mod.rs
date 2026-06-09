@@ -21,7 +21,7 @@ use crate::{
     Keystore,
     create_policy_data,
     fscrypt::{KeyStatus, PolicyKeyId},
-    inject::{check_injected_error, InjectedError},
+    inject::{check_injected_error, Injected},
     protector::{Protector, ProtectorKey},
     unlock_dir_with_key,
     user_manager_active,
@@ -482,14 +482,14 @@ impl ConvertJob {
         let dstdir_2 = self.workdir.join(Self::DSTDIR);
         fs::rename(&self.dstdir, &dstdir_2)?;
 
-        check_injected_error(InjectedError::ConvertCommitBeforeExchange)?;
+        check_injected_error(Injected::ConvertCommitBeforeExchange)?;
 
         // Exchange atomically the source directory and its encrypted copy
         fcntl::renameat2(None, &self.dirs.src, None, &dstdir_2,
                          fcntl::RenameFlags::RENAME_EXCHANGE)?;
         _ = nix::unistd::syncfs(syncfd.as_raw_fd());
 
-        check_injected_error(InjectedError::ConvertCommitAfterExchange)?;
+        check_injected_error(Injected::ConvertCommitAfterExchange)?;
 
         // The conversion is done. workdir contains the original data
         // that can be removed. Move it into .trash first with a
@@ -500,7 +500,7 @@ impl ConvertJob {
         let trash_target = trashdir.join(self.keyid.to_string());
         fs::rename(&self.workdir, &trash_target)?;
 
-        check_injected_error(InjectedError::ConvertCommitAfterTrashRename)?;
+        check_injected_error(Injected::ConvertCommitAfterTrashRename)?;
 
         // Remove the convertdb entry and release the global lock.
         // If mark_dirty() arrives later there's no entry so it's a no-op.
