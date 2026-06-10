@@ -457,6 +457,23 @@ fn test_dirty_conversion_is_deferred() -> Result<()> {
     // The dirty flag is now gone
     assert!(!ConvertJob::dirty_flag_exists(&job.workdir));
 
+    // The owner logs in again before the restart finishes: the job must
+    // defer once more rather than complete.
+    inject(Injected::UserManagerActive(true));
+    assert!(ConvertJob::mark_dirty(path)?);
+    let CommitOutcome::Deferred(job) = job.commit()? else {
+        bail!("expected the conversion to be deferred after the second login");
+    };
+    crate::ensure_unencrypted(path, &ks)?;
+    assert!(ConvertJob::dirty_flag_exists(&job.workdir));
+
+    // The owner logs out for good: commit() restarts once more
+    inject(Injected::UserManagerActive(false));
+    let CommitOutcome::Restarted(job) = job.commit()? else {
+        bail!("expected the conversion to be restarted after the second logout");
+    };
+    assert!(!ConvertJob::dirty_flag_exists(&job.workdir));
+
     // Now the job can complete successfully
     assert!(matches!(job.commit()?, CommitOutcome::Committed(_)));
     clear_injected();
