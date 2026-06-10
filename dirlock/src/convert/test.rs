@@ -486,3 +486,62 @@ fn test_dirty_conversion_is_deferred() -> Result<()> {
 
     Ok(())
 }
+
+// Restart a conversion but modify a source file keeping its size and
+// mtime. This verifies that rsync is run with --checksum and detects
+// these changes.
+#[test]
+fn test_dirty_restart_uses_checksum() -> Result<()> {
+    use nix::sys::stat::{utimensat, UtimensatFlags};
+    use nix::sys::time::TimeSpec;
+
+    let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+    crate::init()?;
+
+    let ks_dir = TempDir::new("keystore")?;
+    let ks = Keystore::from_path(ks_dir.path());
+
+    // Create a directory with data
+    let dir = TempDir::new_in(&mntpoint, "convert")?;
+    let srcdir = dir.path();
+    let srcfile = srcdir.join("file.txt");
+    std::fs::write(&srcfile, "hello")?;
+
+    // Create a protector
+    let (protector, protector_key) = make_test_protector(&ks)?;
+
+    // The first pass copies "hello" into the (encrypted) destination.
+    let job = ConvertJob::start(srcdir, &protector, protector_key, &ks)?;
+    job.wait()?;
+
+    // Rewrite the source file but keep the size and timestamps
+    let dst_md = std::fs::metadata(job.dstdir.join("file.txt"))?;
+    let atime = TimeSpec::new(dst_md.atime(), dst_md.atime_nsec());
+    let mtime = TimeSpec::new(dst_md.mtime(), dst_md.mtime_nsec());
+    std::fs::write(&srcfile, "world")?;
+    utimensat(None, &srcfile, &atime, &mtime, UtimensatFlags::FollowSymlink)?;
+
+    // Now both timestamps should be identical
+    let src_md = std::fs::metadata(&srcfile)?;
+    assert_eq!(src_md.len(), dst_md.len());
+    assert_eq!(src_md.mtime(), dst_md.mtime());
+    assert_eq!(src_md.mtime_nsec(), dst_md.mtime_nsec());
+
+    // Marking the job dirty makes commit() restart the copy with --checksum.
+    // This should detect the changes even though the sizes and timestamps
+    // match.
+    assert!(ConvertJob::mark_dirty(srcdir)?);
+    let CommitOutcome::Restarted(job) = job.commit()? else {
+        bail!("expected the dirty conversion to be restarted");
+    };
+
+    // Now the job can complete successfully
+    assert!(matches!(job.commit()?, CommitOutcome::Committed(_)));
+
+    // Verify that the final (encrypted) directory has the new contents
+    let encrypted_dir = EncryptedDir::open(srcdir, &ks, LockState::Unlocked)?;
+    assert_eq!(std::fs::read_to_string(&srcfile)?, "world");
+    encrypted_dir.lock(RemoveKeyUsers::CurrentUser)?;
+
+    Ok(())
+}
