@@ -14,6 +14,16 @@ use crate::{Keystore, CreateOpts, EncryptedDir, LockState, RemoveKeyUsers};
 use crate::inject::{clear_injected, inject, Injected};
 use crate::protector::{Protector, ProtectorKey, opts::ProtectorOptsBuilder};
 
+// Tests in this module verify that interrupted conversion jobs are
+// handled correctly and that their state is cleaned up.
+// In general all works automatically and nothing special needs to be done,
+// but test_cleanup() in particular tests the general cleanup() function that
+// can potentially affect the result of the other tests.
+//
+// For this reason, test_cleanup() acquires this lock with exclusive access
+// and all other tests in this module must acquire it with shared access.
+static FS_LOCK: std::sync::RwLock<()> = std::sync::RwLock::new(());
+
 /// Filesystem where to run the tests. It must support fscrypt.
 /// Set to 'skip' to skip these tests.
 const MNTPOINT_ENV_VAR: &str = "DIRLOCK_TEST_FS";
@@ -38,6 +48,7 @@ fn make_test_protector(ks: &Keystore) -> Result<(Protector, ProtectorKey)> {
 #[test]
 fn test_convert() -> Result<()> {
     let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+    let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
 
     let ks_dir = TempDir::new("keystore")?;
     let ks = Keystore::from_path(ks_dir.path());
@@ -99,6 +110,7 @@ fn test_convert() -> Result<()> {
 #[test]
 fn test_conversion_status_lifecycle() -> Result<()> {
     let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+    let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
 
     let ks_dir = TempDir::new("keystore")?;
     let ks = Keystore::from_path(ks_dir.path());
@@ -128,6 +140,7 @@ fn test_conversion_status_lifecycle() -> Result<()> {
 #[test]
 fn test_cancel_and_resume() -> Result<()> {
     let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+    let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
     crate::init()?;
 
     let ks_dir = TempDir::new("keystore")?;
@@ -169,6 +182,7 @@ fn test_cancel_and_resume() -> Result<()> {
 #[test]
 fn test_concurrent_start_rejected() -> Result<()> {
     let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+    let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
     crate::init()?;
 
     let ks_dir = TempDir::new("keystore")?;
@@ -209,6 +223,7 @@ fn test_concurrent_start_rejected() -> Result<()> {
 #[test]
 fn test_crash_before_exchange() -> Result<()> {
     let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+    let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
     crate::init()?;
 
     let ks_dir = TempDir::new("keystore")?;
@@ -255,6 +270,7 @@ fn test_crash_before_exchange() -> Result<()> {
 #[test]
 fn test_crash_after_exchange() -> Result<()> {
     let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+    let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
     crate::init()?;
 
     let ks_dir = TempDir::new("keystore")?;
@@ -301,6 +317,7 @@ fn test_crash_after_exchange() -> Result<()> {
 #[test]
 fn test_mark_dirty_restarts_commit() -> Result<()> {
     let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+    let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
     crate::init()?;
 
     let ks_dir = TempDir::new("keystore")?;
@@ -365,6 +382,7 @@ fn test_mark_dirty_restarts_commit() -> Result<()> {
 #[test]
 fn test_crash_after_trash_rename() -> Result<()> {
     let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+    let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
     crate::init()?;
 
     let ks_dir = TempDir::new("keystore")?;
@@ -413,6 +431,7 @@ fn test_crash_after_trash_rename() -> Result<()> {
 #[test]
 fn test_dirty_conversion_is_deferred() -> Result<()> {
     let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+    let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
     crate::init()?;
 
     let ks_dir = TempDir::new("keystore")?;
@@ -496,6 +515,7 @@ fn test_dirty_restart_uses_checksum() -> Result<()> {
     use nix::sys::time::TimeSpec;
 
     let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+    let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
     crate::init()?;
 
     let ks_dir = TempDir::new("keystore")?;
@@ -542,6 +562,60 @@ fn test_dirty_restart_uses_checksum() -> Result<()> {
     let encrypted_dir = EncryptedDir::open(srcdir, &ks, LockState::Unlocked)?;
     assert_eq!(std::fs::read_to_string(&srcfile)?, "world");
     encrypted_dir.lock(RemoveKeyUsers::CurrentUser)?;
+
+    Ok(())
+}
+
+// General test for cleanup().
+// This cannot be run in parallel with the other ones so it acquires
+// FS_LOCK with exclusive access.
+#[test]
+fn test_cleanup() -> Result<()> {
+    let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+    let _exclusive = FS_LOCK.write().unwrap_or_else(|e| e.into_inner());
+    crate::init()?;
+
+    let ks_dir = TempDir::new("keystore")?;
+    let ks = Keystore::from_path(ks_dir.path());
+
+    // Create a protector
+    let (protector, protector_key) = make_test_protector(&ks)?;
+
+    // A resumable conversion: interrupted, but its source still exists.
+    let keep_dir = TempDir::new_in(&mntpoint, "convert")?;
+    let keep = keep_dir.path();
+    std::fs::write(keep.join("file.txt"), "hello")?;
+    let job = ConvertJob::start(keep, &protector, protector_key.clone(), &ks)?;
+    let trash = job.dirs.base.join(ConvertJob::TRASHDIR);
+    job.cancel()?;
+    drop(job);
+    assert!(matches!(conversion_status(keep)?, ConversionStatus::Interrupted(_)));
+
+    // A dead conversion: interrupted, and then its source disappears.
+    let gone_dir = TempDir::new_in(&mntpoint, "convert")?;
+    let gone = gone_dir.path().to_owned();
+    std::fs::write(gone.join("file.txt"), "hello")?;
+    let job = ConvertJob::start(&gone, &protector, protector_key, &ks)?;
+    let gone_workdir = job.workdir.clone();
+    job.cancel()?;
+    drop(job);
+    drop(gone_dir); // This removes the source directory
+    assert!(!gone.exists());
+    assert!(gone_workdir.exists());
+
+    // A trashed leftover from some crashed commit.
+    let trash_leftover = trash.join("stale");
+    std::fs::create_dir_all(&trash_leftover)?;
+
+    // cleanup() must handle all of these without failing.
+    cleanup(&mntpoint)?;
+
+    // The resumable conversion is left untouched.
+    assert!(matches!(conversion_status(keep)?, ConversionStatus::Interrupted(_)));
+    // The dead conversion's workdir has been removed.
+    assert!(!gone_workdir.exists());
+    // The leftover has been removed.
+    assert!(!trash_leftover.exists());
 
     Ok(())
 }
