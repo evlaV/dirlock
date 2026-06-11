@@ -615,24 +615,48 @@ pub fn cleanup(dir: &Path) -> Result<usize> {
         return Ok(0);
     }
 
-    // 1. Purge any leftover trashed workdirs from crashed commits.
+    // 1. Clean stale convertdb entries
+    let entries : Vec<PathBuf> = {
+        let db = ConvertDb::load(&base)?;
+        db.keys().cloned().collect()
+    };
+    let mut count = 0;
+    for entry in entries {
+        let src = mntpoint.join(&entry);
+        if is_real_dir(&src) {
+            // The source dir exists: ConvertJob::status() handles the cleanup
+            if matches!(ConvertJob::status(&src)?, ConversionStatus::None) {
+                count += 1;
+            }
+        } else {
+            // The source dir is gone: we have to trash the workdir here
+            let mut db = ConvertDb::load(&base)?;
+            let Some(keyid) = db.get(&entry).cloned() else {
+                continue;
+            };
+            let trashdir = base.join(ConvertJob::TRASHDIR);
+            if create_dir_if_needed(&trashdir).is_ok() {
+                let workdir = base.join(keyid.to_string());
+                let trashed_dir = trashdir.join(keyid.to_string());
+                match fs::rename(&workdir, &trashed_dir) {
+                    Err(e) if e.kind() != ErrorKind::NotFound => {
+                        eprintln!("Warning: failed to trash workdir: {e}");
+                    },
+                    _ => {
+                        db.remove(&entry);
+                        db.commit()?;
+                        count += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Purge any leftover trashed workdirs from crashed commits.
     //    This does not need the global lock.
     if let Ok(trash_entries) = fs::read_dir(base.join(ConvertJob::TRASHDIR)) {
         for entry in trash_entries.flatten() {
             let _ = fs::remove_dir_all(entry.path());
-        }
-    }
-
-    // 2. Clean stale convertdb entries (conversion_status() detects
-    //    them and removes the data)
-    let entries : Vec<PathBuf> = {
-        let db = ConvertDb::load(&base)?;
-        db.keys().map(|src_rel| mntpoint.join(src_rel)).collect()
-    };
-    let mut count = 0;
-    for src in entries {
-        if matches!(conversion_status(&src)?, ConversionStatus::None) {
-            count += 1;
         }
     }
 
