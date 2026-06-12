@@ -618,10 +618,11 @@ fn test_cleanup() -> Result<()> {
 
     // In total there are at least 3 convertdb entries
     // (there could be more than 3 if an earlier test failed).
-    assert!(ConvertDb::load(&base)?.keys().count() >= 3);
+    let entries = ConvertDb::load(&base)?.keys().count();
+    assert!(entries >= 3);
 
     // cleanup() must handle all of these without failing.
-    cleanup(&mntpoint)?;
+    let cleaned = cleanup(&mntpoint)?;
 
     // The resumable conversion is left untouched.
     assert!(matches!(conversion_status(keep)?, ConversionStatus::Interrupted(_)));
@@ -634,10 +635,11 @@ fn test_cleanup() -> Result<()> {
 
     // There should be one conversion left: the resumable one.
     assert_eq!(ConvertDb::load(&base)?.keys().count(), 1);
+    assert_eq!(cleaned + 1, entries);
 
     // Remove the last conversion so the test leaves no state behind
     drop(keep_dir);
-    cleanup(&mntpoint)?;
+    assert_eq!(cleanup(&mntpoint)?, 1);
     assert_eq!(ConvertDb::load(&base)?.keys().count(), 0);
     assert!(!base.exists());
 
