@@ -73,6 +73,8 @@ fn test_convert() -> Result<()> {
     // Do the conversion job
     let (protector, protector_key) = make_test_protector(&ks)?;
     let job = ConvertJob::start(path, &protector, protector_key, &ks)?;
+    let base = job.dirs.base.clone();
+    let workdir = job.workdir.clone();
     let _policy = job.commit()?;
 
     // The directory show now be encrypted
@@ -101,6 +103,12 @@ fn test_convert() -> Result<()> {
     // Check the value of the xattr
     assert_eq!(xattr::get(path.join("original.txt"), "user.test")?,
                Some(b"xattr-value".to_vec()), "xattrs not preserved");
+
+    // Check that commit() cleaned up after itself
+    let trash_target = base.join(ConvertJob::TRASHDIR)
+        .join(workdir.file_name().unwrap());
+    assert!(!workdir.exists());
+    assert!(!trash_target.exists());
 
     encrypted_dir.lock(RemoveKeyUsers::CurrentUser)?;
 
