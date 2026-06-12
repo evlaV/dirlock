@@ -604,9 +604,21 @@ fn test_cleanup() -> Result<()> {
     assert!(!gone.exists());
     assert!(gone_workdir.exists());
 
+    // A dead conversion: neither the source dir or workdir exist
+    let stale_rel = PathBuf::from("dirlock-test-missing-source");
+    let mut db = ConvertDb::load(&base)?;
+    db.insert(&stale_rel, PolicyKeyId::default());
+    db.commit()?;
+    drop(db);
+    assert!(ConvertDb::load(&base)?.get(&stale_rel).is_some());
+
     // A trashed leftover from some crashed commit.
     let trash_leftover = trash.join("stale");
     std::fs::create_dir_all(&trash_leftover)?;
+
+    // In total there are at least 3 convertdb entries
+    // (there could be more than 3 if an earlier test failed).
+    assert!(ConvertDb::load(&base)?.keys().count() >= 3);
 
     // cleanup() must handle all of these without failing.
     cleanup(&mntpoint)?;
@@ -615,6 +627,8 @@ fn test_cleanup() -> Result<()> {
     assert!(matches!(conversion_status(keep)?, ConversionStatus::Interrupted(_)));
     // The dead conversion's workdir has been removed.
     assert!(!gone_workdir.exists());
+    // The dead conversion with a missing workdir has been removed.
+    assert!(ConvertDb::load(&base)?.get(&stale_rel).is_none());
     // The leftover has been removed.
     assert!(!trash_leftover.exists());
 
