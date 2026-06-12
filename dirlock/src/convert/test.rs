@@ -586,7 +586,8 @@ fn test_cleanup() -> Result<()> {
     let keep = keep_dir.path();
     std::fs::write(keep.join("file.txt"), "hello")?;
     let job = ConvertJob::start(keep, &protector, protector_key.clone(), &ks)?;
-    let trash = job.dirs.base.join(ConvertJob::TRASHDIR);
+    let base = job.dirs.base.clone();
+    let trash = base.join(ConvertJob::TRASHDIR);
     job.cancel()?;
     drop(job);
     assert!(matches!(conversion_status(keep)?, ConversionStatus::Interrupted(_)));
@@ -616,6 +617,15 @@ fn test_cleanup() -> Result<()> {
     assert!(!gone_workdir.exists());
     // The leftover has been removed.
     assert!(!trash_leftover.exists());
+
+    // There should be one conversion left: the resumable one.
+    assert_eq!(ConvertDb::load(&base)?.keys().count(), 1);
+
+    // Remove the last conversion so the test leaves no state behind
+    drop(keep_dir);
+    cleanup(&mntpoint)?;
+    assert_eq!(ConvertDb::load(&base)?.keys().count(), 0);
+    assert!(!base.exists());
 
     Ok(())
 }
