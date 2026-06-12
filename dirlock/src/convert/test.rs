@@ -361,10 +361,15 @@ fn test_mark_dirty_restarts_commit() -> Result<()> {
     assert!(ConvertJob::mark_dirty(path)?);
     assert!(ConvertJob::mark_dirty(path)?);
 
-    // With the dirty flag set, commit() restarts the job
+    // With the dirty flag set, commit() restarts the job.
+    // Note that UserManagerActive(true) would result in the job being
+    // deferred if the source was a home directory, but since that's not
+    // the case the job is directly restarted.
+    inject(Injected::UserManagerActive(true));
     let CommitOutcome::Restarted(job) = job.commit()? else {
         bail!("dirty conversion job was not restarted");
     };
+    clear_injected();
 
     // The restart cleared the flag, now the conversion can complete
     assert!(!ConvertJob::dirty_flag_exists(&job.workdir));
