@@ -153,7 +153,7 @@ impl From<DirStatus> for DbusDirStatus {
         let DirStatus::Encrypted(d) = &dir_status else {
             return DbusDirStatus(HashMap::from([("status", status_str)]));
         };
-        let prots : Vec<_> = d.protectors.iter()
+        let prots : Vec<_> = d.protectors.usable.iter()
             .map(|p| Value::from(DbusProtectorData::from(p).0))
             .collect();
         DbusDirStatus(HashMap::from([
@@ -375,11 +375,11 @@ fn do_get_all_protectors(ks: &Keystore) -> anyhow::Result<Vec<DbusProtectorData>
 fn do_get_all_policies(ks: &Keystore) -> anyhow::Result<DbusPolicyData> {
     let mut result = HashMap::new();
     for id in ks.policy_key_ids()? {
-        let (prots, unusable) = ks.get_protectors_for_policy(&id)?;
-        if ! unusable.is_empty() {
+        let prots = ks.get_protectors_for_policy(&id)?;
+        if ! prots.unusable.is_empty() {
             bail!("Error reading protectors for policy {id}");
         }
-        let prots = prots.iter().map(DbusProtectorData::from).collect();
+        let prots = prots.usable.iter().map(DbusProtectorData::from).collect();
         result.insert(id.to_string(), prots);
     }
     Ok(DbusPolicyData(result))

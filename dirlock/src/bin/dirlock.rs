@@ -18,6 +18,7 @@ use dirlock::{
     Keystore,
     LockState,
     PolicyKeyId,
+    PolicyProtectors,
     RemovalStatusFlags,
     RemoveKeyUsers,
     policy::PolicyKey,
@@ -510,15 +511,15 @@ fn display_protector_list(ks: &Keystore) -> Result<()> {
     Ok(())
 }
 
-fn display_protectors_from_dir(dir: &EncryptedDir) {
+fn display_protectors(prots: &PolicyProtectors) {
     println!("{:16}    {:8}    Name", "Protector", "Type");
     println!("--------------------------------------");
-    for i in &dir.protectors {
+    for i in &prots.usable {
         println!("{:16}    {:8}    {}", i.protector.id,
                  i.protector.get_type().to_string(),
                  i.protector.get_name());
     }
-    for i in &dir.unusable {
+    for i in &prots.unusable {
         println!("{:16}    [error: {}]", i.id, i.err.kind());
     }
 }
@@ -527,11 +528,11 @@ fn get_dir_protector<'a>(dir: &'a EncryptedDir, prot: &Option<ProtectorId>) -> R
     match prot {
         Some(id) => dir.get_protector_by_id(id),
         None => {
-            if dir.protectors.len() == 1 {
-                Ok(&dir.protectors[0].protector)
+            if dir.protectors.usable.len() == 1 {
+                Ok(&dir.protectors.usable[0].protector)
             } else {
                 println!("This directory has multiple protectors, you must select one.");
-                display_protectors_from_dir(dir);
+                display_protectors(&dir.protectors);
                 bail!("Protector not specified");
             }
         },
@@ -570,7 +571,7 @@ fn cmd_unlock(args: &UnlockArgs, ks: &Keystore) -> Result<()> {
     let prots = if let Some(id) = &args.protector {
         vec![encrypted_dir.get_protector_by_id(id)?]
     } else {
-        encrypted_dir.protectors.iter().map(|p| &p.protector).collect()
+        encrypted_dir.protectors.usable.iter().map(|p| &p.protector).collect()
     };
 
     // Try with a recovery key if the user requested it (or if there are no protectors)
@@ -1104,9 +1105,9 @@ fn cmd_import_master_key(ks: &Keystore) -> Result<()> {
 
     // Stop if there is already a protector available for this key
     // (unless the protector file is missing).
-    let (protectors, unusable) = ks.get_protectors_for_policy(&keyid)?;
-    if ! protectors.is_empty() ||
-        unusable.iter().any(|p| p.err.kind() != ErrorKind::NotFound) {
+    let protectors = ks.get_protectors_for_policy(&keyid)?;
+    if ! protectors.usable.is_empty() ||
+        protectors.unusable.iter().any(|p| p.err.kind() != ErrorKind::NotFound) {
         bail!("This key has already been imported (policy {keyid})");
     }
 
@@ -1224,7 +1225,7 @@ fn cmd_status(args: &StatusArgs, ks: &Keystore) -> Result<()> {
     }
 
     println!("Recovery: {}", if encrypted_dir.recovery.is_some() { "yes" } else { "no" });
-    display_protectors_from_dir(encrypted_dir);
+    display_protectors(&encrypted_dir.protectors);
     Ok(())
 }
 
@@ -1381,7 +1382,7 @@ mod tests {
 
         // Verify that the directory has both protectors
         let encrypted_dir = EncryptedDir::open(dir.path(), &ks, LockState::Unlocked)?;
-        assert_eq!(encrypted_dir.protectors.len(), 2);
+        assert_eq!(encrypted_dir.protectors.usable.len(), 2);
 
         // Lock the directory
         let lock_args = LockArgs { dir: dir.path().into(), all_users: false };
@@ -1547,7 +1548,7 @@ mod tests {
 
         // Add a recovery key using the library API so we can capture its value
         let mut encrypted_dir = EncryptedDir::open(dir.path(), &ks, LockState::Locked)?;
-        let protkey = encrypted_dir.protectors[0].protector
+        let protkey = encrypted_dir.protectors.usable[0].protector
             .unwrap_key(password.as_bytes())?.unwrap();
         let recovery_key = encrypted_dir.add_recovery_key(&protkey)?;
 
@@ -1587,7 +1588,7 @@ mod tests {
 
         // Add a recovery key using the library API so we can capture its value
         let mut encrypted_dir = EncryptedDir::open(dir.path(), &ks, LockState::Locked)?;
-        let protkey = encrypted_dir.protectors[0].protector
+        let protkey = encrypted_dir.protectors.usable[0].protector
             .unwrap_key(password.as_bytes())?.unwrap();
         let recovery_key = encrypted_dir.add_recovery_key(&protkey)?;
 
@@ -1638,7 +1639,7 @@ mod tests {
 
         // Add a recovery key using the library API so we can capture its value
         let mut encrypted_dir = EncryptedDir::open(dir.path(), &ks, LockState::Locked)?;
-        let protkey = encrypted_dir.protectors[0].protector
+        let protkey = encrypted_dir.protectors.usable[0].protector
             .unwrap_key(password.as_bytes())?.unwrap();
         let recovery_key = encrypted_dir.add_recovery_key(&protkey)?;
 
@@ -1878,7 +1879,7 @@ mod tests {
 
         // Verify that the directory is encrypted and unlocked
         let encrypted_dir = EncryptedDir::open(dir.path(), &ks, LockState::Unlocked)?;
-        assert_eq!(encrypted_dir.protectors.len(), 1);
+        assert_eq!(encrypted_dir.protectors.usable.len(), 1);
 
         // Verify that the data was preserved
         assert_eq!(std::fs::read_to_string(dir.path().join("file.txt"))?, "hello");
@@ -1921,8 +1922,8 @@ mod tests {
 
         // Verify that the directory is encrypted with the protector
         let encrypted_dir = EncryptedDir::open(dir.path(), &ks, LockState::Unlocked)?;
-        assert_eq!(encrypted_dir.protectors.len(), 1);
-        assert!(encrypted_dir.protectors[0].protector.id == prot_id);
+        assert_eq!(encrypted_dir.protectors.usable.len(), 1);
+        assert!(encrypted_dir.protectors.usable[0].protector.id == prot_id);
 
         let lock_args = LockArgs { dir: dir.path().into(), all_users: false };
         cmd_lock(&lock_args, &ks)?;

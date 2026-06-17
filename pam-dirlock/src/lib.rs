@@ -163,7 +163,7 @@ fn do_authenticate(pamh: Pam, autologin: bool) -> Result<()> {
 
     let mut available_protectors = false;
 
-    for p in &homedir.protectors {
+    for p in &homedir.protectors.usable {
         if ! p.protector.is_available() {
             continue;
         }
@@ -233,7 +233,7 @@ fn do_chauthtok(pamh: Pam, flags: PamFlags) -> Result<()> {
     let rhost = get_rhost(&pamh);
 
     // Get only the protectors that are available and can be updated
-    let prots : Vec<_> = homedir.protectors.iter_mut().filter(|p| {
+    let prots : Vec<_> = homedir.protectors.usable.iter_mut().filter(|p| {
         p.protector.can_change_password() && p.protector.is_available() &&
         p.protector.get_prompt(rhost).is_ok()
     }).collect();

@@ -15,6 +15,7 @@ use std::{
     path::PathBuf,
 };
 use crate::{
+    PolicyProtectors,
     ProtectedPolicyKey,
     UnusableProtector,
     config::Config,
@@ -176,23 +177,23 @@ impl Keystore {
     }
 
     /// Get all protectors that can be used to unlock the policy key identified by `id`
-    pub fn get_protectors_for_policy(&self, id: &PolicyKeyId) -> std::io::Result<(Vec<ProtectedPolicyKey>, Vec<UnusableProtector>)> {
-        let mut prots = vec![];
+    pub fn get_protectors_for_policy(&self, id: &PolicyKeyId) -> std::io::Result<PolicyProtectors> {
+        let mut usable = vec![];
         let mut unusable = vec![];
         let policy = self.load_or_create_policy_data(id, None, None)?;
         for (protector_id, policy_key) in policy.keys {
             match self.load_protector(protector_id) {
                 Ok(protector) => {
-                    prots.push(ProtectedPolicyKey{ protector, policy_key });
+                    usable.push(ProtectedPolicyKey{ protector, policy_key });
                 },
                 Err(err) => {
                     unusable.push(UnusableProtector{ id: protector_id, err });
                 },
             }
         }
-        prots.sort_unstable_by(|a, b| a.protector.cmp(&b.protector));
+        usable.sort_unstable_by(|a, b| a.protector.cmp(&b.protector));
         unusable.sort_unstable_by(|a, b| a.id.cmp(&b.id));
-        Ok((prots, unusable))
+        Ok(PolicyProtectors{ usable, unusable })
     }
 
     /// Remove an encryption policy permanently from disk

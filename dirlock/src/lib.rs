@@ -106,14 +106,36 @@ pub struct UnusableProtector {
     pub err: std::io::Error,
 }
 
+/// The list of all available Protectors for a given policy.
+pub struct PolicyProtectors {
+    /// Usable protectors, the [`PolicyKey`] can be unlocked with these.
+    pub usable: Vec<ProtectedPolicyKey>,
+    /// Unusable protectors, the [`PolicyKey`] is wrapped with them but
+    /// the protectors themselves could not be loaded from disk.
+    pub unusable: Vec<UnusableProtector>,
+}
+
+impl PolicyProtectors {
+    /// Finds a protected policy key using its ID. This is an internal helper function
+    fn get_protected_policy_key(&self, id: &ProtectorId) -> Result<&ProtectedPolicyKey> {
+        self.usable.iter()
+            .find(|p| &p.protector.id == id)
+            .ok_or_else(|| anyhow!("No protector found with that ID for this policy"))
+    }
+
+    /// Finds a protector using its ID
+    pub fn get_protector(&self, id: &ProtectorId) -> Result<&Protector> {
+        self.get_protected_policy_key(id).map(|p| &p.protector)
+    }
+}
+
 /// Encryption data (policy, key status) of a given directory
 pub struct EncryptedDir {
     pub path: PathBuf,
     pub policy: PolicyV2,
     pub key_status: KeyStatus,
     pub key_flags: KeyStatusFlags,
-    pub protectors: Vec<ProtectedPolicyKey>,
-    pub unusable: Vec<UnusableProtector>,
+    pub protectors: PolicyProtectors,
     pub recovery: Option<WrappedPolicyKey>,
 }
 
@@ -186,15 +208,15 @@ pub fn open_dir(path: &Path, ks: &Keystore) -> Result<DirStatus> {
 
     let recovery = WrappedPolicyKey::load_xattr(path);
 
-    let (protectors, unusable) = ks.get_protectors_for_policy(&policy.keyid)?;
-    if protectors.is_empty() && recovery.is_none() {
+    let protectors = ks.get_protectors_for_policy(&policy.keyid)?;
+    if protectors.usable.is_empty() && recovery.is_none() {
         return Ok(DirStatus::KeyMissing(policy.keyid));
     };
 
     let (key_status, key_flags) = get_key_status(path, &policy.keyid)
         .map_err(|e| anyhow!("Failed to get key status: {e}"))?;
 
-    Ok(DirStatus::Encrypted(EncryptedDir { path: path.into(), policy, key_status, key_flags, protectors, unusable, recovery }))
+    Ok(DirStatus::Encrypted(EncryptedDir { path: path.into(), policy, key_status, key_flags, protectors, recovery }))
 }
 
 /// Convenience function to call `open_dir` on a user's home directory
@@ -248,7 +270,7 @@ impl EncryptedDir {
 
     /// Get a directory's master encryption key using the password of one of its protectors
     pub fn get_master_key(&self, pass: &[u8], protector_id: &ProtectorId) -> Result<Option<PolicyKey>> {
-        let p = self.get_protected_policy_key(protector_id)?;
+        let p = self.protectors.get_protected_policy_key(protector_id)?;
         if let Some(k) = p.protector.unwrap_policy_key(&p.policy_key, pass)? {
             return Ok(Some(k));
         }
@@ -258,7 +280,7 @@ impl EncryptedDir {
     /// Get a directory's master encryption key using a protector key
     fn get_master_key_with_protkey(&self, protector_key: &ProtectorKey) -> Result<Option<PolicyKey>> {
         let protector_id = protector_key.get_id();
-        let p = self.get_protected_policy_key(&protector_id)?;
+        let p = self.protectors.get_protected_policy_key(&protector_id)?;
         if let Some(k) = p.policy_key.unwrap_key(protector_key) {
             return Ok(Some(k));
         }
@@ -299,7 +321,7 @@ impl EncryptedDir {
         if self.unlock_with_recovery_key(password)? {
             return Ok(true);
         }
-        let p = self.get_protected_policy_key(protector_id)?;
+        let p = self.protectors.get_protected_policy_key(protector_id)?;
         if let Some(k) = p.protector.unwrap_policy_key(&p.policy_key, password)? {
             unlock_dir_with_key(&self.path, &k)?;
             return Ok(true);
@@ -311,7 +333,7 @@ impl EncryptedDir {
     /// Unlocks a directory using the protector key directly
     pub fn unlock_with_protkey(&self, protector_key: &ProtectorKey) -> Result<bool> {
         let protector_id = protector_key.get_id();
-        let p = self.get_protected_policy_key(&protector_id)
+        let p = self.protectors.get_protected_policy_key(&protector_id)
             .map(|p| &p.policy_key)
             // If there is no protector with this key's ID then maybe
             // it is a recovery key.
@@ -364,14 +386,7 @@ impl EncryptedDir {
 
     /// Finds a protector using its ID
     pub fn get_protector_by_id(&self, id: &ProtectorId) -> Result<&Protector> {
-        self.get_protected_policy_key(id).map(|p| &p.protector)
-    }
-
-    /// Finds a protected policy key using its ID. This is an internal helper function
-    fn get_protected_policy_key(&self, id: &ProtectorId) -> Result<&ProtectedPolicyKey> {
-        self.protectors.iter()
-            .find(|p| &p.protector.id == id)
-            .ok_or_else(|| anyhow!("No protector found with that ID in the directory"))
+        self.protectors.get_protector(id)
     }
 }
 
