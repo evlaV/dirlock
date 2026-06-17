@@ -1002,14 +1002,7 @@ fn cmd_recovery_add(args: &RecoveryAddArgs, ks: &Keystore) -> Result<()> {
         bail!("This directory already has a recovery key");
     }
 
-    let prot = if let Some(id) = args.protector {
-        encrypted_dir.get_protector_by_id(&id)?
-    } else if encrypted_dir.protectors.len() == 1 {
-        &encrypted_dir.protectors[0].protector
-    } else {
-        bail!("You must specify the ID of the protector");
-    };
-
+    let prot = get_dir_protector(&encrypted_dir, &args.protector)?;
     let pass = read_password_for_protector(prot)?;
     let Some(protkey) = prot.unwrap_key(pass.as_bytes())? else {
         bail!("Failed to unlock protector {}: wrong key", prot.id);
