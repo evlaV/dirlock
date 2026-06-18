@@ -31,7 +31,8 @@ use crate::{
     xattrs::Xattrs,
 };
 
-const POLICY_KEY_LEN: usize = fscrypt::MAX_KEY_SIZE;
+const POLICY_KEY_LEN: usize = 64;
+const _:() = assert!(POLICY_KEY_LEN <= fscrypt::MAX_KEY_SIZE);
 
 /// A raw master encryption key, meant to be added to the kernel for a specific filesystem.
 #[derive(zeroize::ZeroizeOnDrop, Clone)]
