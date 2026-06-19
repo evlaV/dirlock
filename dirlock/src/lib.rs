@@ -127,6 +127,14 @@ impl PolicyProtectors {
     pub fn get_protector(&self, id: &ProtectorId) -> Result<&Protector> {
         self.get_protected_policy_key(id).map(|p| &p.protector)
     }
+
+    /// Finds a protector using its ID. This consumes the object
+    pub fn into_protector(mut self, id: &ProtectorId) -> Result<Protector> {
+        let idx = self.usable.iter()
+            .position(|p| &p.protector.id == id)
+            .ok_or_else(|| anyhow!("No protector found with that ID for this policy"))?;
+        Ok(self.usable.swap_remove(idx).protector)
+    }
 }
 
 /// Encryption data (policy, key status) of a given directory

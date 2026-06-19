@@ -524,19 +524,26 @@ fn display_protectors(prots: &PolicyProtectors) {
     }
 }
 
-fn get_dir_protector<'a>(dir: &'a EncryptedDir, prot: &Option<ProtectorId>) -> Result<&'a Protector> {
+/// Select one of the usable protectors from a list of [`PolicyProtectors`].
+/// If `prot` is unset and there is only one protector, that one will be selected.
+/// Otherwise the user must specify the id of the protector to select.
+fn select_protector_for_policy<'a>(prots: &'a PolicyProtectors, prot: &Option<ProtectorId>) -> Result<&'a Protector> {
     match prot {
-        Some(id) => dir.get_protector_by_id(id),
+        Some(id) => prots.get_protector(id),
         None => {
-            if dir.protectors.usable.len() == 1 {
-                Ok(&dir.protectors.usable[0].protector)
+            if prots.usable.len() == 1 {
+                Ok(&prots.usable[0].protector)
             } else {
-                println!("This directory has multiple protectors, you must select one.");
-                display_protectors(&dir.protectors);
+                println!("This policy has multiple protectors, you must select one:");
+                display_protectors(prots);
                 bail!("Protector not specified");
             }
         },
     }
+}
+
+fn get_dir_protector<'a>(dir: &'a EncryptedDir, prot: &Option<ProtectorId>) -> Result<&'a Protector> {
+    select_protector_for_policy(&dir.protectors, prot)
 }
 
 fn cmd_lock(args: &LockArgs, ks: &Keystore) -> Result<()> {
@@ -709,18 +716,29 @@ fn cmd_convert(args: &ConvertArgs, ks: &Keystore) -> Result<()> {
         }
     }
 
-    match conversion_status(&args.dir)? {
-        ConversionStatus::None => (),
-        ConversionStatus::Ongoing(_) => bail!("This directory is already being encrypted"),
-        ConversionStatus::Interrupted(_) => {
-            println!("Will resume encryption of partially encrypted directory");
+    let (protector, protector_key, protector_is_new) = match conversion_status(&args.dir)? {
+        ConversionStatus::None => {
+            get_or_create_protector(
+                args.protector, args.protector_type, args.protector_name.as_deref(),
+                args.user.as_deref(), &args.dir, ks,
+            )?
         },
-    }
-
-    let (protector, protector_key, protector_is_new) = get_or_create_protector(
-        args.protector, args.protector_type, args.protector_name.as_deref(), args.user.as_deref(),
-        &args.dir, ks,
-    )?;
+        ConversionStatus::Ongoing(_) => bail!("This directory is already being encrypted"),
+        ConversionStatus::Interrupted(id) => {
+            println!("Will resume encryption of partially encrypted directory.");
+            if args.protector_type.is_some() || args.protector_name.is_some() || args.user.is_some() {
+                bail!("Cannot set protector options when resuming an interrupted conversion");
+            }
+            let prots = ks.get_protectors_for_policy(&id)?;
+            let protid = select_protector_for_policy(&prots, &args.protector)?.id;
+            let protector = prots.into_protector(&protid)?;
+            let pass = read_password_for_protector(&protector)?;
+            let Some(protector_key) = protector.unwrap_key(pass.as_bytes())? else {
+                bail!("Invalid {}", protector.get_type().credential_name());
+            };
+            (protector, protector_key, false)
+        },
+    };
 
     let protector_id = protector.id;
     println!("\nEncrypting the contents of {}, this can take a while", args.dir.display());
