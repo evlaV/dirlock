@@ -701,23 +701,23 @@ fn cmd_convert(args: &ConvertArgs, ks: &Keystore) -> Result<()> {
         bail!("The directory is empty. Use the 'encrypt' command instead");
     }
 
-    if ! args.force {
-        println!("You are about to encrypt a directory that contains data.\n\
-                  This feature is *experimental*. Make sure that you are not\n\
-                  accessing the files while they are being encrypted in order\n\
-                  to avoid unexpected behaviors. If this is a home directory\n\
-                  the user should be ideally logged out.\n");
-        print!("Do you want to continue? [y/N] ");
-        io::stdout().flush().unwrap();
-        let mut s = String::new();
-        let _ = io::stdin().read_line(&mut s)?;
-        if s.trim() != "y" {
-            return Ok(());
-        }
-    }
-
     let (protector, protector_key, protector_is_new) = match conversion_status(&args.dir)? {
         ConversionStatus::None => {
+            if ! args.force {
+                println!("You are about to encrypt a directory that contains data.\n\
+                          This feature is *experimental*. Make sure that you are not\n\
+                          accessing the files while they are being encrypted in order\n\
+                          to avoid unexpected behaviors. If this is a home directory\n\
+                          the user should be ideally logged out.\n");
+                print!("Do you want to continue? [y/N] ");
+                io::stdout().flush().unwrap();
+                let mut s = String::new();
+                let _ = io::stdin().read_line(&mut s)?;
+                if s.trim() != "y" && s.trim() != "Y" {
+                    return Ok(());
+                }
+            }
+
             get_or_create_protector(
                 args.protector, args.protector_type, args.protector_name.as_deref(),
                 args.user.as_deref(), &args.dir, ks,
