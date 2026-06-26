@@ -1195,6 +1195,7 @@ fn cmd_cleanup(args: &CleanupArgs) -> Result<()> {
 }
 
 fn cmd_status(args: &StatusArgs, ks: &Keystore) -> Result<()> {
+    use dirlock::convert::ConversionStatus;
     let Some(dir) = &args.dir else {
         if args.brief {
             bail!("The --brief option can only be used on a directory");
@@ -1217,9 +1218,29 @@ fn cmd_status(args: &StatusArgs, ks: &Keystore) -> Result<()> {
         return Ok(());
     }
 
-    let DirStatus::Encrypted(encrypted_dir) = &dir_status else {
-        println!("{}", dir_status.error_msg());
-        return Ok(());
+    let encrypted_dir = match &dir_status {
+        DirStatus::Encrypted(d) => d,
+        DirStatus::Unencrypted => {
+            println!("{}", dir_status.error_msg());
+            match dirlock::convert::conversion_status(dir) {
+                Ok(ConversionStatus::None) => (),
+                Ok(ConversionStatus::Ongoing(id)) => {
+                    println!("Ongoing conversion, policy {id}");
+                }
+                Ok(ConversionStatus::Interrupted(id)) => {
+                    println!("Interrupted conversion, policy {id}");
+                    println!("Type 'dirlock convert {}' to restart it", dir.display());
+                }
+                Err(e) => {
+                    println!("Check for ongoing conversions failed: {e}");
+                }
+            }
+            return Ok(());
+        }
+        _ => {
+            println!("{}", dir_status.error_msg());
+            return Ok(());
+        }
     };
 
     let locked = dir_status.name(); // locked, unlocked, partially-locked
