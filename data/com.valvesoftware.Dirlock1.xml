@@ -61,6 +61,13 @@
         - `protectors` (aa{sv}): List of protectors (see GetProtector for the format).
         - `has-recovery-key` (b): Whether a recovery key is set.
 
+        If the directory is `unencrypted` but has a pending conversion
+        job, status also contains:
+
+        - `conversion` (s): One of `ongoing` or `interrupted`. An
+          `interrupted` conversion can be resumed with ConvertDir.
+        - `conversion-policy` (s): The policy ID of the conversion job.
+
         Get the encryption status of a directory.
     -->
     <method name="GetDirStatus">

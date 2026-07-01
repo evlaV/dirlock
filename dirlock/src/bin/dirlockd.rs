@@ -34,7 +34,12 @@ use dirlock::{
     ProtectedPolicyKey,
     RemovalStatusFlags,
     RemoveKeyUsers,
-    convert::{CommitOutcome, ConvertJob},
+    convert::{
+        CommitOutcome,
+        ConversionStatus,
+        ConvertJob,
+        conversion_status,
+    },
     protector::{
         Protector,
         ProtectorId,
@@ -147,10 +152,10 @@ fn get_opt_fd(options: &HashMap<String, Value<'_>>, key: &str) -> zbus::fdo::Res
 #[derive(Serialize, zvariant::Type)]
 struct DbusDirStatus(HashMap<&'static str, Value<'static>>);
 
-impl From<DirStatus> for DbusDirStatus {
-    fn from(dir_status: DirStatus) -> Self {
+impl From<&DirStatus> for DbusDirStatus {
+    fn from(dir_status: &DirStatus) -> Self {
         let status_str = Value::from(dir_status.name());
-        let DirStatus::Encrypted(d) = &dir_status else {
+        let DirStatus::Encrypted(d) = dir_status else {
             return DbusDirStatus(HashMap::from([("status", status_str)]));
         };
         let prots : Vec<_> = d.protectors.usable.iter()
@@ -162,6 +167,19 @@ impl From<DirStatus> for DbusDirStatus {
             ("protectors", Value::from(&prots)),
             ("has-recovery-key", Value::from(d.recovery.is_some())),
         ]))
+    }
+}
+
+impl DbusDirStatus {
+    /// Add the conversion status of an unencrypted directory to the status dict.
+    fn add_conversion_status(&mut self, status: ConversionStatus) {
+        let (conv, id) = match status {
+            ConversionStatus::None => return,
+            ConversionStatus::Ongoing(id) => ("ongoing", id),
+            ConversionStatus::Interrupted(id) => ("interrupted", id),
+        };
+        self.0.insert("conversion", Value::from(conv));
+        self.0.insert("conversion-policy", Value::from(id.to_string()));
     }
 }
 
@@ -271,7 +289,19 @@ fn do_get_dir_status(
     dir: &Path,
     ks: &Keystore,
 ) -> anyhow::Result<DbusDirStatus> {
-    dirlock::open_dir(dir, ks).map(DbusDirStatus::from)
+    let dir_status = dirlock::open_dir(dir, ks)?;
+    let mut status = DbusDirStatus::from(&dir_status);
+    // An unencrypted directory may have a pending conversion job.
+    if matches!(dir_status, DirStatus::Unencrypted) {
+        match conversion_status(dir) {
+            Ok(conv) => status.add_conversion_status(conv),
+            Err(e) => eprintln!(
+                "Warning: failed to check for conversions of {}: {e}",
+                dir.display()
+            ),
+        }
+    }
+    Ok(status)
 }
 
 /// Encrypt a directory using an existing protector
@@ -983,6 +1013,11 @@ mod tests {
             Ok(TestService { _keystore_dir, _server_conn, _event_task, client_conn, service_name })
         }
 
+        /// Return the keystore used by the daemon, for tests that need it.
+        fn keystore(&self) -> Keystore {
+            Keystore::from_path(self._keystore_dir.path())
+        }
+
         /// Build a proxy for the test service.
         async fn proxy(&self) -> zbus::Result<Dirlock1Proxy<'_>> {
             Dirlock1Proxy::builder(&self.client_conn)
@@ -1674,6 +1709,73 @@ mod tests {
         assert_eq!(expect_str(&status, "policy")?, policy_id);
         assert_eq!(expect_bool(&status, "has-recovery-key")?, false);
         assert_eq!(status.len(), 4); // Element 4 is the 'protectors' field
+
+        Ok(())
+    }
+
+    // GetDirStatus reports pending conversion jobs
+    #[tokio::test]
+    async fn test_get_dir_status_conversion() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        // A plain unencrypted directory with some data to convert
+        let dir = TempDir::new_in(&mntpoint, "convert-status")?;
+        let dir_str = dir.path().to_str().unwrap();
+        std::fs::write(dir.path().join("file.txt"), "hello")?;
+
+        // No conversion yet: just 'unencrypted', no extra fields
+        let status = proxy.get_dir_status(dir_str).await?;
+        assert_eq!(expect_str(&status, "status")?, "unencrypted");
+        assert_eq!(status.len(), 1);
+
+        // Start the conversion directly (and not via the daemon) so
+        // we can observe the intermediate state and interrupt it.
+        let ks = srv.keystore();
+        let opts = ProtectorOptsBuilder::new()
+            .with_name("test".into())
+            .with_kdf_iter(std::num::NonZeroU32::new(1))
+            .build()?;
+        let (protector, protector_key) =
+            dirlock::create_protector(opts, b"pass", dirlock::CreateOpts::CreateAndSave, &ks)?;
+        let job = ConvertJob::start(dir.path(), &protector, protector_key, &ks)?;
+
+        // Ongoing conversion: still 'unencrypted' plus the conversion fields
+        let status = proxy.get_dir_status(dir_str).await?;
+        assert_eq!(expect_str(&status, "status")?, "unencrypted");
+        assert_eq!(expect_str(&status, "conversion")?, "ongoing");
+        let policy = expect_str(&status, "conversion-policy")?.to_string();
+        assert!(!policy.is_empty());
+        assert_eq!(status.len(), 3);
+
+        // Cancel it, leaving an interrupted job on disk
+        job.cancel()?;
+        // The conversion goes from 'ongoing' to 'interrupted' when
+        // the lock is released, so wait for the rsync process to finish.
+        assert!(job.wait().is_err());
+        drop(job);
+
+        // Now the conversion is marked as 'interrupted'
+        let status = proxy.get_dir_status(dir_str).await?;
+        assert_eq!(expect_str(&status, "status")?, "unencrypted");
+        assert_eq!(expect_str(&status, "conversion")?, "interrupted");
+        assert_eq!(expect_str(&status, "conversion-policy")?, policy);
+        assert_eq!(status.len(), 3);
+
+        // Resume and finish the conversion through the daemon
+        let prot_id = protector.id.to_string();
+        let keyid = convert_and_wait(&proxy, dir_str, &prot_id, "pass").await?;
+        assert_eq!(keyid, policy);
+
+        // The conversion is finished: the directory is now encrypted and unlocked
+        let status = proxy.get_dir_status(dir_str).await?;
+        assert_eq!(expect_str(&status, "status")?, "unlocked");
+        assert_eq!(expect_str(&status, "policy")?, policy);
+        assert_eq!(expect_bool(&status, "has-recovery-key")?, false);
+        assert_eq!(status.len(), 4); // Element 4 is the 'protectors' field
+        assert!(status.get("conversion").is_none());
 
         Ok(())
     }
