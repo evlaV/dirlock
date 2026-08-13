@@ -42,9 +42,10 @@ fi
 check_encryption_enabled() {
     echo -en "** ${CYAN}Checking if encryption is enabled${NC}: "
     if dumpe2fs -h /dev/disk/by-partsets/shared/home 2> /dev/null | grep -q '^Filesystem features:.*encrypt' && \
-            dirlock status -e "$user_home" &> /dev/null && \
+            dirlock admin fscrypt-enabled "$user_home" &> /dev/null && \
             test -f /etc/atomic-update.conf.d/dirlock.conf && \
             systemctl is-enabled -q dirlock-sddm.service && \
+            grep -q '^auth\s.*\spam_dirlock.so' /etc/pam.d/sddm-autologin && \
             grep -q '^auth\s.*\spam_dirlock.so' /etc/pam.d/system-auth; then
         echo -e "${GREEN}OK${NC}"
     else
@@ -104,7 +105,7 @@ stop_sddm() {
 encrypt_home() {
     echo -en "** ${CYAN}Checking if a TPM is available and usable${NC}: "
     protector=password
-    if dirlock tpm2-test &> /dev/null; then
+    if dirlock admin tpm2-test &> /dev/null; then
         echo -e "${GREEN}OK${NC}"
         cat <<-EOF
 		The TPM is a hardware module that can lock your encryption keys
