@@ -84,6 +84,22 @@ pub fn conversion_status(dir: &Path) -> Result<ConversionStatus> {
     ConvertJob::status(dir)
 }
 
+/// Returns an error if `dir` is the root directory of a filesystem.
+///
+/// In general our conversion mechanism does not support that because
+/// it needs a base /mntpoint/.dirlock directory that should be
+/// outside of the directory that we want to convert. On top of that,
+/// ext4 does not support encrypting the root directory of a
+/// filesystem and even if it did the renameat2() call would fail
+/// anyway.
+pub fn ensure_not_filesystem_root(dir: &Path) -> Result<()> {
+    let dir = dir.canonicalize()?;
+    if get_mountpoint(&dir)? == dir {
+        bail!("Cannot encrypt the root directory of a filesystem");
+    }
+    Ok(())
+}
+
 /// Convert an unencrypted directory into an encrypted one
 pub fn convert_dir(dir: &Path, protector: &Protector, protector_key: ProtectorKey,
                    ks: &Keystore) -> Result<PolicyKeyId> {
@@ -125,6 +141,7 @@ struct SrcDirData {
     /// The source directory that we want to convert, canonicalized
     src: PathBuf,
     /// src, but relative to the filesystem's mountpoint
+    /// (empty if src is the mountpoint itself).
     src_rel: PathBuf,
     /// Dirlock base dir for this filesystem: /mntpoint/.dirlock
     base: PathBuf,
@@ -149,10 +166,8 @@ impl ConvertJob {
 
         let src = dir.canonicalize()?;
         let mut base = get_mountpoint(&src)?;
-        if base == src {
-            bail!("Cannot encrypt the root directory of a filesystem");
-        };
         // src, but relative to the mount point
+        // (empty if src is the mount point itself).
         let src_rel = src.strip_prefix(&base)?.to_owned();
         base.push(Self::BASEDIR);
         Ok(SrcDirData { src, src_rel, base })
@@ -224,8 +239,12 @@ impl ConvertJob {
     /// Start a new asynchronous job to convert `dir` to an encrypted folder
     pub fn start(dir: &Path, protector: &Protector, protector_key: ProtectorKey,
                  ks: &Keystore) -> Result<Self> {
-        // Open the convertdb file. This acquires the global lock
         let dirs = Self::get_src_dir_data(dir)?;
+
+        // We cannot convert the root directory of a filesystem
+        ensure_not_filesystem_root(&dirs.src)?;
+
+        // Open the convertdb file. This acquires the global lock
         let mut db = ConvertDb::load(&dirs.base)?;
 
         // Check the status of the source dir. It should not be encrypted

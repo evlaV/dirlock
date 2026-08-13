@@ -39,6 +39,7 @@ use dirlock::{
         ConversionStatus,
         ConvertJob,
         conversion_status,
+        ensure_not_filesystem_root,
     },
     protector::{
         Protector,
@@ -336,6 +337,7 @@ fn do_convert_dir(
     let protector = ks.load_protector(protector_id)?;
 
     dirlock::ensure_unencrypted(dir, ks)?;
+    ensure_not_filesystem_root(dir)?;
 
     if dirlock::util::dir_is_empty(dir)? {
         bail!("The directory is empty, use EncryptDir instead");

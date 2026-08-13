@@ -696,6 +696,7 @@ fn cmd_convert(args: &ConvertArgs, ks: &Keystore) -> Result<()> {
     use dirlock::convert::*;
 
     dirlock::ensure_unencrypted(&args.dir, ks)?;
+    ensure_not_filesystem_root(&args.dir)?;
 
     if dir_is_empty(&args.dir)? {
         bail!("The directory is empty. Use the 'encrypt' command instead");

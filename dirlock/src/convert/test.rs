@@ -26,6 +26,7 @@ static FS_LOCK: std::sync::RwLock<()> = std::sync::RwLock::new(());
 
 /// Filesystem where to run the tests. It must support fscrypt.
 /// Set to 'skip' to skip these tests.
+/// TODO: check that it's an actual mount point
 const MNTPOINT_ENV_VAR: &str = "DIRLOCK_TEST_FS";
 
 fn get_mntpoint() -> Result<Option<PathBuf>> {
@@ -141,6 +142,33 @@ fn test_conversion_status_lifecycle() -> Result<()> {
     // The directory show now be encrypted
     let encrypted_dir = EncryptedDir::open(path, &ks, LockState::Unlocked)?;
     encrypted_dir.lock(RemoveKeyUsers::CurrentUser)?;
+
+    Ok(())
+}
+
+// The root directory of a filesystem cannot be converted, but only the
+// operations that would start a job report an error. The read-only ones
+// must simply report that there's no conversion, else things like
+// 'dirlock status' or logging in with PAM would fail on a filesystem
+// that is mounted directly on the user's home directory.
+#[test]
+fn test_filesystem_root() -> Result<()> {
+    let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+    let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
+
+    let ks_dir = TempDir::new("keystore")?;
+    let ks = Keystore::from_path(ks_dir.path());
+
+    // The mountpoint is the root directory of a filesystem
+    assert!(ensure_not_filesystem_root(&mntpoint).is_err());
+
+    // Read-only operations report that there's nothing to convert
+    assert!(matches!(conversion_status(&mntpoint)?, ConversionStatus::None));
+    assert!(!ConvertJob::mark_dirty(&mntpoint)?);
+
+    // Starting a job on the filesystem root fails
+    let (protector, protector_key) = make_test_protector(&ks)?;
+    assert!(ConvertJob::start(&mntpoint, &protector, protector_key, &ks).is_err());
 
     Ok(())
 }
