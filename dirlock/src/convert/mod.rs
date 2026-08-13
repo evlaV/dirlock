@@ -160,11 +160,13 @@ impl ConvertJob {
 
     /// This canonicalizes the source dir and returns [`SrcDirData`]
     fn get_src_dir_data(dir: &Path) -> Result<SrcDirData> {
-        if ! is_real_dir(dir) {
+        // Resolve symlinks before checking the type of the directory.
+        let src = dir.canonicalize()
+            .map_err(|e| anyhow!("Cannot access {}: {e}", dir.display()))?;
+        if ! is_real_dir(&src) {
             bail!("{} is not a directory", dir.display());
         }
 
-        let src = dir.canonicalize()?;
         let mut base = get_mountpoint(&src)?;
         // src, but relative to the mount point
         // (empty if src is the mount point itself).

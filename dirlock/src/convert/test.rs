@@ -146,6 +146,48 @@ fn test_conversion_status_lifecycle() -> Result<()> {
     Ok(())
 }
 
+// A conversion job can be started using a symlink to the source
+// directory. Everything operates on the resolved path, so the symlink
+// still points to the data once the directory has been encrypted.
+#[test]
+fn test_convert_symlink() -> Result<()> {
+    let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+    let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
+
+    let ks_dir = TempDir::new("keystore")?;
+    let ks = Keystore::from_path(ks_dir.path());
+
+    // Create a directory with data
+    let dir = TempDir::new_in(&mntpoint, "convert")?;
+    let path = dir.path();
+    fs::write(path.join("file.txt"), "hello")?;
+
+    // Create a symlink to it, outside of the test filesystem
+    let linkdir = TempDir::new("symlink")?;
+    let link = linkdir.path().join("link");
+    std::os::unix::fs::symlink(path, &link)?;
+
+    // Do the conversion job using the symlink
+    let (protector, protector_key) = make_test_protector(&ks)?;
+    assert!(matches!(conversion_status(&link)?, ConversionStatus::None));
+    let job = ConvertJob::start(&link, &protector, protector_key, &ks)?;
+    assert_eq!(job.dirs.src, path.canonicalize()?);
+    assert!(matches!(conversion_status(&link)?, ConversionStatus::Ongoing(_)));
+    job.commit()?;
+    assert!(matches!(conversion_status(&link)?, ConversionStatus::None));
+
+    // The symlink points to the encrypted directory and the data is there
+    let encrypted_dir = EncryptedDir::open(&link, &ks, LockState::Unlocked)?;
+    assert_eq!(fs::read_to_string(link.join("file.txt"))?, "hello");
+    encrypted_dir.lock(RemoveKeyUsers::CurrentUser)?;
+
+    // The conversion replaced the target of the symlink, not the symlink
+    assert!(fs::symlink_metadata(&link)?.file_type().is_symlink());
+    assert_eq!(fs::read_link(&link)?, path);
+
+    Ok(())
+}
+
 // The root directory of a filesystem cannot be converted, but only the
 // operations that would start a job report an error. The read-only ones
 // must simply report that there's no conversion, else things like
