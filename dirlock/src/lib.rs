@@ -207,7 +207,7 @@ pub fn get_key_status(dir: &Path, keyid: &PolicyKeyId) -> Result<(KeyStatus, Key
 /// 1. The directory is encrypted with a supported fscrypt policy (v2).
 /// 2. The keystore contains a protector for that policy.
 pub fn open_dir(path: &Path, ks: &Keystore) -> Result<DirStatus> {
-    let policy = match fscrypt::get_policy(path).
+    let policy = match get_policy(path).
         map_err(|e| anyhow!("Failed to get encryption policy: {e}"))? {
             Some(Policy::V2(p)) => p,
             Some(_) => return Ok(DirStatus::Unsupported),
@@ -548,4 +548,32 @@ pub fn init() -> Result<()> {
             .map_err(|e| anyhow!("Error creating runtime dir: {e}"))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempdir::TempDir;
+
+    // A directory in a filesystem that does not support encryption
+    // should be reported as unencrypted, even though
+    // fscrypt::get_policy() returns an error in that case.
+    #[test]
+    fn test_open_dir_no_encryption_supported() -> Result<()> {
+        let ks_dir = TempDir::new("keystore")?;
+        let ks = Keystore::from_path(ks_dir.path());
+
+        // This expects /tmp to be a tmpfs, so no encryption is supported
+        let dir = TempDir::new_in("/tmp", "no-encryption")?;
+        // Using fscrypt::get_policy() returns an error
+        let policy = fscrypt::get_policy(dir.path());
+        assert!(matches!(policy, Err(fscrypt::Error::NotSupported)),
+                "This test requires /tmp to be a tmpfs"
+        );
+
+        // But open_dir() handles it correctly
+        assert!(matches!(open_dir(dir.path(), &ks)?, DirStatus::Unencrypted));
+
+        Ok(())
+    }
 }
