@@ -7,7 +7,16 @@
 mod pamlib;
 
 use pamsm::{LogLvl, Pam, PamError, PamFlags, PamLibExt, PamMsgStyle, PamServiceModule, pam_module};
-use dirlock::{DirStatus, EncryptedDir, Host, Keystore, protector::ProtectorKey, recovery::RecoveryKey};
+use dirlock::{
+    DirStatus,
+    EncryptedDir,
+    Host,
+    Keystore,
+    convert::{conversion_status, ConversionStatus},
+    protector::ProtectorKey,
+    recovery::RecoveryKey,
+    util,
+};
 use std::ffi::c_int;
 
 type Result<T> = std::result::Result<T, PamError>;
@@ -142,24 +151,57 @@ fn try_recovery_key(pamh: &Pam, dir: &EncryptedDir, pass: Option<&[u8]>) -> Resu
 
 /// Implementation of pam_sm_authenticate().
 ///
-/// Used for authentication.
-fn do_authenticate(pamh: Pam, autologin: bool) -> Result<()> {
+/// Used for authentication when 'autologin' is enabled. In this case
+/// we don't ask for a password. We succeed or fail depending on
+/// whether the home directory is already unlocked.
+fn do_authenticate_autologin(pamh: Pam) -> Result<()> {
+    let ks = Keystore::default();
+    let user = get_user(&pamh)?;
+
+    match get_home_data(user, &ks) {
+        Ok(d) => {
+            if d.key_status == dirlock::KeyStatus::Present {
+                log_info(&pamh, format!("autologin; home already unlocked for user {user}"));
+                Ok(())
+            } else {
+                log_warning(&pamh, format!("autologin; home is locked for user {user}"));
+                Err(PamError::AUTH_ERR)
+            }
+        }
+        Err(PamError::USER_UNKNOWN) => {
+            // If there's an ongoing conversion, disable autologin to
+            // give it a chance to finish while the user is logged out.
+            if let Ok(Some(dir)) = util::get_homedir(user) {
+                match conversion_status(&dir) {
+                    Ok(ConversionStatus::Ongoing(_)) => {
+                        log_warning(&pamh, format!("autologin; home is being converted for user {user}"));
+                        Err(PamError::AUTH_ERR)
+                    }
+                    Ok(_) => Err(PamError::USER_UNKNOWN),
+                    Err(e) => {
+                        // Be conservative here: log the error but return USER_UNKNOWN
+                        log_warning(&pamh, format!(
+                            "autologin; error checking for an existing conversion for {user}'s home dir: {e}")
+                        );
+                        Err(PamError::USER_UNKNOWN)
+                    }
+                }
+            } else {
+                Err(PamError::USER_UNKNOWN)
+            }
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Implementation of pam_sm_authenticate().
+///
+/// Used for authentication when 'autologin' is disabled.
+fn do_authenticate(pamh: Pam) -> Result<()> {
     let ks = Keystore::default();
     let user = get_user(&pamh)?;
     let homedir = get_home_data(user, &ks)?;
     let rhost = get_rhost(&pamh);
-
-    // If autologin is enabled we don't ask for a password.
-    // We succeed or fail depending on whether the home directory
-    // is already unlocked.
-    if autologin {
-        if homedir.key_status == dirlock::KeyStatus::Present {
-            log_info(&pamh, format!("autologin; home already unlocked for user {user}"));
-            return Ok(());
-        }
-        log_warning(&pamh, format!("autologin; home is locked for user {user}"));
-        return Err(PamError::AUTH_ERR);
-    }
 
     let mut available_protectors = false;
 
@@ -377,7 +419,11 @@ impl PamServiceModule for FscryptPam {
             return PamError::SERVICE_ERR;
         }
         let autologin = args.iter().any(|a| a == "autologin");
-        do_authenticate(pamh, autologin).err().unwrap_or(PamError::SUCCESS)
+        if autologin {
+            do_authenticate_autologin(pamh).err().unwrap_or(PamError::SUCCESS)
+        } else {
+            do_authenticate(pamh).err().unwrap_or(PamError::SUCCESS)
+        }
     }
 
     fn open_session(pamh: Pam, _flags: PamFlags, _args: Vec<String>) -> PamError {
