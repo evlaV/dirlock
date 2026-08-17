@@ -1,0 +1,10 @@
+# Copyright © 2026 Valve Corporation.
+# SPDX-License-Identifier: BSD-3-Clause
+
+[Unit]
+Description=Dirlock directory encryption daemon
+
+[Service]
+Type=dbus
+BusName=com.valvesoftware.Dirlock1
+ExecStart=/usr/lib/dirlock/dirlockd
