@@ -841,7 +841,7 @@ async fn main() -> anyhow::Result<()> {
         eprintln!("Warning: failed to clean up stale conversion entries: {e}");
     }
     let (tx, mut rx) = mpsc::channel::<Event>(2);
-    let builder = zbus::connection::Builder::session()?;
+    let builder = zbus::connection::Builder::system()?;
     let conn = builder.name(DIRLOCK_DBUS_SERVICE)?
         .build()
         .await?;
