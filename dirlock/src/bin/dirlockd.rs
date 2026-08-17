@@ -834,6 +834,18 @@ impl DirlockDaemon {
     }
 }
 
+/// Serve `daemon` at [`DIRLOCK_DBUS_PATH`] and request `name`.
+async fn serve_daemon<'a>(
+    builder: zbus::connection::Builder<'a>,
+    name: &'a str,
+    daemon: DirlockDaemon,
+) -> zbus::Result<zbus::Connection> {
+    builder.name(name)?
+        .serve_at(DIRLOCK_DBUS_PATH, daemon)?
+        .build()
+        .await
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dirlock::init()?;
@@ -841,10 +853,6 @@ async fn main() -> anyhow::Result<()> {
         eprintln!("Warning: failed to clean up stale conversion entries: {e}");
     }
     let (tx, mut rx) = mpsc::channel::<Event>(2);
-    let builder = zbus::connection::Builder::system()?;
-    let conn = builder.name(DIRLOCK_DBUS_SERVICE)?
-        .build()
-        .await?;
     let daemon = DirlockDaemon {
         jobs: HashMap::new(),
         last_jobid: 0,
@@ -852,9 +860,8 @@ async fn main() -> anyhow::Result<()> {
         ks: Keystore::default(),
     };
 
-    conn.object_server()
-        .at(DIRLOCK_DBUS_PATH, daemon)
-        .await?;
+    let builder = zbus::connection::Builder::system()?;
+    let conn = serve_daemon(builder, DIRLOCK_DBUS_SERVICE, daemon).await?;
 
     let iface : InterfaceRef<DirlockDaemon> =
         conn.object_server().interface(DIRLOCK_DBUS_PATH).await?;
@@ -992,11 +999,8 @@ mod tests {
                 ks,
             };
 
-            let _server_conn = zbus::connection::Builder::session()?
-                .name(service_name.as_str())?
-                .serve_at(DIRLOCK_DBUS_PATH, daemon)?
-                .build()
-                .await?;
+            let builder = zbus::connection::Builder::session()?;
+            let _server_conn = serve_daemon(builder, &service_name, daemon).await?;
 
             // Spawn a task to process events (needed for convert jobs)
             let iface: InterfaceRef<DirlockDaemon> =
