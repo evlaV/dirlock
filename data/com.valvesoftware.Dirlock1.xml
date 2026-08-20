@@ -110,7 +110,7 @@
 
         Start converting an unencrypted directory to an encrypted one
         in the background. Progress is reported via the JobProgress,
-        JobFinished and JobFailed signals.
+        JobFinished, JobFailed and JobDeferred signals.
     -->
     <method name="ConvertDir">
       <arg name="dir" type="s" direction="in"/>
