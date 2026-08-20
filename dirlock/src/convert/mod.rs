@@ -359,6 +359,13 @@ impl ConvertJob {
         Ok(Self { dirs, cloner, keyid, _lockfile, dstdir, workdir, home_owner })
     }
 
+    /// Return the canonicalized path of the directory being converted.
+    ///
+    /// Guaranteed to be valid UTF-8 (see ConvertJob::start).
+    pub fn src_dir(&self) -> &Path {
+        &self.dirs.src
+    }
+
     /// Return the current progress percentage
     pub fn progress(&self) -> i32 {
         self.cloner.progress()

@@ -143,42 +143,49 @@
     <!--
         JobFinished:
         @jobid: ID of the finished job.
+        @dir: Canonicalized path of the newly encrypted directory.
         @keyid: Policy ID of the newly encrypted directory.
 
         Emitted when a conversion job completes successfully.
     -->
     <signal name="JobFinished">
       <arg name="jobid" type="u"/>
+      <arg name="dir" type="s"/>
       <arg name="keyid" type="s"/>
     </signal>
 
     <!--
         JobFailed:
         @jobid: ID of the failed job.
+        @dir: Canonicalized path of the directory being converted.
         @error: Error message.
 
         Emitted when a conversion job fails.
     -->
     <signal name="JobFailed">
       <arg name="jobid" type="u"/>
+      <arg name="dir" type="s"/>
       <arg name="error" type="s"/>
     </signal>
 
     <!--
         JobProgress:
         @jobid: ID of the running job.
+        @dir: Canonicalized path of the directory being converted.
         @progress: Progress percentage (0-100).
 
         Emitted periodically while a conversion job is running.
     -->
     <signal name="JobProgress">
       <arg name="jobid" type="u"/>
+      <arg name="dir" type="s"/>
       <arg name="progress" type="i"/>
     </signal>
 
     <!--
         JobDeferred:
         @jobid: ID of the deferred job.
+        @dir: Canonicalized path of the directory being converted.
         @reason: Human-readable reason for the deferral.
 
         Emitted when a conversion job cannot be completed yet because
@@ -188,6 +195,7 @@
     -->
     <signal name="JobDeferred">
       <arg name="jobid" type="u"/>
+      <arg name="dir" type="s"/>
       <arg name="reason" type="s"/>
     </signal>
 

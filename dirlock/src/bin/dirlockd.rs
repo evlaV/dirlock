@@ -553,16 +553,18 @@ impl DirlockDaemon {
         let Some(job) = Arc::into_inner(handle.job) else {
             return Err(zbus::Error::Failure(format!("BUG: job {jobid} is still referenced")));
         };
+        // commit() consumes the job, so keep the source dir for the signals.
+        let dir = job.src_dir().to_path_buf();
         match job.commit() {
             Ok(CommitOutcome::Committed(keyid)) =>
                 // The job finished successfully
-                Self::job_finished(emitter, jobid, keyid.to_string()).await,
+                Self::job_finished(emitter, jobid, &dir, keyid.to_string()).await,
             Ok(CommitOutcome::Deferred(job)) => {
                 // The user is still logged in. Schedule a retry.
                 let job = Arc::new(job);
                 let task = Self::schedule_retry(job.clone(), jobid, self.tx.clone());
                 self.jobs.insert(jobid, JobHandle { job, task });
-                Self::job_deferred(emitter, jobid,
+                Self::job_deferred(emitter, jobid, &dir,
                     "directory is still in use; deferring".to_string()).await
             }
             Ok(CommitOutcome::Restarted(job)) => {
@@ -570,10 +572,10 @@ impl DirlockDaemon {
                 let job = Arc::new(job);
                 let task = Self::watch_job(job.clone(), jobid, emitter.to_owned(), self.tx.clone());
                 self.jobs.insert(jobid, JobHandle { job, task });
-                Self::job_deferred(emitter, jobid,
+                Self::job_deferred(emitter, jobid, &dir,
                     "directory was in use; restarting".to_string()).await
             }
-            Err(e) => Self::job_failed(emitter, jobid, e.to_string()).await,
+            Err(e) => Self::job_failed(emitter, jobid, &dir, e.to_string()).await,
         }
     }
 
@@ -593,7 +595,7 @@ impl DirlockDaemon {
                 let new_progress = job.progress();
                 if new_progress > progress {
                     progress = new_progress;
-                    _ = Self::job_progress(&emitter, jobid, progress).await;
+                    _ = Self::job_progress(&emitter, jobid, job.src_dir(), progress).await;
                 }
             }
             // Once the job is finished, drop this reference and emit
@@ -730,16 +732,16 @@ impl DirlockDaemon {
     }
 
     #[zbus(signal)]
-    async fn job_finished(e: &SignalEmitter<'_>, jobid: u32, keyid: String) -> zbus::Result<()>;
+    async fn job_finished(e: &SignalEmitter<'_>, jobid: u32, dir: &Path, keyid: String) -> zbus::Result<()>;
 
     #[zbus(signal)]
-    async fn job_failed(e: &SignalEmitter<'_>, jobid: u32, error: String) -> zbus::Result<()>;
+    async fn job_failed(e: &SignalEmitter<'_>, jobid: u32, dir: &Path, error: String) -> zbus::Result<()>;
 
     #[zbus(signal)]
-    async fn job_progress(e: &SignalEmitter<'_>, jobid: u32, progress: i32) -> zbus::Result<()>;
+    async fn job_progress(e: &SignalEmitter<'_>, jobid: u32, dir: &Path, progress: i32) -> zbus::Result<()>;
 
     #[zbus(signal)]
-    async fn job_deferred(e: &SignalEmitter<'_>, jobid: u32, reason: String) -> zbus::Result<()>;
+    async fn job_deferred(e: &SignalEmitter<'_>, jobid: u32, dir: &Path, reason: String) -> zbus::Result<()>;
 
     async fn create_protector(
         &self,
@@ -2095,6 +2097,9 @@ mod tests {
         let mut finished = proxy.receive_job_finished().await?;
         let mut failed = proxy.receive_job_failed().await?;
 
+        // The signals carry the canonicalized path, not the one we pass
+        let canon = std::fs::canonicalize(dir)?;
+
         let jobid = proxy.convert_dir(dir, as_opts(&str_dict([
             ("protector", prot_id),
             ("password", password),
@@ -2105,11 +2110,13 @@ mod tests {
             Some(sig) = finished.next() => {
                 let args = sig.args()?;
                 assert_eq!(args.jobid, jobid);
+                assert_eq!(Path::new(args.dir), canon);
                 Ok(args.keyid.to_string())
             }
             Some(sig) = failed.next() => {
                 let args = sig.args()?;
                 assert_eq!(args.jobid, jobid);
+                assert_eq!(Path::new(args.dir), canon);
                 bail!("{}", args.error)
             }
         }
