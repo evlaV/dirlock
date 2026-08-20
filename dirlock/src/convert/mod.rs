@@ -243,6 +243,11 @@ impl ConvertJob {
                  ks: &Keystore) -> Result<Self> {
         let dirs = Self::get_src_dir_data(dir)?;
 
+        // Conversion jobs require valid UTF-8 paths
+        if dirs.src.to_str().is_none() {
+            bail!("{}: the path is not valid UTF-8", dirs.src.display());
+        }
+
         // We cannot convert the root directory of a filesystem
         ensure_not_filesystem_root(&dirs.src)?;
 
