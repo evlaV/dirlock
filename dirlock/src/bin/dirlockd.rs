@@ -952,6 +952,8 @@ async fn main() -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    // These tests cannot defer a job: a TempDir is nobody's passwd home,
+    // and inject.rs is #[cfg(test)] so UserManagerActive is ignored here.
     use super::*;
     use anyhow::Result;
     use std::collections::HashMap;
