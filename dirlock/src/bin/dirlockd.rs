@@ -605,16 +605,14 @@ impl DirlockDaemon {
                 let job = Arc::new(job);
                 let task = Self::schedule_retry(job.clone(), jobid, self.tx.clone());
                 self.jobs.insert(jobid, JobHandle { job, task });
-                Self::job_deferred(emitter, jobid, &dir,
-                    "directory is still in use; deferring".to_string()).await
+                Self::job_deferred(emitter, jobid, &dir).await
             }
             Ok(CommitOutcome::Restarted(job)) => {
                 // The job was restarted. Wait for it to complete.
                 let job = Arc::new(job);
                 let task = Self::watch_job(job.clone(), jobid, emitter.to_owned(), self.tx.clone());
                 self.jobs.insert(jobid, JobHandle { job, task });
-                Self::job_deferred(emitter, jobid, &dir,
-                    "directory was in use; restarting".to_string()).await
+                Self::job_restarted(emitter, jobid, &dir).await
             }
             Err(e) => Self::job_failed(emitter, jobid, &dir, e.to_string()).await,
         }
@@ -788,7 +786,10 @@ impl DirlockDaemon {
     async fn job_progress(e: &SignalEmitter<'_>, jobid: u32, dir: &Path, progress: i32) -> zbus::Result<()>;
 
     #[zbus(signal)]
-    async fn job_deferred(e: &SignalEmitter<'_>, jobid: u32, dir: &Path, reason: String) -> zbus::Result<()>;
+    async fn job_deferred(e: &SignalEmitter<'_>, jobid: u32, dir: &Path) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn job_restarted(e: &SignalEmitter<'_>, jobid: u32, dir: &Path) -> zbus::Result<()>;
 
     async fn create_protector(
         &self,

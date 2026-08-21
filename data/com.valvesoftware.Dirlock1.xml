@@ -110,7 +110,7 @@
 
         Start converting an unencrypted directory to an encrypted one
         in the background. Progress is reported via the JobProgress,
-        JobFinished, JobFailed and JobDeferred signals.
+        JobFinished, JobFailed, JobDeferred and JobRestarted signals.
     -->
     <method name="ConvertDir">
       <arg name="dir" type="s" direction="in"/>
@@ -201,6 +201,8 @@
         @progress: Progress percentage (0-100).
 
         Emitted periodically while a conversion job is running.
+        The progress goes back to 0 if the copy has to be started
+        again (see JobRestarted).
     -->
     <signal name="JobProgress">
       <arg name="jobid" type="u"/>
@@ -212,17 +214,29 @@
         JobDeferred:
         @jobid: ID of the deferred job.
         @dir: Canonicalized path of the directory being converted.
-        @reason: Human-readable reason for the deferral.
 
         Emitted when a conversion job cannot be completed yet because
         the home directory being converted is still in use. The daemon
-        retries automatically; the job eventually completes (JobFinished)
-        or fails (JobFailed).
+        waits until its owner logs out and then starts the copy again
+        (see JobRestarted).
     -->
     <signal name="JobDeferred">
       <arg name="jobid" type="u"/>
       <arg name="dir" type="s"/>
-      <arg name="reason" type="s"/>
+    </signal>
+
+    <!--
+        JobRestarted:
+        @jobid: ID of the restarted job.
+        @dir: Canonicalized path of the directory being converted.
+
+        Emitted when the copy has to be started again because the
+        directory was modified while it was being converted. The
+        progress of the job goes back to 0.
+    -->
+    <signal name="JobRestarted">
+      <arg name="jobid" type="u"/>
+      <arg name="dir" type="s"/>
     </signal>
 
     <!--

@@ -135,7 +135,7 @@ pub trait Dirlock1 {
 
     /// JobDeferred signal
     #[zbus(signal)]
-    fn job_deferred(&self, jobid: u32, dir: &str, reason: &str) -> zbus::Result<()>;
+    fn job_deferred(&self, jobid: u32, dir: &str) -> zbus::Result<()>;
 
     /// JobFailed signal
     #[zbus(signal)]
@@ -148,4 +148,8 @@ pub trait Dirlock1 {
     /// JobProgress signal
     #[zbus(signal)]
     fn job_progress(&self, jobid: u32, dir: &str, progress: i32) -> zbus::Result<()>;
+
+    /// JobRestarted signal
+    #[zbus(signal)]
+    fn job_restarted(&self, jobid: u32, dir: &str) -> zbus::Result<()>;
 }
