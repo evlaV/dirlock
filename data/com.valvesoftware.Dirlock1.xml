@@ -141,6 +141,32 @@
     </method>
 
     <!--
+        ListConversions:
+        @conversions: List of dicts with the following fields:
+
+        - `dir` (s): Canonicalized path of the directory being converted.
+        - `status` (s): One of `ongoing` or `interrupted`, as in GetDirStatus.
+        - `policy` (s): The policy ID of the conversion.
+
+        If the conversion is a job managed by this daemon, the dict
+        also contains:
+
+        - `jobid` (u): ID of the conversion job.
+        - `progress` (i): Progress percentage (0-100).
+
+        List the pending conversions of all mounted filesystems.
+
+        A conversion with no `jobid` is not managed by this daemon: it
+        is either `interrupted` and can be resumed with ConvertDir, or
+        it is `ongoing` under another process (e.g. the dirlock CLI),
+        in which case it emits no job signals and its progress cannot
+        be queried.
+    -->
+    <method name="ListConversions">
+      <arg name="conversions" type="aa{sv}" direction="out"/>
+    </method>
+
+    <!--
         JobFinished:
         @jobid: ID of the finished job.
         @dir: Canonicalized path of the newly encrypted directory.

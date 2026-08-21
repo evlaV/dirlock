@@ -79,6 +79,11 @@ pub trait Dirlock1 {
     /// JobStatus method
     fn job_status(&self, jobid: u32) -> zbus::Result<i32>;
 
+    /// ListConversions method
+    fn list_conversions(
+        &self,
+    ) -> zbus::Result<Vec<std::collections::HashMap<String, zbus::zvariant::OwnedValue>>>;
+
     /// LockDir method
     fn lock_dir(&self, dir: &str) -> zbus::Result<Vec<String>>;
 

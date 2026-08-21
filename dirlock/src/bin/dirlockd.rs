@@ -40,6 +40,7 @@ use dirlock::{
         ConvertJob,
         conversion_status,
         ensure_not_filesystem_root,
+        list_all_conversions,
     },
     protector::{
         Protector,
@@ -171,18 +172,30 @@ impl From<&DirStatus> for DbusDirStatus {
     }
 }
 
+/// The D-Bus API version of a [`ConversionStatus`]: its name and the
+/// policy ID of the conversion. Returns `None` if there is no conversion.
+fn conversion_fields(status: &ConversionStatus) -> Option<(&'static str, &PolicyKeyId)> {
+    match status {
+        ConversionStatus::None => None,
+        ConversionStatus::Ongoing(id) => Some(("ongoing", id)),
+        ConversionStatus::Interrupted(id) => Some(("interrupted", id)),
+    }
+}
+
 impl DbusDirStatus {
     /// Add the conversion status of an unencrypted directory to the status dict.
     fn add_conversion_status(&mut self, status: ConversionStatus) {
-        let (conv, id) = match status {
-            ConversionStatus::None => return,
-            ConversionStatus::Ongoing(id) => ("ongoing", id),
-            ConversionStatus::Interrupted(id) => ("interrupted", id),
+        let Some((conv, id)) = conversion_fields(&status) else {
+            return;
         };
         self.0.insert("conversion", Value::from(conv));
         self.0.insert("conversion-policy", Value::from(id.to_string()));
     }
 }
+
+/// This is the D-Bus API version of a [`PendingConversion`]
+#[derive(Serialize, zvariant::Type)]
+struct DbusConversion(HashMap<&'static str, Value<'static>>);
 
 /// This is the D-Bus API version of [`Protector`]
 #[derive(Serialize, zvariant::Type)]
@@ -349,6 +362,34 @@ fn do_convert_dir(
     };
 
     ConvertJob::start(dir, &protector, key, ks)
+}
+
+/// Get the list of pending conversions.
+/// `jobs` is used to fill in the data of the ones managed by this daemon.
+fn do_list_conversions(jobs: &HashMap<u32, JobHandle>) -> anyhow::Result<Vec<DbusConversion>> {
+    let mut result = vec![];
+    for conv in list_all_conversions()? {
+        let Some((status, policy)) = conversion_fields(&conv.status) else {
+            continue;
+        };
+        // Both the mount point and the convertdb keys are UTF-8,
+        // so this conversion is lossless.
+        let dir = conv.dir.to_string_lossy().into_owned();
+        let mut data = HashMap::from([
+            ("dir", Value::from(dir)),
+            ("status", Value::from(status)),
+            ("policy", Value::from(policy.to_string())),
+        ]);
+        // A conversion started elsewhere (e.g. with the dirlock CLI) or
+        // left behind by a previous run has no job in this daemon, so
+        // there is no job ID and no progress to report.
+        if let Some((jobid, handle)) = jobs.iter().find(|(_, h)| h.job.src_dir() == conv.dir) {
+            data.insert("jobid", Value::from(*jobid));
+            data.insert("progress", Value::from(handle.job.progress()));
+        }
+        result.push(DbusConversion(data));
+    }
+    Ok(result)
 }
 
 /// Create a new protector
@@ -721,6 +762,12 @@ impl DirlockDaemon {
         result
     }
 
+    async fn list_conversions(
+        &self,
+    ) -> Result<Vec<DbusConversion>> {
+        do_list_conversions(&self.jobs).into_dbus()
+    }
+
     async fn job_status(
         &self,
         jobid: u32,
@@ -941,6 +988,25 @@ mod tests {
             Some(v) => bail!("Key {key}, expected bool, got {v:?}"),
             None => bail!("Missing key {key}"),
         }
+    }
+
+    /// Get a u32 from a HashMap returned by the D-Bus proxy
+    fn expect_u32(map: &HashMap<String, OwnedValue>, key: &str) -> Result<u32> {
+        match map.get(key).map(|k| &**k) {
+            Some(Value::U32(v)) => Ok(*v),
+            Some(v) => bail!("Key {key}, expected u32, got {v:?}"),
+            None => bail!("Missing key {key}"),
+        }
+    }
+
+    /// Find the entry of `dir` in the list returned by ListConversions.
+    /// Tests run in parallel, so the list can contain other conversions.
+    fn find_conversion<'a>(
+        list: &'a [HashMap<String, OwnedValue>],
+        dir: &Path,
+    ) -> Option<&'a HashMap<String, OwnedValue>> {
+        list.iter()
+            .find(|conv| expect_str(conv, "dir").is_ok_and(|d| Path::new(d) == dir))
     }
 
     /// Create a memfd containing the given data and return it as a
@@ -1784,6 +1850,90 @@ mod tests {
         assert_eq!(expect_bool(&status, "has-recovery-key")?, false);
         assert_eq!(status.len(), 4); // Element 4 is the 'protectors' field
         assert!(status.get("conversion").is_none());
+
+        Ok(())
+    }
+
+    // ListConversions reports the pending conversions of the system
+    #[tokio::test]
+    async fn test_list_conversions() -> Result<()> {
+        use futures_lite::StreamExt;
+
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        // A plain unencrypted directory with some data to convert
+        let dir = TempDir::new_in(&mntpoint, "list-conversions")?;
+        let dir_str = dir.path().to_str().unwrap();
+        let canon = std::fs::canonicalize(dir.path())?;
+        std::fs::write(dir.path().join("file.txt"), "hello")?;
+
+        // No conversion yet, so the directory is not listed
+        let list = proxy.list_conversions().await?;
+        assert!(find_conversion(&list, &canon).is_none());
+
+        // Start the conversion directly (and not via the daemon) so
+        // we can observe the intermediate state and interrupt it.
+        let ks = srv.keystore();
+        let opts = ProtectorOptsBuilder::new()
+            .with_name("test".into())
+            .with_kdf_iter(std::num::NonZeroU32::new(1))
+            .build()?;
+        let (protector, protector_key) =
+            dirlock::create_protector(opts, b"pass", dirlock::CreateOpts::CreateAndSave, &ks)?;
+        let job = ConvertJob::start(dir.path(), &protector, protector_key, &ks)?;
+
+        // The conversion is ongoing, but it's not managed by this
+        // daemon so there's no job ID and no progress.
+        let list = proxy.list_conversions().await?;
+        let conv = find_conversion(&list, &canon).expect("conversion not listed");
+        assert_eq!(expect_str(conv, "status")?, "ongoing");
+        let policy = expect_str(conv, "policy")?.to_string();
+        assert!(!policy.is_empty());
+        assert_eq!(conv.len(), 3);
+
+        // Cancel it, leaving an interrupted conversion on disk
+        job.cancel()?;
+        // The conversion goes from 'ongoing' to 'interrupted' when
+        // the lock is released, so wait for the rsync process to finish.
+        assert!(job.wait().is_err());
+        drop(job);
+
+        let list = proxy.list_conversions().await?;
+        let conv = find_conversion(&list, &canon).expect("conversion not listed");
+        assert_eq!(expect_str(conv, "status")?, "interrupted");
+        assert_eq!(expect_str(conv, "policy")?, policy);
+        assert_eq!(conv.len(), 3);
+
+        // Resume it through the daemon
+        let mut finished = proxy.receive_job_finished().await?;
+        let prot_id = protector.id.to_string();
+        let jobid = proxy.convert_dir(dir_str, as_opts(&str_dict([
+            ("protector", prot_id.as_str()),
+            ("password", "pass"),
+        ]))).await?;
+
+        // The conversion is now managed by this daemon, so it also
+        // reports its job ID and progress. If it finished already it's
+        // simply not listed: there's no state in between as long as
+        // handle_event() commits while holding the interface lock.
+        let list = proxy.list_conversions().await?;
+        if let Some(conv) = find_conversion(&list, &canon) {
+            assert_eq!(expect_str(conv, "status")?, "ongoing");
+            assert_eq!(expect_u32(conv, "jobid")?, jobid);
+            assert!(conv.get("progress").is_some());
+            assert_eq!(conv.len(), 5);
+        }
+
+        // Wait for the conversion to finish
+        let sig = finished.next().await.expect("no JobFinished signal");
+        assert_eq!(sig.args()?.jobid, jobid);
+
+        // A finished conversion is no longer listed
+        let list = proxy.list_conversions().await?;
+        assert!(find_conversion(&list, &canon).is_none());
 
         Ok(())
     }

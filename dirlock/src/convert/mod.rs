@@ -711,5 +711,54 @@ pub fn cleanup_all() -> Result<usize> {
     Ok(total)
 }
 
+/// A conversion that has not finished yet.
+pub struct PendingConversion {
+    /// The directory being converted
+    pub dir: PathBuf,
+    /// Its status, never [`ConversionStatus::None`]
+    pub status: ConversionStatus,
+}
+
+/// Return the pending conversions of the filesystem mounted on `mntpoint`.
+///
+/// Note that this uses [`ConvertJob::status()`], so it also cleans up
+/// the entries of conversions that are already finished.
+fn list_conversions(mntpoint: &Path) -> Result<Vec<PendingConversion>> {
+    // The convertdb keys are relative to the canonicalized mount point
+    let mntpoint = mntpoint.canonicalize()?;
+    let base = mntpoint.join(ConvertJob::BASEDIR);
+    if ! base.exists() {
+        return Ok(vec![]);
+    }
+
+    let entries : Vec<PathBuf> = {
+        let db = ConvertDb::load(&base)?;
+        db.keys().cloned().collect()
+    };
+
+    let mut result = vec![];
+    for entry in entries {
+        let dir = mntpoint.join(&entry);
+        // A missing source directory is a stale entry, cleanup() removes those
+        if ! is_real_dir(&dir) {
+            continue;
+        }
+        match ConvertJob::status(&dir)? {
+            ConversionStatus::None => (),
+            status => result.push(PendingConversion { dir, status }),
+        }
+    }
+    Ok(result)
+}
+
+/// Return the pending conversions of all mounted filesystems.
+pub fn list_all_conversions() -> Result<Vec<PendingConversion>> {
+    let mut result = vec![];
+    for m in crate::util::get_unique_mounts()? {
+        result.extend(list_conversions(m.fs_mounted_on.as_ref())?);
+    }
+    Ok(result)
+}
+
 #[cfg(test)]
 mod test;
