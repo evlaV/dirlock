@@ -192,11 +192,10 @@ impl DirectoryCloner {
     /// Parse the output of the rsync command and wait until it's done.
     fn parse_rsync_ouput(mut child: Child, stdout: ChildStdout,
                          state: &ClonerState, syncfd: File) -> Result<ExitStatus> {
-        const REGEX : &str = r" *[0-9,]+ *([0-9]{1,3})% .* to-chk=([0-9]+)/";
+        const REGEX : &str = r" *[0-9,]+ *([0-9]{1,3})% .* to-chk=[0-9]+/";
         let re = regex::bytes::Regex::new(REGEX).unwrap();
         let mut reader = BufReader::new(stdout);
         let mut line = Vec::new();
-        let mut to_chk = i32::MAX;
         state.progress.store(0, Relaxed);
         let read_status = loop {
             line.clear();
@@ -206,17 +205,13 @@ impl DirectoryCloner {
                 Ok(0) => { // EOF
                     // Sync the filesystem before finishing
                     _ = nix::unistd::syncfs(syncfd.as_raw_fd());
-                    if to_chk == 0 {
-                        // set progress to 100 if rsync doesn't do it
-                        state.progress.store(100, Relaxed);
-                    }
                     break Ok(());
                 },
                 Ok(_) => (),
             }
 
-            // Parse each line to get the progress percentage and the
-            // number of files left (&[u8] -> &str -> i32)
+            // Parse each line to get the progress percentage
+            // (&[u8] -> &str -> i32)
             if let Some(capture) = re.captures(&line) {
                 let cur_progress = state.progress.load(Relaxed);
                 let new_progress = std::str::from_utf8(&capture[1]).ok()
@@ -225,11 +220,6 @@ impl DirectoryCloner {
                 if new_progress > cur_progress {
                     state.progress.store(new_progress, Relaxed);
                 }
-
-                let new_to_chk = std::str::from_utf8(&capture[2]).ok()
-                    .and_then(|s| str::parse(s).ok())
-                    .unwrap_or(to_chk);
-                to_chk = std::cmp::min(to_chk, new_to_chk);
             }
         };
 
@@ -237,7 +227,13 @@ impl DirectoryCloner {
         match (child_status, read_status) {
             (Err(e), _     ) => Err(e.into()),
             (_     , Err(e)) => Err(e.into()),
-            (Ok(s),  Ok(())) => Ok(s),
+            (Ok(s),  Ok(())) => {
+                // If rsync succeeded then we are done.
+                if s.success() {
+                    state.progress.store(100, Relaxed);
+                }
+                Ok(s)
+            }
         }
     }
 
