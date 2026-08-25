@@ -512,7 +512,6 @@ dependencies = [
  "num_enum",
  "pbkdf2",
  "rand 0.8.7",
- "regex",
  "rpassword",
  "serde",
  "serde_json",

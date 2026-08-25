@@ -96,7 +96,7 @@ impl DirectoryCloner {
     fn run(state: &ClonerState, src: PathBuf, dst: PathBuf, dst_fd: File,
            verify_content: bool) -> Result<ExitStatus> {
         // Validate the source directory and check free space on the destination
-        Self::validate_dirs(state, &src, &dst)?;
+        let entries = Self::validate_dirs(state, &src, &dst)?;
 
         let mut dst = dst.into_os_string();
         dst.push(std::path::MAIN_SEPARATOR_STR);
@@ -105,7 +105,12 @@ impl DirectoryCloner {
         let mut child = Command::new("rsync")
             // This preserves ACLs (A), extended attributes (X) and hard links (H)
             // We also use -x to stop at filesystem boundaries
-            .args(["-aAXHx", "--info=progress2", "--no-inc-recursive", "--delete"])
+            .args(["-aAXHx", "--delete"])
+            // We measure the progress by counting the entries that
+            // rsync reports (-ii: include changed and unchanged files).
+            // With %b rsync prints the line *after* transferring the file:
+            // https://github.com/RsyncProject/rsync/blob/v3.4.4/rsync.1.md?plain=1#L3207
+            .args(["-ii", "--out-format=%i%b"])
             .args(verify_content.then_some("--checksum"))
             .args([OsStr::new("./"), &dst])
             .current_dir(&src)
@@ -129,12 +134,13 @@ impl DirectoryCloner {
             _ = signal::kill(pid, Some(signal::SIGTERM));
         }
 
-        Self::parse_rsync_ouput(child, stdout, state, dst_fd)
+        Self::parse_rsync_ouput(child, stdout, state, dst_fd, entries)
     }
 
     /// Check that all subdirectories in `src` are on the same filesystem and
     /// not encrypted, and that `dst` has enough free space and inodes.
-    fn validate_dirs(state: &ClonerState, src: &Path, dst: &Path) -> Result<()> {
+    /// Returns the number of entries in `src`.
+    fn validate_dirs(state: &ClonerState, src: &Path, dst: &Path) -> Result<u64> {
         // It's not enough that `dst` can hold the contents of `src`,
         // it must also have at least this amount of extra free space and inodes.
         const MIN_FREE_BYTES: u64 = 512 * 1024 * 1024;
@@ -152,12 +158,14 @@ impl DirectoryCloner {
         let src_stx = util::Statx::from_path(CStr::from_bytes_with_nul(&buf)?)?;
         let mut total_bytes: u64 = MIN_FREE_BYTES;
         let mut total_inodes: u64 = MIN_FREE_INODES;
+        let mut entries: u64 = 0;
         for iter in walkdir::WalkDir::new(src).follow_links(false) {
             if state.cancelled.load(Relaxed) {
                 bail!("operation cancelled");
             }
             let entry = iter?;
             let ft = entry.file_type();
+            entries += 1;
 
             if ft.is_file() {
                 total_bytes += entry.metadata()?.len();
@@ -186,21 +194,21 @@ impl DirectoryCloner {
                 bail!("{} has encrypted content", src.display());
             }
         }
-        Ok(())
+        Ok(entries)
     }
 
     /// Parse the output of the rsync command and wait until it's done.
     fn parse_rsync_ouput(mut child: Child, stdout: ChildStdout,
-                         state: &ClonerState, syncfd: File) -> Result<ExitStatus> {
-        const REGEX : &str = r" *[0-9,]+ *([0-9]{1,3})% .* to-chk=[0-9]+/";
-        let re = regex::bytes::Regex::new(REGEX).unwrap();
+                         state: &ClonerState, syncfd: File,
+                         total: u64) -> Result<ExitStatus> {
         let mut reader = BufReader::new(stdout);
         let mut line = Vec::new();
+        let mut count: u64 = 0;
         state.progress.store(0, Relaxed);
         let read_status = loop {
             line.clear();
-            // rsync with --info=progress2 separates lines with '\r'
-            match reader.read_until(b'\r', &mut line) {
+            // rsync prints one line per entry that it processes
+            match reader.read_until(b'\n', &mut line) {
                 Err(e) => break Err(e), // Error reading from child process
                 Ok(0) => { // EOF
                     // Sync the filesystem before finishing
@@ -210,16 +218,18 @@ impl DirectoryCloner {
                 Ok(_) => (),
             }
 
-            // Parse each line to get the progress percentage
-            // (&[u8] -> &str -> i32)
-            if let Some(capture) = re.captures(&line) {
-                let cur_progress = state.progress.load(Relaxed);
-                let new_progress = std::str::from_utf8(&capture[1]).ok()
-                    .and_then(|s| str::parse(s).ok())
-                    .unwrap_or(cur_progress);
-                if new_progress > cur_progress {
-                    state.progress.store(new_progress, Relaxed);
-                }
+            // '*' in the first column is for messages (e.g. "*deleting")
+            if line.first() == Some(&b'*') {
+                continue;
+            }
+
+            // 'total' is calculated before running rsync so it's not
+            // necessarily accurate. Clamp the result to 99: 100 is
+            // only set on a successful exit (see below).
+            count += 1;
+            if total > 0 {
+                let progress = (100 * count / total).min(99);
+                state.progress.store(progress as i32, Relaxed);
             }
         };
 
