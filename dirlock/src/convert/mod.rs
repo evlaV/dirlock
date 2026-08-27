@@ -33,6 +33,7 @@ use crate::{
         dir_is_empty,
         get_mountpoint,
         is_real_dir,
+        remove_file_or_dir,
     },
 };
 
@@ -236,7 +237,7 @@ impl ConvertJob {
         // Remove the leftover data outside the lock.
         // Do it even if the rename failed: maybe there was a
         // directory with the same name?
-        let _ = fs::remove_dir_all(&trash_target);
+        let _ = remove_file_or_dir(&trash_target);
         if let Ok(lock) = GlobalLockFile::new() {
             ConvertJob::try_remove_base_dirs(&dirs.base, &lock);
         }
@@ -695,7 +696,7 @@ pub fn cleanup(dir: &Path) -> Result<usize> {
     //    This does not need the global lock.
     if let Ok(trash_entries) = fs::read_dir(base.join(ConvertJob::TRASHDIR)) {
         for entry in trash_entries.flatten() {
-            let _ = fs::remove_dir_all(entry.path());
+            let _ = remove_file_or_dir(&entry.path());
         }
     }
 

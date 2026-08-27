@@ -68,6 +68,16 @@ pub fn create_dir_if_needed(dir: &Path) -> std::io::Result<()> {
     }
 }
 
+/// Remove `path` and everything under it.
+/// This also works if `path` is not a directory.
+pub fn remove_file_or_dir(path: &Path) -> std::io::Result<()> {
+    match std::fs::remove_dir_all(path) {
+        // Report the original error if remove_file() fails
+        Err(e) => std::fs::remove_file(path).map_err(|_| e),
+        ok => ok,
+    }
+}
+
 thread_local! {
     /// Queue of passwords to be returned by the password-reading
     /// functions like [`read_password_for_protector()`].

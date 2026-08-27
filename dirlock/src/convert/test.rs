@@ -424,7 +424,8 @@ fn test_workdir_cannot_be_trashed() -> Result<()> {
     // Put a non-empty directory where the workdir has to be moved to,
     // so trashing the workdir fails.
     let dirs = ConvertJob::get_src_dir_data(path)?;
-    let trash_target = dirs.base.join(ConvertJob::TRASHDIR).join(keyid.to_string());
+    let trashdir = dirs.base.join(ConvertJob::TRASHDIR);
+    let trash_target = trashdir.join(keyid.to_string());
     fs::create_dir_all(&trash_target)?;
     fs::write(trash_target.join("blocker"), "x")?;
 
@@ -435,8 +436,21 @@ fn test_workdir_cannot_be_trashed() -> Result<()> {
     assert!(db.get(&dirs.src_rel).is_some(), "convertdb entry removed unexpectedly");
     drop(db);
 
-    // The obstacle is removed even when the rename fails, so the next
-    // call cleans everything up
+    // The obstacle was removed even when the rename failed, so we now
+    // put a file in the way instead of a directory.
+    assert!(!trash_target.exists());
+    assert!(workdir.exists());
+    fs::create_dir_all(&trashdir)?; // The trash dir was removed so create it again
+    fs::write(&trash_target, "x")?;
+
+    // A file blocks the rename too, so the entry is kept as well
+    assert!(matches!(conversion_status(path)?, ConversionStatus::None));
+    assert!(workdir.exists(), "workdir not found at the original location");
+    let db = ConvertDb::load(&dirs.base)?;
+    assert!(db.get(&dirs.src_rel).is_some(), "convertdb entry removed unexpectedly");
+    drop(db);
+
+    // The obstacle is removed again. The next call finally cleans everything up
     assert!(!trash_target.exists());
     assert!(matches!(conversion_status(path)?, ConversionStatus::None));
     assert!(!workdir.exists());
