@@ -221,15 +221,21 @@ impl ConvertJob {
         let trashdir = dirs.base.join(Self::TRASHDIR);
         let trash_target = trashdir.join(id.to_string());
         if create_dir_if_needed(&trashdir).is_ok() {
-            let _ = fs::rename(&workdir, &trash_target);
+            match fs::rename(&workdir, &trash_target) {
+                Err(e) if e.kind() != ErrorKind::NotFound => {
+                    eprintln!("Warning: failed to trash workdir: {e}");
+                },
+                _ => {
+                    db.remove(&dirs.src_rel);
+                    let _ = db.commit();
+                },
+            }
         }
-        db.remove(&dirs.src_rel);
-        let _ = db.commit();
         drop(db);
 
         // Remove the leftover data outside the lock.
-        // Try also removing workdir in case fs::rename() failed.
-        let _ = fs::remove_dir_all(&workdir);
+        // Do it even if the rename failed: maybe there was a
+        // directory with the same name?
         let _ = fs::remove_dir_all(&trash_target);
         if let Ok(lock) = GlobalLockFile::new() {
             ConvertJob::try_remove_base_dirs(&dirs.base, &lock);

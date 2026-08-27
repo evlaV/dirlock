@@ -390,6 +390,68 @@ fn test_crash_after_exchange() -> Result<()> {
     Ok(())
 }
 
+// Same as test_crash_after_exchange(), but this time the workdir
+// cannot be trashed because another directory of the same name is
+// there.
+// - The workdir and the convertdb entry must be kept.
+// - The obstacle is removed
+// - In a subsequent call the workdir is trashed correctly
+#[test]
+fn test_workdir_cannot_be_trashed() -> Result<()> {
+    let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+    let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
+    crate::init()?;
+
+    let ks_dir = TempDir::new("keystore")?;
+    let ks = Keystore::from_path(ks_dir.path());
+
+    // Create a directory with data
+    let dir = TempDir::new_in(&mntpoint, "convert")?;
+    let path = dir.path();
+    fs::write(path.join("file.txt"), "hello")?;
+
+    // Create a protector
+    let (protector, protector_key) = make_test_protector(&ks)?;
+
+    // Simulate a crash between RENAME_EXCHANGE and db.commit()
+    inject(Injected::ConvertCommitAfterExchange);
+    let job = ConvertJob::start(path, &protector, protector_key, &ks)?;
+    let workdir = job.workdir.clone();
+    let keyid = job.keyid.clone();
+    assert!(job.commit().is_err());
+    assert!(workdir.exists());
+
+    // Put a non-empty directory where the workdir has to be moved to,
+    // so trashing the workdir fails.
+    let dirs = ConvertJob::get_src_dir_data(path)?;
+    let trash_target = dirs.base.join(ConvertJob::TRASHDIR).join(keyid.to_string());
+    fs::create_dir_all(&trash_target)?;
+    fs::write(trash_target.join("blocker"), "x")?;
+
+    // The workdir cannot be trashed, so its entry has to be kept
+    assert!(matches!(conversion_status(path)?, ConversionStatus::None));
+    assert!(workdir.exists(), "workdir not found at the original location");
+    let db = ConvertDb::load(&dirs.base)?;
+    assert!(db.get(&dirs.src_rel).is_some(), "convertdb entry removed unexpectedly");
+    drop(db);
+
+    // The obstacle is removed even when the rename fails, so the next
+    // call cleans everything up
+    assert!(!trash_target.exists());
+    assert!(matches!(conversion_status(path)?, ConversionStatus::None));
+    assert!(!workdir.exists());
+    let db = ConvertDb::load(&dirs.base)?;
+    assert!(db.get(&dirs.src_rel).is_none(), "convertdb entry was not removed");
+    drop(db);
+
+    // The data is intact all along
+    let encrypted_dir = EncryptedDir::open(path, &ks, LockState::Unlocked)?;
+    assert_eq!(fs::read_to_string(path.join("file.txt"))?, "hello");
+    encrypted_dir.lock(RemoveKeyUsers::CurrentUser)?;
+
+    Ok(())
+}
+
 // If a conversion job is marked dirty then commit() restarts it, and
 // a second commit() updates the data and completes the conversion.
 #[test]
