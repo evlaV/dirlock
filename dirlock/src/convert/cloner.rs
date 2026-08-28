@@ -115,7 +115,7 @@ impl DirectoryCloner {
             .args([OsStr::new("./"), &dst])
             .current_dir(&src)
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::inherit())
             .spawn()
             .map_err(|e| anyhow!("Failed to run rsync: {e}"))?;
 
