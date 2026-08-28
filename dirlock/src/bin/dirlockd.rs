@@ -653,7 +653,7 @@ impl DirlockDaemon {
         jobid: u32,
         tx: mpsc::Sender<Event>,
     ) -> JoinHandle<()> {
-        let retry_interval = std::time::Duration::from_secs(60);
+        let retry_interval = std::time::Duration::from_secs(5);
         tokio::task::spawn(async move {
             // unwrap_or(true): wait if is_owner_active() returns an error
             while job.is_owner_active().unwrap_or(true) {
