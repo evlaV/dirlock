@@ -41,6 +41,7 @@ use dirlock::{
         conversion_status,
         ensure_not_filesystem_root,
         list_all_conversions,
+        purge_trash,
     },
     protector::{
         Protector,
@@ -597,9 +598,18 @@ impl DirlockDaemon {
         // commit() consumes the job, so keep the source dir for the signals.
         let dir = job.src_dir().to_path_buf();
         match job.commit() {
-            Ok(CommitOutcome::Committed(keyid)) =>
-                // The job finished successfully
-                Self::job_finished(emitter, jobid, &dir, keyid.to_string()).await,
+            Ok(CommitOutcome::Committed(keyid)) => {
+                // The job finished successfully.
+                // Remove the old (unencrypted) data in a separate thread since
+                // it can take minutes and block the D-Bus interface.
+                let (dir2, keyid2) = (dir.clone(), keyid.clone());
+                tokio::task::spawn_blocking(move || {
+                    if let Err(e) = purge_trash(&dir2, &keyid2) {
+                        eprintln!("Warning: failed to remove the old data: {e}");
+                    }
+                });
+                Self::job_finished(emitter, jobid, &dir, keyid.to_string()).await
+            },
             Ok(CommitOutcome::Deferred(job)) => {
                 // The user is still logged in. Schedule a retry.
                 let job = Arc::new(job);

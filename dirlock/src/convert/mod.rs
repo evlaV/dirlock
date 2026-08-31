@@ -122,7 +122,13 @@ pub fn convert_dir(dir: &Path, protector: &Protector, protector_key: ProtectorKe
         }
         println!();
         match job.commit()? {
-            CommitOutcome::Committed(id) => return Ok(id),
+            CommitOutcome::Committed(id) => {
+                // The conversion succeeded, let's remove the old (unencrypted) data
+                if let Err(e) = purge_trash(dir, &id) {
+                    eprintln!("Warning: failed to remove the old data: {e}");
+                }
+                return Ok(id);
+            }
             CommitOutcome::Restarted(j) => {
                 // The user logged in during the conversion, so the job had
                 // to be restarted to ensure that all new changes are sync'ed.
@@ -483,7 +489,9 @@ impl ConvertJob {
         }
 
         // Pre-flush dirty pages outside the global lock
-        // so later we only have to do it for the rename part
+        // so later we only have to do it for the rename part.
+        // This should be quick since `cloner` has already
+        // called `syncfs()` before us.
         let syncfd = fs::File::open(&self.dirs.base)?;
         _ = nix::unistd::syncfs(syncfd.as_raw_fd());
 
@@ -550,18 +558,9 @@ impl ConvertJob {
         }
         drop(db);
 
-        // Now we can remove the trashed workdir outside the lock.
-        if let Err(e) = fs::remove_dir_all(&trash_target) {
-            if e.kind() != ErrorKind::NotFound {
-                eprintln!("Warning: failed to remove workdir: {e}");
-            }
-        }
-
-        // And we can finally remove the base dir
-        if let Ok(lock) = GlobalLockFile::new() {
-            ConvertJob::try_remove_base_dirs(&self.dirs.base, &lock);
-        }
-
+        // The original data is trashed, but removing it can take minutes.
+        // In order to keep this commit() operation short return now
+        // and leave it up to the caller to call purge_trash().
         Ok(CommitOutcome::Committed(self.keyid))
     }
 }
@@ -706,6 +705,29 @@ pub fn cleanup(dir: &Path) -> Result<usize> {
     }
 
     Ok(count)
+}
+
+/// Remove the old data that a successful conversion job left behind.
+/// We're not doing this as part of [`ConvertJob::commit()`] since it
+/// can take a long time and we want the commit operation to be quick.
+/// `keyid` is the value returned by the `commit()` call, so only the
+/// old data from that job is actually removed.
+///
+/// The caller should use this function when it can afford to block.
+/// This function can be interrupted and called multiple times safely.
+pub fn purge_trash(dir: &Path, keyid: &PolicyKeyId) -> Result<()> {
+    let mntpoint = get_mountpoint(&dir.canonicalize()?)?;
+    let base = mntpoint.join(ConvertJob::BASEDIR);
+    let trashdir = base.join(ConvertJob::TRASHDIR);
+    if let Err(e) = remove_file_or_dir(&trashdir.join(keyid.to_string())) {
+        if e.kind() != ErrorKind::NotFound {
+            return Err(e.into());
+        }
+    }
+    if let Ok(lock) = GlobalLockFile::new() {
+        ConvertJob::try_remove_base_dirs(&base, &lock);
+    }
+    Ok(())
 }
 
 /// Remove stale conversion entries across all mounted filesystems.
