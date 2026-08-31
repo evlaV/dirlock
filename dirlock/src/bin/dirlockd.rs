@@ -909,9 +909,7 @@ async fn serve_daemon<'a>(
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dirlock::init()?;
-    if let Err(e) = dirlock::convert::cleanup_all() {
-        eprintln!("Warning: failed to clean up stale conversion entries: {e}");
-    }
+
     let (tx, mut rx) = mpsc::channel::<Event>(2);
     let daemon = DirlockDaemon {
         jobs: HashMap::new(),
@@ -928,6 +926,13 @@ async fn main() -> anyhow::Result<()> {
 
     let mut sigquit = signal(SignalKind::quit())?;
     let mut sigterm = signal(SignalKind::terminate())?;
+
+    // This can take a while, so run it in a separate thread
+    tokio::task::spawn_blocking(|| {
+        if let Err(e) = dirlock::convert::cleanup_all() {
+            eprintln!("Warning: failed to clean up stale conversion entries: {e}");
+        }
+    });
 
     loop {
         let r = tokio::select! {
