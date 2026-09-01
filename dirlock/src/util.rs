@@ -10,7 +10,7 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io::ErrorKind;
 use std::fs::{File, OpenOptions};
-use std::os::fd::{AsRawFd, FromRawFd};
+use std::os::fd::{AsFd, AsRawFd, FromRawFd};
 use std::os::unix::fs::{self, MetadataExt};
 use std::path::{Path, PathBuf};
 use zeroize::Zeroizing;
@@ -181,6 +181,19 @@ impl Statx {
         };
         if ret != 0 {
             bail!("statx({}) failed: {}", path.to_string_lossy(), std::io::Error::last_os_error());
+        }
+        Ok(Statx { stx })
+    }
+
+    /// Call statx(2) on this fd
+    pub fn from_fd(fd: &impl AsFd) -> Result<Self> {
+        use statx_sys::*;
+        let mut stx : statx = unsafe { std::mem::zeroed() };
+        let ret = unsafe {
+            statx(fd.as_fd().as_raw_fd(), c"".as_ptr(), AT_EMPTY_PATH, 0, &raw mut stx)
+        };
+        if ret != 0 {
+            bail!("statx() failed: {}", std::io::Error::last_os_error());
         }
         Ok(Statx { stx })
     }
