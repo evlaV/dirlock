@@ -172,9 +172,10 @@ pub fn get_policy(dir: &Path) -> Result<Option<Policy>> {
         // We use statx(2) to see if that's the case.
         Err(fscrypt::Error::NotSupported | fscrypt::Error::NotEnabled) => {
             let fd = std::fs::File::open(dir)?;
-            match util::Statx::from_fd(&fd) {
-                Ok(s) if !s.is_encrypted() => Ok(None),
-                _ => Err(anyhow!("Encryption not enabled in the filesystem or in the kernel"))
+            if util::Statx::from_fd(&fd)?.is_encrypted() {
+                Err(anyhow!("Encryption not enabled in the filesystem or in the kernel"))
+            } else {
+                Ok(None)
             }
         }
         Err(e) => Err(e.into()),
