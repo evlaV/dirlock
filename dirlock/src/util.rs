@@ -200,7 +200,8 @@ impl Statx {
 
     /// Check if the path is encrypted
     pub fn is_encrypted(&self) -> bool {
-        self.stx.stx_attributes & (statx_sys::STATX_ATTR_ENCRYPTED as u64) != 0
+        let flag = statx_sys::STATX_ATTR_ENCRYPTED as u64;
+        self.stx.stx_attributes_mask & self.stx.stx_attributes & flag != 0
     }
 
     /// Check if both paths are in the same filesystem
