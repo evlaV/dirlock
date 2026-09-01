@@ -170,11 +170,13 @@ pub fn get_policy(dir: &Path) -> Result<Option<Policy>> {
         // This can mean that the directory is encrypted but the kernel
         // is old or does not have encryption enabled.
         // We use statx(2) to see if that's the case.
-        Err(fscrypt::Error::NotSupported | fscrypt::Error::NotEnabled) => {
+        Err(e @ (fscrypt::Error::NotSupported | fscrypt::Error::NotEnabled)) => {
             let fd = std::fs::File::open(dir)?;
             if util::Statx::from_fd(&fd)?.is_encrypted() {
-                Err(anyhow!("Encryption not enabled in the filesystem or in the kernel"))
+                // The directory is encrypted but we cannot read the policy
+                Err(e.into())
             } else {
+                // The directory is not encrypted
                 Ok(None)
             }
         }
