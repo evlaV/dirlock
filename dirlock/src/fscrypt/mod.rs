@@ -13,10 +13,8 @@ use num_enum::{FromPrimitive, TryFromPrimitive};
 use serde::{Serialize, Deserialize};
 use serde_with::{serde_as, hex::Hex};
 use std::{
-    fs::File,
     mem,
-    os::fd::AsRawFd,
-    path::Path,
+    os::fd::{AsFd, AsRawFd},
 };
 use zeroize::Zeroize;
 
@@ -260,12 +258,10 @@ mod ioctl {
 }
 
 /// Add an encryption key to the kernel for a given filesystem
-pub fn add_key(dir: &Path, key: &[u8]) -> Result<PolicyKeyId> {
+pub fn add_key(mntpoint_fd: &impl AsFd, key: &[u8]) -> Result<PolicyKeyId> {
     if key.is_empty() || key.len() > MAX_KEY_SIZE {
         return Err(Error::InvalidPolicy);
     }
-
-    let fd = File::open(dir)?;
 
     let mut arg : fscrypt_add_key_arg_full = unsafe { mem::zeroed() };
     arg.key_spec.type_ = FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER;
@@ -274,7 +270,7 @@ pub fn add_key(dir: &Path, key: &[u8]) -> Result<PolicyKeyId> {
     arg.flags = 0;
     arg.raw[..key.len()].copy_from_slice(key);
 
-    let raw_fd = fd.as_raw_fd();
+    let raw_fd = mntpoint_fd.as_fd().as_raw_fd();
     let argptr = &raw mut arg as *mut fscrypt_add_key_arg;
     match unsafe { ioctl::fscrypt_add_key(raw_fd, argptr) } {
         Err(x) => Err(Error::from(x)),
@@ -283,14 +279,12 @@ pub fn add_key(dir: &Path, key: &[u8]) -> Result<PolicyKeyId> {
 }
 
 /// Remove an encryption key from the kernel for a given filesystem
-pub fn remove_key(dir: &Path, keyid: &PolicyKeyId, user: RemoveKeyUsers) -> Result<RemovalStatusFlags> {
-    let fd = File::open(dir)?;
-
+pub fn remove_key(mntpoint_fd: &impl AsFd, keyid: &PolicyKeyId, user: RemoveKeyUsers) -> Result<RemovalStatusFlags> {
     let mut arg : fscrypt_remove_key_arg = unsafe { mem::zeroed() };
     arg.key_spec.type_ = FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER;
     arg.key_spec.u.identifier = keyid.0;
 
-    let raw_fd = fd.as_raw_fd();
+    let raw_fd = mntpoint_fd.as_fd().as_raw_fd();
     let argptr = &raw mut arg;
     match user {
         RemoveKeyUsers::CurrentUser => unsafe { ioctl::fscrypt_remove_key(raw_fd, argptr) },
@@ -308,13 +302,11 @@ pub fn remove_key(dir: &Path, keyid: &PolicyKeyId, user: RemoveKeyUsers) -> Resu
 /// If the kernel does not have encryption enabled but callers still want to know
 /// if the directory is actually encrypted, they must handle it themselves
 /// (e.g. by using `statx(2)` and checking the `STATX_ATTR_ENCRYPTED` attribute).
-pub fn get_policy(dir: &Path) -> Result<Option<Policy>> {
-    let fd = File::open(dir)?;
-
+pub fn get_policy(dir_fd: &impl AsFd) -> Result<Option<Policy>> {
     let mut arg : fscrypt_get_policy_ex_arg = unsafe { mem::zeroed() };
     arg.policy_size = mem::size_of::<fscrypt_policy>() as u64;
 
-    let raw_fd = fd.as_raw_fd();
+    let raw_fd = dir_fd.as_fd().as_raw_fd();
     let argptr = &raw mut arg as *mut fscrypt_get_policy_ex_arg_ioctl;
     match unsafe { ioctl::fscrypt_get_policy_ex(raw_fd, argptr) } {
         Err(Errno::ENODATA) => Ok(None),
@@ -324,9 +316,7 @@ pub fn get_policy(dir: &Path) -> Result<Option<Policy>> {
 }
 
 /// Enable encryption on a directory by setting a new [`Policy`]
-pub fn set_policy(dir: &Path, keyid: &PolicyKeyId) -> Result<()> {
-    let fd = File::open(dir)?;
-
+pub fn set_policy(dir_fd: &impl AsFd, keyid: &PolicyKeyId) -> Result<()> {
     let mut arg = fscrypt_policy_v2 {
         version : FSCRYPT_POLICY_V2,
         contents_encryption_mode : FSCRYPT_MODE_AES_256_XTS,
@@ -337,7 +327,7 @@ pub fn set_policy(dir: &Path, keyid: &PolicyKeyId) -> Result<()> {
         master_key_identifier : keyid.0
     };
 
-    let raw_fd = fd.as_raw_fd();
+    let raw_fd = dir_fd.as_fd().as_raw_fd();
     let argptr = &raw mut arg as *mut fscrypt_policy_v1;
     match unsafe { ioctl::fscrypt_set_policy(raw_fd, argptr) } {
         Err(x) => Err(Error::from(x)),
@@ -346,14 +336,12 @@ pub fn set_policy(dir: &Path, keyid: &PolicyKeyId) -> Result<()> {
 }
 
 /// Check if a key with the given [`PolicyKeyId`] is loaded into the kernel for a given filesystem
-pub fn get_key_status(dir: &Path, keyid: &PolicyKeyId) -> Result<(KeyStatus, KeyStatusFlags)> {
-    let fd = File::open(dir)?;
-
+pub fn get_key_status(mntpoint_fd: &impl AsFd, keyid: &PolicyKeyId) -> Result<(KeyStatus, KeyStatusFlags)> {
     let mut arg : fscrypt_get_key_status_arg = unsafe { mem::zeroed() };
     arg.key_spec.type_ = FSCRYPT_KEY_SPEC_TYPE_IDENTIFIER;
     arg.key_spec.u.identifier = keyid.0;
 
-    let raw_fd = fd.as_raw_fd();
+    let raw_fd = mntpoint_fd.as_fd().as_raw_fd();
     let argptr = &raw mut arg;
     unsafe { ioctl::fscrypt_get_key_status(raw_fd, argptr) }.map_err(Error::from)?;
 
@@ -369,7 +357,8 @@ pub fn get_key_status(dir: &Path, keyid: &PolicyKeyId) -> Result<(KeyStatus, Key
 mod tests {
     use super::*;
     use rand::{RngCore, rngs::OsRng};
-    use std::path::PathBuf;
+    use std::fs::File;
+    use std::path::{Path, PathBuf};
 
     type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -408,9 +397,11 @@ mod tests {
     #[test]
     fn test_add_key() -> Result<()> {
         fn do_test_key(key: &[u8], mntpoint: &Path) -> Result<()> {
+            let mntpoint_fd = File::open(mntpoint)?;
             // Create a temporary directory and check that it's not encrypted
             let workdir = tempdir::TempDir::new_in(mntpoint, "encrypted")?;
-            if get_policy(workdir.as_ref())?.is_some() {
+            let workdir_fd = File::open(workdir.path())?;
+            if get_policy(&workdir_fd)?.is_some() {
                 panic!("Found policy where none was expected")
             };
 
@@ -418,30 +409,30 @@ mod tests {
             let id = PolicyKeyId::new_from_key(key);
 
             // Check that the key is absent from the filesystem
-            let (status, _) = get_key_status(mntpoint, &id)?;
+            let (status, _) = get_key_status(&mntpoint_fd, &id)?;
             assert_eq!(status, KeyStatus::Absent);
 
             // Add the key to the filesystem, check the ID and its presence
-            let new_id = add_key(mntpoint, key)?;
+            let new_id = add_key(&mntpoint_fd, key)?;
             assert!(new_id == id);
-            let (status, flags) = get_key_status(mntpoint, &id)?;
+            let (status, flags) = get_key_status(&mntpoint_fd, &id)?;
             assert_eq!(status, KeyStatus::Present);
             assert!(flags.contains(KeyStatusFlags::AddedBySelf));
 
             // Encrypt the directory and check the new status
-            set_policy(workdir.as_ref(), &id)?;
-            match get_policy(workdir.as_ref())? {
+            set_policy(&workdir_fd, &id)?;
+            match get_policy(&workdir_fd)? {
                 Some(Policy::V2(x)) if x.keyid == id => (),
                 _ => panic!("Could not find the expected policy")
             };
 
             // Remove the key from the filesystem and check that it's absent
-            remove_key(mntpoint, &id, RemoveKeyUsers::CurrentUser)?;
-            let (status, _) = get_key_status(mntpoint, &id)?;
+            remove_key(&mntpoint_fd, &id, RemoveKeyUsers::CurrentUser)?;
+            let (status, _) = get_key_status(&mntpoint_fd, &id)?;
             assert_eq!(status, KeyStatus::Absent);
 
             // Check again that the directory is still encrypted
-            match get_policy(workdir.as_ref())? {
+            match get_policy(&workdir_fd)? {
                 Some(Policy::V2(x)) if x.keyid == id => Ok(()),
                 _ => panic!("Could not find the expected policy")
             }
@@ -485,13 +476,14 @@ mod tests {
     #[test]
     fn test_policy_too_large() -> Result<()> {
         let Some(mntpoint) = mntpoint() else { return Ok(()) };
+        let mntpoint_fd = File::open(&mntpoint)?;
         let workdir = tempdir::TempDir::new_in(&mntpoint, "encrypted")?;
-        let fd = File::open(workdir.path())?;
+        let workdir_fd = File::open(workdir.path())?;
 
         // Encrypt the directory with a new key
-        let id = add_key(&mntpoint, &random_key(MAX_KEY_SIZE))?;
-        set_policy(workdir.path(), &id)?;
-        remove_key(&mntpoint, &id, RemoveKeyUsers::CurrentUser)?;
+        let id = add_key(&mntpoint_fd, &random_key(MAX_KEY_SIZE))?;
+        set_policy(&workdir_fd, &id)?;
+        remove_key(&mntpoint_fd, &id, RemoveKeyUsers::CurrentUser)?;
 
         // Get the policy in a buffer that is too small.
         // Use the ioctl because get_policy() never uses invalid values.
@@ -499,7 +491,7 @@ mod tests {
         arg.policy_size = 1u64;
         let argptr = &raw mut arg as *mut fscrypt_get_policy_ex_arg_ioctl;
         let result = unsafe {
-            ioctl::fscrypt_get_policy_ex(fd.as_raw_fd(), argptr)
+            ioctl::fscrypt_get_policy_ex(workdir_fd.as_raw_fd(), argptr)
         };
         assert!(matches!(Error::from(result.unwrap_err()), Error::PolicyTooLarge));
 
@@ -509,21 +501,22 @@ mod tests {
     #[test]
     fn test_already_encrypted() -> Result<()> {
         let Some(mntpoint) = mntpoint() else { return Ok(()) };
+        let mntpoint_fd = File::open(&mntpoint)?;
         let workdir = tempdir::TempDir::new_in(&mntpoint, "encrypted")?;
+        let workdir_fd = File::open(workdir.path())?;
 
-        let id1 = add_key(&mntpoint, &random_key(MAX_KEY_SIZE))?;
-        let id2 = add_key(&mntpoint, &random_key(MAX_KEY_SIZE))?;
-        set_policy(workdir.path(), &id1)?;
-        assert!(matches!(set_policy(workdir.path(), &id2), Err(Error::AlreadyEncrypted)));
+        let id1 = add_key(&mntpoint_fd, &random_key(MAX_KEY_SIZE))?;
+        let id2 = add_key(&mntpoint_fd, &random_key(MAX_KEY_SIZE))?;
+        set_policy(&workdir_fd, &id1)?;
+        assert!(matches!(set_policy(&workdir_fd, &id2), Err(Error::AlreadyEncrypted)));
 
-        remove_key(&mntpoint, &id1, RemoveKeyUsers::CurrentUser)?;
-        remove_key(&mntpoint, &id2, RemoveKeyUsers::CurrentUser)?;
+        remove_key(&mntpoint_fd, &id1, RemoveKeyUsers::CurrentUser)?;
+        remove_key(&mntpoint_fd, &id2, RemoveKeyUsers::CurrentUser)?;
         Ok(())
     }
 
     #[test]
     fn test_permission_denied() -> Result<()> {
-        use std::os::unix::fs::PermissionsExt;
         let Some(mntpoint) = mntpoint() else { return Ok(()) };
 
         // This tests requires root: it creates a directory owned by root
@@ -534,13 +527,13 @@ mod tests {
 
         let id = PolicyKeyId::new_from_key(&random_key(MAX_KEY_SIZE));
 
-        // Directory owned by root, accessible to other users
+        // Directory owned by root
         let workdir = tempdir::TempDir::new_in(&mntpoint, "encrypted")?;
-        std::fs::set_permissions(workdir.path(), std::fs::Permissions::from_mode(0o777))?;
+        let workdir_fd = File::open(workdir.path())?;
 
         // Drop privileges and try to set the key
         setresuid(65534);
-        let result = set_policy(workdir.path(), &id);
+        let result = set_policy(&workdir_fd, &id);
         setresuid(0);
 
         assert!(matches!(result, Err(Error::PermissionDenied)));
@@ -549,11 +542,10 @@ mod tests {
 
     #[test]
     fn test_key_not_found() -> Result<()> {
-        use std::os::unix::fs::PermissionsExt;
         let Some(mntpoint) = mntpoint() else { return Ok(()) };
 
         let workdir = tempdir::TempDir::new_in(&mntpoint, "encrypted")?;
-        std::fs::set_permissions(workdir.path(), std::fs::Permissions::from_mode(0o755))?;
+        let workdir_fd = File::open(workdir.path())?;
 
         let id = PolicyKeyId::new_from_key(&random_key(MAX_KEY_SIZE));
 
@@ -564,10 +556,10 @@ mod tests {
         let is_root = nix::unistd::getuid().is_root();
         if is_root {
             let nobody = nix::unistd::Uid::from_raw(65534);
-            nix::unistd::chown(workdir.path(), Some(nobody), None)?;
+            nix::unistd::fchown(workdir_fd.as_raw_fd(), Some(nobody), None)?;
             setresuid(65534);
         }
-        let result = set_policy(workdir.path(), &id);
+        let result = set_policy(&workdir_fd, &id);
         if is_root {
             setresuid(0);
         }
@@ -583,9 +575,10 @@ mod tests {
         let workdir = tempdir::TempDir::new_in(&mntpoint, "encrypted")?;
         let file = workdir.path().join("file");
         std::fs::write(&file, b"")?;
+        let fd = File::open(file)?;
 
         let id = PolicyKeyId::new_from_key(&random_key(MAX_KEY_SIZE));
-        assert!(matches!(set_policy(&file, &id), Err(Error::NotADirectory)));
+        assert!(matches!(set_policy(&fd, &id), Err(Error::NotADirectory)));
         Ok(())
     }
 
@@ -594,39 +587,36 @@ mod tests {
         let Some(mntpoint) = mntpoint() else { return Ok(()) };
 
         let workdir = tempdir::TempDir::new_in(&mntpoint, "encrypted")?;
+        let workdir_fd = File::open(workdir.path())?;
         std::fs::write(workdir.path().join("file"), b"")?;
 
         let id = PolicyKeyId::new_from_key(&random_key(MAX_KEY_SIZE));
-        assert!(matches!(set_policy(workdir.path(), &id), Err(Error::DirectoryNotEmpty)));
-        Ok(())
-    }
-
-    #[test]
-    fn test_io_error() -> Result<()> {
-        let result = get_policy(Path::new("/nonexistent"));
-        assert!(matches!(result, Err(Error::Io(_))));
+        assert!(matches!(set_policy(&workdir_fd, &id), Err(Error::DirectoryNotEmpty)));
         Ok(())
     }
 
     #[test]
     fn test_no_encryption_supported() -> Result<()> {
-        let mntpoint = std::path::Path::new("/tmp");
+        let mntpoint = Path::new("/tmp");
         let workdir = tempdir::TempDir::new_in(mntpoint, "encrypted")?;
+
+        let mntpoint_fd = File::open(mntpoint)?;
+        let workdir_fd = File::open(workdir.path())?;
 
         // We're using /tmp in this test instead of $DIRLOCK_TEST_FS.
         // We expect it to be a tmpfs so it should return NotSupported.
         assert!(
-            matches!(get_policy(workdir.path()), Err(Error::NotSupported)),
+            matches!(get_policy(&workdir_fd), Err(Error::NotSupported)),
             "This test requires /tmp to be a tmpfs"
         );
 
         let key = random_key(MAX_KEY_SIZE);
         let id = PolicyKeyId::new_from_key(&key);
 
-        assert!(matches!(add_key(mntpoint, &key), Err(Error::NotSupported)));
-        assert!(matches!(set_policy(workdir.path(), &id), Err(Error::NotSupported)));
-        assert!(matches!(get_key_status(mntpoint, &id), Err(Error::NotSupported)));
-        assert!(matches!(remove_key(mntpoint, &id, RemoveKeyUsers::CurrentUser), Err(Error::NotSupported)));
+        assert!(matches!(add_key(&mntpoint_fd, &key), Err(Error::NotSupported)));
+        assert!(matches!(set_policy(&workdir_fd, &id), Err(Error::NotSupported)));
+        assert!(matches!(get_key_status(&mntpoint_fd, &id), Err(Error::NotSupported)));
+        assert!(matches!(remove_key(&mntpoint_fd, &id, RemoveKeyUsers::CurrentUser), Err(Error::NotSupported)));
 
         Ok(())
     }

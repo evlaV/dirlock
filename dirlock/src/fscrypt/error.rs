@@ -30,8 +30,6 @@ pub enum Error {
     InvalidWrappedKey,
     /// The encryption policy or key is invalid or unsupported (EINVAL)
     InvalidPolicy,
-    /// An I/O error occurred (e.g., failed to open the directory)
-    Io(std::io::Error),
     /// The encryption key is not available (ENOKEY)
     KeyNotFound,
     /// The key was rejected because it had the wrong type (EKEYREJECTED)
@@ -68,7 +66,6 @@ impl Error {
             Error::DirectoryNotEmpty   => Errno::ENOTEMPTY,
             Error::InvalidWrappedKey   => Errno::EBADMSG,
             Error::InvalidPolicy       => Errno::EINVAL,
-            Error::Io(e)               => e.raw_os_error().map_or(Errno::EIO, Errno::from_raw),
             Error::KeyNotFound         => Errno::ENOKEY,
             Error::KeyRejected         => Errno::EKEYREJECTED,
             Error::NotADirectory       => Errno::ENOTDIR,
@@ -90,7 +87,6 @@ impl std::fmt::Display for Error {
         match self {
             Error::AlreadyEncrypted    => write!(f, "Already encrypted with a different key"),
             Error::InvalidPolicy       => write!(f, "Invalid or unsupported encryption policy"),
-            Error::Io(e)               => e.fmt(f),
             Error::NotEnabled          => write!(f, "Encryption not enabled in the filesystem or in the kernel"),
             Error::NotPermitted        => write!(f, "This directory cannot be encrypted"),
             Error::NotSupported        => write!(f, "This filesystem does not support encryption"),
@@ -104,21 +100,7 @@ impl std::fmt::Display for Error {
     }
 }
 
-impl std::error::Error for Error {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Error::Io(e) => Some(e),
-            _ => None,
-        }
-    }
-}
-
-/// Create an fscrypt error from a standard library's I/O error
-impl From<std::io::Error> for Error {
-    fn from(e: std::io::Error) -> Self {
-        Error::Io(e)
-    }
-}
+impl std::error::Error for Error {}
 
 /// Create an fscrypt error from the returned values of the fscrypt ioctls
 impl From<Errno> for Error {
@@ -140,7 +122,7 @@ impl From<Errno> for Error {
             Errno::EROFS        => Error::ReadOnly,
             // According to the kernel fscrypt documentation we should
             // not get any other error type, so we treat everything else
-            // as unknown. Note that this includes EIO and EPROTO.
+            // as unknown. Note that this includes EPROTO.
             // We return those in Error::errno(), but they are synthetic
             // values set by us, not something that the fscrypt ioctls
             // are expected to return.

@@ -40,6 +40,7 @@ use protector::{
     opts::ProtectorOpts
 };
 use recovery::RecoveryKey;
+use std::fs::File;
 use std::path::{Path, PathBuf};
 
 /// Whether a user is connecting locally or remotely
@@ -150,28 +151,31 @@ pub struct EncryptedDir {
 /// Add an encryption key to the kernel for a given filesystem.
 /// Resolves the mountpoint from `dir`.
 pub fn add_key(dir: &Path, key: &[u8]) -> Result<PolicyKeyId> {
-    let mnt = util::get_mountpoint(dir)
+    let fd = util::get_mountpoint(dir)
+        .and_then(File::open)
         .map_err(|e| anyhow!("Error opening {}: {e}", dir.display()))?;
-    Ok(fscrypt::add_key(&mnt, key)?)
+    Ok(fscrypt::add_key(&fd, key)?)
 }
 
 /// Remove an encryption key from the kernel for a given filesystem.
 /// Resolves the mountpoint from `dir`.
 pub fn remove_key(dir: &Path, keyid: &PolicyKeyId, user: RemoveKeyUsers) -> Result<RemovalStatusFlags> {
-    let mnt = util::get_mountpoint(dir)
+    let fd = util::get_mountpoint(dir)
+        .and_then(File::open)
         .map_err(|e| anyhow!("Error opening {}: {e}", dir.display()))?;
-    Ok(fscrypt::remove_key(&mnt, keyid, user)?)
+    Ok(fscrypt::remove_key(&fd, keyid, user)?)
 }
 
 /// Check if a directory is encrypted and return its encryption policy
 pub fn get_policy(dir: &Path) -> Result<Option<Policy>> {
-    match fscrypt::get_policy(dir) {
+    let fd = File::open(dir)
+        .map_err(|e| anyhow!("Error opening {}: {e}", dir.display()))?;
+    match fscrypt::get_policy(&fd) {
         Ok(p) => Ok(p),
         // This can mean that the directory is encrypted but the kernel
         // is old or does not have encryption enabled.
         // We use statx(2) to see if that's the case.
         Err(e @ (fscrypt::Error::NotSupported | fscrypt::Error::NotEnabled)) => {
-            let fd = std::fs::File::open(dir)?;
             if util::Statx::from_fd(&fd)?.is_encrypted() {
                 // The directory is encrypted but we cannot read the policy
                 Err(e.into())
@@ -186,15 +190,18 @@ pub fn get_policy(dir: &Path) -> Result<Option<Policy>> {
 
 /// Enable encryption on a directory by setting a new policy
 pub fn set_policy(dir: &Path, keyid: &PolicyKeyId) -> Result<()> {
-    Ok(fscrypt::set_policy(dir, keyid)?)
+    let fd = File::open(dir)
+        .map_err(|e| anyhow!("Error opening {}: {e}", dir.display()))?;
+    Ok(fscrypt::set_policy(&fd, keyid)?)
 }
 
 /// Check if an encryption key is loaded into the kernel for a given filesystem.
 /// Resolves the mountpoint from `dir`.
 pub fn get_key_status(dir: &Path, keyid: &PolicyKeyId) -> Result<(KeyStatus, KeyStatusFlags)> {
-    let mnt = util::get_mountpoint(dir)
+    let fd = util::get_mountpoint(dir)
+        .and_then(File::open)
         .map_err(|e| anyhow!("Error opening {}: {e}", dir.display()))?;
-    Ok(fscrypt::get_key_status(&mnt, keyid)?)
+    Ok(fscrypt::get_key_status(&fd, keyid)?)
 }
 
 /// Gets the encryption status of a directory.
@@ -562,7 +569,7 @@ mod tests {
         // This expects /tmp to be a tmpfs, so no encryption is supported
         let dir = TempDir::new_in("/tmp", "no-encryption")?;
         // Using fscrypt::get_policy() returns an error
-        let policy = fscrypt::get_policy(dir.path());
+        let policy = fscrypt::get_policy(&File::open(dir.path())?);
         assert!(matches!(policy, Err(fscrypt::Error::NotSupported)),
                 "This test requires /tmp to be a tmpfs"
         );
