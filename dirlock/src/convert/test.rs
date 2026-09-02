@@ -244,6 +244,7 @@ fn test_cancel_and_resume() -> Result<()> {
 
     // Start a conversion job, then cancel it
     let job = ConvertJob::start(path, &protector, protector_key.clone(), &ks)?;
+    let workdir = job.workdir.clone();
     job.cancel()?;
     drop(job);
 
@@ -254,8 +255,15 @@ fn test_cancel_and_resume() -> Result<()> {
     // Check the conversion status
     assert!(matches!(conversion_status(path)?, ConversionStatus::Interrupted(_)));
 
+    // A job that died while deferred leaves its flag behind, but if no one holds
+    // the lock the conversion is interrupted regardless of the flag.
+    ConvertJob::create_flag(&workdir, ConvertJob::DEFERRED)?;
+    assert!(matches!(conversion_status(path)?, ConversionStatus::Interrupted(_)));
+
     // Start the job again, but let it finish this time
     let job = ConvertJob::start(path, &protector, protector_key, &ks)?;
+    // This removes the deferred flag and the job is listed as ongoing
+    assert!(!ConvertJob::flag_exists(&job.workdir, ConvertJob::DEFERRED));
     assert!(matches!(conversion_status(path)?, ConversionStatus::Ongoing(_)));
     assert!(matches!(commit_and_clean(job)?, CommitOutcome::Committed(_)));
 
@@ -506,12 +514,12 @@ fn test_mark_dirty_restarts_commit() -> Result<()> {
 
     // Start the conversion. No dirty flag yet
     let job = ConvertJob::start(path, &protector, protector_key, &ks)?;
-    assert!(!ConvertJob::dirty_flag_exists(&job.workdir));
+    assert!(!ConvertJob::flag_exists(&job.workdir, ConvertJob::DIRTY));
 
     // Wait for the copy to finish, then mark the conversion dirty
     job.wait()?;
     assert!(ConvertJob::mark_dirty(path)?);
-    assert!(ConvertJob::dirty_flag_exists(&job.workdir));
+    assert!(ConvertJob::flag_exists(&job.workdir, ConvertJob::DIRTY));
 
     // Modify the original file, add a new one and remove gone.txt
     std::fs::write(path.join("file.txt"), "goodbye")?;
@@ -533,7 +541,7 @@ fn test_mark_dirty_restarts_commit() -> Result<()> {
     clear_injected();
 
     // The restart cleared the flag, now the conversion can complete
-    assert!(!ConvertJob::dirty_flag_exists(&job.workdir));
+    assert!(!ConvertJob::flag_exists(&job.workdir, ConvertJob::DIRTY));
     assert!(matches!(commit_and_clean(job)?, CommitOutcome::Committed(_)));
 
     // The encrypted directory contains the modified file
@@ -636,14 +644,18 @@ fn test_dirty_conversion_is_deferred() -> Result<()> {
         bail!("expected the conversion to be deferred");
     };
     crate::ensure_unencrypted(path, &ks)?;
-    assert!(ConvertJob::dirty_flag_exists(&job.workdir));
+    assert!(ConvertJob::flag_exists(&job.workdir, ConvertJob::DIRTY));
+    assert!(ConvertJob::flag_exists(&job.workdir, ConvertJob::DEFERRED));
+    assert!(matches!(conversion_status(path)?, ConversionStatus::Deferred(_)));
 
     // Same result, no matter how often we try
     let CommitOutcome::Deferred(job) = job.commit()? else {
         bail!("expected the conversion to be deferred");
     };
     crate::ensure_unencrypted(path, &ks)?;
-    assert!(ConvertJob::dirty_flag_exists(&job.workdir));
+    assert!(ConvertJob::flag_exists(&job.workdir, ConvertJob::DIRTY));
+    assert!(ConvertJob::flag_exists(&job.workdir, ConvertJob::DEFERRED));
+    assert!(matches!(conversion_status(path)?, ConversionStatus::Deferred(_)));
 
     // The owner logs out: commit() now restarts the copy
     inject(Injected::UserManagerActive(false));
@@ -651,8 +663,10 @@ fn test_dirty_conversion_is_deferred() -> Result<()> {
         bail!("expected the conversion to be restarted after logout");
     };
 
-    // The dirty flag is now gone
-    assert!(!ConvertJob::dirty_flag_exists(&job.workdir));
+    // The dirty and deferred flags are now gone
+    assert!(!ConvertJob::flag_exists(&job.workdir, ConvertJob::DIRTY));
+    assert!(!ConvertJob::flag_exists(&job.workdir, ConvertJob::DEFERRED));
+    assert!(matches!(conversion_status(path)?, ConversionStatus::Ongoing(_)));
 
     // The owner logs in again before the restart finishes: the job must
     // defer once more rather than complete.
@@ -662,14 +676,18 @@ fn test_dirty_conversion_is_deferred() -> Result<()> {
         bail!("expected the conversion to be deferred after the second login");
     };
     crate::ensure_unencrypted(path, &ks)?;
-    assert!(ConvertJob::dirty_flag_exists(&job.workdir));
+    assert!(ConvertJob::flag_exists(&job.workdir, ConvertJob::DIRTY));
+    assert!(ConvertJob::flag_exists(&job.workdir, ConvertJob::DEFERRED));
+    assert!(matches!(conversion_status(path)?, ConversionStatus::Deferred(_)));
 
     // The owner logs out for good: commit() restarts once more
     inject(Injected::UserManagerActive(false));
     let CommitOutcome::Restarted(job) = job.commit()? else {
         bail!("expected the conversion to be restarted after the second logout");
     };
-    assert!(!ConvertJob::dirty_flag_exists(&job.workdir));
+    assert!(!ConvertJob::flag_exists(&job.workdir, ConvertJob::DIRTY));
+    assert!(!ConvertJob::flag_exists(&job.workdir, ConvertJob::DEFERRED));
+    assert!(matches!(conversion_status(path)?, ConversionStatus::Ongoing(_)));
 
     // Now the job can complete successfully
     assert!(matches!(commit_and_clean(job)?, CommitOutcome::Committed(_)));

@@ -179,6 +179,7 @@ fn conversion_fields(status: &ConversionStatus) -> Option<(&'static str, &Policy
     match status {
         ConversionStatus::None => None,
         ConversionStatus::Ongoing(id) => Some(("ongoing", id)),
+        ConversionStatus::Deferred(id) => Some(("deferred", id)),
         ConversionStatus::Interrupted(id) => Some(("interrupted", id)),
     }
 }

@@ -61,8 +61,14 @@ pub struct ConvertJob {
 
 /// The conversion status of a given directory
 pub enum ConversionStatus {
+    /// No conversion for this directory
     None,
+    /// A live job is copying data
     Ongoing(PolicyKeyId),
+    /// A live job has copied the data but cannot commit yet because
+    /// the owner of the home directory is still logged in
+    Deferred(PolicyKeyId),
+    /// No live job, and the source is still unencrypted
     Interrupted(PolicyKeyId),
 }
 
@@ -163,6 +169,7 @@ impl ConvertJob {
     const ENCRYPTED : &str = "encrypted";
     const DSTDIR : &str = "data";
     const DIRTY : &str = "dirty";
+    const DEFERRED : &str = "deferred";
     const TRASHDIR : &str = ".trash";
 
     /// This canonicalizes the source dir and returns [`SrcDirData`]
@@ -209,9 +216,12 @@ impl ConvertJob {
         };
 
         // If the workdir lock can't be acquired there's a live job.
-        let mut lockfile = dirs.base.join(id.to_string());
-        lockfile.push(Self::LOCKFILE);
-        if let Ok(None) = LockFile::try_new(&lockfile) {
+        // A live job is deferred if it's waiting for the owner to log out.
+        let workdir = dirs.base.join(id.to_string());
+        if let Ok(None) = LockFile::try_new(&workdir.join(Self::LOCKFILE)) {
+            if Self::flag_exists(&workdir, Self::DEFERRED) {
+                return Ok(ConversionStatus::Deferred(id));
+            }
             return Ok(ConversionStatus::Ongoing(id));
         }
 
@@ -224,7 +234,6 @@ impl ConvertJob {
         // The directory is already encrypted: a previous commit()
         // completed the exchange but crashed before removing the db
         // entry. Move the leftover workdir into .trash and update the db.
-        let workdir = dirs.base.join(id.to_string());
         let trashdir = dirs.base.join(Self::TRASHDIR);
         let trash_target = trashdir.join(id.to_string());
         if create_dir_if_needed(&trashdir).is_ok() {
@@ -308,13 +317,17 @@ impl ConvertJob {
         if let Some(uid) = home_owner {
             let active = user_manager_active(uid).unwrap_or(true);
             if active {
-                Self::create_dirty_flag(&workdir)?;
+                Self::create_flag(&workdir, Self::DIRTY)?;
             }
         }
 
         // Check if the dirty flag is set (by the code above, or by a
         // previous run).
-        let verify_content = Self::dirty_flag_exists(&workdir);
+        let verify_content = Self::flag_exists(&workdir, Self::DIRTY);
+
+        // A job that crashed while deferred leaves its flag behind.
+        // This one is about to copy, so clear it.
+        Self::remove_flag(&workdir, Self::DEFERRED)?;
 
         // Release the global lock
         drop(db);
@@ -420,20 +433,25 @@ impl ConvertJob {
         Ok(())
     }
 
-    /// Create a dirty flag. This must happen under the global lock
-    fn create_dirty_flag(workdir: &Path) -> std::io::Result<()> {
-        fs::File::create(workdir.join(Self::DIRTY))?;
+    // Plain file operations on the DIRTY and DEFERRED flags.
+    // All ConvertJob methods (start(), commit(), ...) must hold the
+    // global lock while they use these, so that a check and the
+    // action that depends on it cannot be separated.
+
+    /// Create a flag file in workdir
+    fn create_flag(workdir: &Path, flag: &str) -> std::io::Result<()> {
+        fs::File::create(workdir.join(flag))?;
         Ok(())
     }
 
-    /// Check if a dirty flag exists. This must happen under the global lock
-    fn dirty_flag_exists(workdir: &Path) -> bool {
-        workdir.join(Self::DIRTY).exists()
+    /// Check if a flag file exists
+    fn flag_exists(workdir: &Path, flag: &str) -> bool {
+        workdir.join(flag).exists()
     }
 
-    /// Remove a dirty flag. This must happen under the global lock
-    fn remove_dirty_flag(workdir: &Path) -> std::io::Result<()> {
-        match fs::remove_file(workdir.join(Self::DIRTY)) {
+    /// Remove a flag file
+    fn remove_flag(workdir: &Path, flag: &str) -> std::io::Result<()> {
+        match fs::remove_file(workdir.join(flag)) {
             Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
             r => r,
         }
@@ -468,7 +486,7 @@ impl ConvertJob {
             return Ok(false);
         };
         let workdir = dirs.base.join(id.to_string());
-        match Self::create_dirty_flag(&workdir) {
+        match Self::create_flag(&workdir, Self::DIRTY) {
             Ok(()) => Ok(true),
             Err(e) if e.kind() == ErrorKind::NotFound => Ok(false),
             Err(e) => Err(e.into()),
@@ -498,7 +516,7 @@ impl ConvertJob {
         let mut db = ConvertDb::load(&self.dirs.base)?;
 
         // If the dirty flag is set, we cannot complete the conversion.
-        if Self::dirty_flag_exists(&self.workdir) {
+        if Self::flag_exists(&self.workdir, Self::DIRTY) {
             // The previous conversion ran with the user active, or a
             // stale flag survived a crash.
             let user_active = match self.home_owner {
@@ -511,12 +529,15 @@ impl ConvertJob {
             };
             if user_active {
                 // Defer, the caller must wait until the user is logged out
+                Self::create_flag(&self.workdir, Self::DEFERRED)?;
                 return Ok(CommitOutcome::Deferred(self));
             }
-            // User inactive: clear the flag and restart a cloner with
+            // User inactive: clear the flags and restart a cloner with
             // verify_content=true. The previous (partial) clone is
             // unreliable because the user was active while it happened.
-            Self::remove_dirty_flag(&self.workdir)?;
+            // The job goes back from deferred to ongoing.
+            Self::remove_flag(&self.workdir, Self::DIRTY)?;
+            Self::remove_flag(&self.workdir, Self::DEFERRED)?;
             drop(db); // We can release the global lock already
             self.cloner = DirectoryCloner::start(&self.dirs.src, &self.dstdir, true)?;
             return Ok(CommitOutcome::Restarted(self));

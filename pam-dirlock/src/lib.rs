@@ -173,7 +173,7 @@ fn do_authenticate_autologin(pamh: Pam) -> Result<()> {
             // give it a chance to finish while the user is logged out.
             if let Ok(Some(dir)) = util::get_homedir(user) {
                 match conversion_status(&dir) {
-                    Ok(ConversionStatus::Ongoing(_)) => {
+                    Ok(ConversionStatus::Ongoing(_) | ConversionStatus::Deferred(_)) => {
                         log_warning(&pamh, format!("autologin; home is being converted for user {user}"));
                         Err(PamError::AUTH_ERR)
                     }

@@ -724,7 +724,8 @@ fn cmd_convert(args: &ConvertArgs, ks: &Keystore) -> Result<()> {
                 args.user.as_deref(), &args.dir, ks,
             )?
         },
-        ConversionStatus::Ongoing(_) => bail!("This directory is already being encrypted"),
+        ConversionStatus::Ongoing(_) | ConversionStatus::Deferred(_) =>
+            bail!("This directory is already being encrypted"),
         ConversionStatus::Interrupted(id) => {
             println!("Will resume encryption of partially encrypted directory.");
             if args.protector_type.is_some() || args.protector_name.is_some() || args.user.is_some() {
@@ -1227,6 +1228,10 @@ fn cmd_status(args: &StatusArgs, ks: &Keystore) -> Result<()> {
                 Ok(ConversionStatus::None) => (),
                 Ok(ConversionStatus::Ongoing(id)) => {
                     println!("Ongoing conversion, policy {id}");
+                }
+                Ok(ConversionStatus::Deferred(id)) => {
+                    println!("Deferred conversion, policy {id}");
+                    println!("The conversion will resume once the owner logs out");
                 }
                 Ok(ConversionStatus::Interrupted(id)) => {
                     println!("Interrupted conversion, policy {id}");

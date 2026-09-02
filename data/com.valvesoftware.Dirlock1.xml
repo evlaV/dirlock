@@ -64,8 +64,11 @@
         If the directory is `unencrypted` but has a pending conversion
         job, status also contains:
 
-        - `conversion` (s): One of `ongoing` or `interrupted`. An
-          `interrupted` conversion can be resumed with ConvertDir.
+        - `conversion` (s): One of `ongoing`, `deferred` or `interrupted`.
+          A `deferred` conversion has copied all the data and is waiting
+          for the owner of the home directory to log out before it can
+          commit, so it makes no further progress until then.
+          An `interrupted` conversion can be resumed with ConvertDir.
         - `conversion-policy` (s): The policy ID of the conversion job.
 
         Get the encryption status of a directory.
@@ -145,7 +148,8 @@
         @conversions: List of dicts with the following fields:
 
         - `dir` (s): Canonicalized path of the directory being converted.
-        - `status` (s): One of `ongoing` or `interrupted`, as in GetDirStatus.
+        - `status` (s): One of `ongoing`, `deferred` or `interrupted`,
+          as in GetDirStatus.
         - `policy` (s): The policy ID of the conversion.
 
         If the conversion is a job managed by this daemon, the dict
@@ -158,9 +162,9 @@
 
         A conversion with no `jobid` is not managed by this daemon: it
         is either `interrupted` and can be resumed with ConvertDir, or
-        it is `ongoing` under another process (e.g. the dirlock CLI),
-        in which case it emits no job signals and its progress cannot
-        be queried.
+        it is `ongoing` or `deferred` under another process (e.g. the
+        dirlock CLI), in which case it emits no job signals and its
+        progress cannot be queried.
     -->
     <method name="ListConversions">
       <arg name="conversions" type="aa{sv}" direction="out"/>
