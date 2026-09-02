@@ -238,15 +238,12 @@ impl ConvertJob {
                 },
             }
         }
-        drop(db);
 
-        // Remove the leftover data outside the lock.
-        // Do it even if the rename failed: maybe there was a
-        // directory with the same name?
-        let _ = remove_file_or_dir(&trash_target);
-        if let Ok(lock) = GlobalLockFile::new() {
-            ConvertJob::try_remove_base_dirs(&dirs.base, &lock);
-        }
+        // The trashed data is removed by cleanup() because it can
+        // take a long time and we don't want to block here.
+        // We can still try to remove the base dirs in case
+        // they are already empty.
+        ConvertJob::try_remove_base_dirs(&dirs.base, &db.lock);
 
         Ok(ConversionStatus::None)
     }
@@ -574,7 +571,7 @@ impl ConvertJob {
 struct ConvertDb {
     filename: PathBuf,
     db: HashMap<PathBuf, PolicyKeyId>,
-    _lock: GlobalLockFile,
+    lock: GlobalLockFile,
     dirty: bool,
 }
 
@@ -583,14 +580,14 @@ impl ConvertDb {
     /// doesn't exist)
     fn load(basedir: &Path) -> std::io::Result<Self> {
         let filename = basedir.join("convertdb");
-        let _lock = GlobalLockFile::new()?;
+        let lock = GlobalLockFile::new()?;
         let db = if filename.exists() {
             serde_json::from_reader(fs::File::open(&filename)?)
                 .map_err(|e| std::io::Error::new(ErrorKind::InvalidData, e))?
         } else {
             HashMap::new()
         };
-        Ok(ConvertDb { filename, db, _lock, dirty: false })
+        Ok(ConvertDb { filename, db, lock, dirty: false })
     }
 
     /// Get the [`PolicyKeyId`] being used to encrypt `dir`, if any.
@@ -677,7 +674,16 @@ pub fn cleanup(dir: &Path) -> Result<usize> {
             if create_dir_if_needed(&trashdir).is_ok() {
                 let workdir = base.join(keyid.to_string());
                 let trashed_dir = trashdir.join(keyid.to_string());
-                match fs::rename(&workdir, &trashed_dir) {
+                let mut result = fs::rename(&workdir, &trashed_dir);
+                if matches!(&result, Err(e) if e.kind() != ErrorKind::NotFound) {
+                    // The rename failed. Is there already an item
+                    // in the trash dir with the same name?
+                    // This should not happen but we can still handle
+                    // the situation easily: delete it and rename again.
+                    let _ = remove_file_or_dir(&trashed_dir);
+                    result = fs::rename(&workdir, &trashed_dir);
+                }
+                match result {
                     Err(e) if e.kind() != ErrorKind::NotFound => {
                         eprintln!("Warning: failed to trash workdir: {e}");
                     },

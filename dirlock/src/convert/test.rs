@@ -354,7 +354,8 @@ fn test_crash_before_exchange() -> Result<()> {
 // Test a crash after RENAME_EXCHANGE but before convertdb is updated
 // - The source directory is already encrypted
 // - workdir still exists, and there's an entry in the convertdb file
-// - conversion_status() should clean things up and report None
+// - conversion_status() should trash the workdir, drop the entry and
+//   report None
 #[test]
 fn test_crash_after_exchange() -> Result<()> {
     let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
@@ -395,17 +396,25 @@ fn test_crash_after_exchange() -> Result<()> {
     assert!(matches!(conversion_status(path)?, ConversionStatus::None));
     assert!(!workdir.exists());
 
+    // The workdir was trashed, not removed, but don't use cleanup()
+    // since it would interfere with other tests.
+    let trash_entry = workdir.parent().unwrap()
+        .join(ConvertJob::TRASHDIR)
+        .join(workdir.file_name().unwrap());
+    assert!(trash_entry.exists());
+    fs::remove_dir_all(&trash_entry)?;
+
     encrypted_dir.lock(RemoveKeyUsers::CurrentUser)?;
 
     Ok(())
 }
 
 // Same as test_crash_after_exchange(), but this time the workdir
-// cannot be trashed because another directory of the same name is
-// there.
+// cannot be trashed because the name it needs in the trash dir is
+// already taken.
 // - The workdir and the convertdb entry must be kept.
-// - The obstacle is removed
-// - In a subsequent call the workdir is trashed correctly
+// - The obstacle is not removed: it's the job of cleanup()
+// - Once it is removed the next call completes the recovery.
 #[test]
 fn test_workdir_cannot_be_trashed() -> Result<()> {
     let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
@@ -430,6 +439,7 @@ fn test_workdir_cannot_be_trashed() -> Result<()> {
     let keyid = job.keyid.clone();
     assert!(job.commit().is_err());
     assert!(workdir.exists());
+    clear_injected();
 
     // Put a non-empty directory where the workdir has to be moved to,
     // so trashing the workdir fails.
@@ -439,34 +449,29 @@ fn test_workdir_cannot_be_trashed() -> Result<()> {
     fs::create_dir_all(&trash_target)?;
     fs::write(trash_target.join("blocker"), "x")?;
 
-    // The workdir cannot be trashed, so its entry has to be kept
-    assert!(matches!(conversion_status(path)?, ConversionStatus::None));
-    assert!(workdir.exists(), "workdir not found at the original location");
-    let db = ConvertDb::load(&dirs.base)?;
-    assert!(db.get(&dirs.src_rel).is_some(), "convertdb entry removed unexpectedly");
-    drop(db);
+    // The workdir cannot be trashed, so its entry has to be kept.
+    // It does not matter how often we try.
+    for _ in 0..2 {
+        assert!(matches!(conversion_status(path)?, ConversionStatus::None));
+        assert!(workdir.exists(), "workdir not found at the original location");
+        assert_eq!(fs::read_to_string(trash_target.join("blocker"))?, "x");
+        let db = ConvertDb::load(&dirs.base)?;
+        assert!(db.get(&dirs.src_rel).is_some(), "convertdb entry removed unexpectedly");
+        drop(db);
+    }
 
-    // The obstacle was removed even when the rename failed, so we now
-    // put a file in the way instead of a directory.
-    assert!(!trash_target.exists());
-    assert!(workdir.exists());
-    fs::create_dir_all(&trashdir)?; // The trash dir was removed so create it again
-    fs::write(&trash_target, "x")?;
-
-    // A file blocks the rename too, so the entry is kept as well
-    assert!(matches!(conversion_status(path)?, ConversionStatus::None));
-    assert!(workdir.exists(), "workdir not found at the original location");
-    let db = ConvertDb::load(&dirs.base)?;
-    assert!(db.get(&dirs.src_rel).is_some(), "convertdb entry removed unexpectedly");
-    drop(db);
-
-    // The obstacle is removed again. The next call finally cleans everything up
-    assert!(!trash_target.exists());
+    // Remove the obstacle. The next call finally trashes the work dir
+    // and updates the convertdb.
+    fs::remove_dir_all(&trash_target)?;
     assert!(matches!(conversion_status(path)?, ConversionStatus::None));
     assert!(!workdir.exists());
     let db = ConvertDb::load(&dirs.base)?;
     assert!(db.get(&dirs.src_rel).is_none(), "convertdb entry was not removed");
     drop(db);
+
+    // The workdir is trashed, let's remove it
+    assert!(trash_target.is_dir());
+    fs::remove_dir_all(&trash_target)?;
 
     // The data is intact all along
     let encrypted_dir = EncryptedDir::open(path, &ks, LockState::Unlocked)?;
@@ -585,10 +590,14 @@ fn test_crash_after_trash_rename() -> Result<()> {
     assert!(!workdir.exists());
     assert!(trash_entry.exists());
 
-    // conversion_status() detects the stale entry, removes the trashed
-    // data and reports None
+    // conversion_status() detects the stale entry and reports None.
+    // The trashed data stays on disk, it's meant to be removed by cleanup().
     assert!(matches!(conversion_status(path)?, ConversionStatus::None));
-    assert!(!trash_entry.exists());
+    assert!(trash_entry.exists());
+
+    // cleanup() would clean the whole trash dir, affecting other
+    // tests, so remove just this entry.
+    fs::remove_dir_all(&trash_entry)?;
 
     Ok(())
 }
@@ -785,6 +794,10 @@ fn test_cleanup() -> Result<()> {
     let trash_leftover = trash.join("stale");
     std::fs::create_dir_all(&trash_leftover)?;
 
+    // Add an obstacle that prevents trashing the dead conversion's workdir.
+    let obstacle = trash.join(gone_workdir.file_name().unwrap());
+    std::fs::write(&obstacle, "x")?;
+
     // In total there are at least 3 convertdb entries
     // (there could be more than 3 if an earlier test failed).
     let entries = ConvertDb::load(&base)?.keys().count();
@@ -795,8 +808,11 @@ fn test_cleanup() -> Result<()> {
 
     // The resumable conversion is left untouched.
     assert!(matches!(conversion_status(keep)?, ConversionStatus::Interrupted(_)));
-    // The dead conversion's workdir has been removed.
+    // The dead conversion's workdir has been removed, even though there
+    // was an obstacle in the trash dir with the same name.
+    // cleanup() clears both in the same pass.
     assert!(!gone_workdir.exists());
+    assert!(!obstacle.exists());
     // The dead conversion with a missing workdir has been removed.
     assert!(ConvertDb::load(&base)?.get(&stale_rel).is_none());
     // The leftover has been removed.
