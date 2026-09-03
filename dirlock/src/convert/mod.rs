@@ -666,7 +666,7 @@ impl ConvertDb {
 /// Remove stale conversion entries for the filesystem containing `dir`.
 /// Returns the number of entries removed.
 pub fn cleanup(dir: &Path) -> Result<usize> {
-    let mntpoint = get_mountpoint(&dir.canonicalize()?)?;
+    let mntpoint = get_mountpoint(dir)?;
     let base = mntpoint.join(ConvertJob::BASEDIR);
     if ! base.exists() {
         return Ok(0);
@@ -743,7 +743,7 @@ pub fn cleanup(dir: &Path) -> Result<usize> {
 /// The caller should use this function when it can afford to block.
 /// This function can be interrupted and called multiple times safely.
 pub fn purge_trash(dir: &Path, keyid: &PolicyKeyId) -> Result<()> {
-    let mntpoint = get_mountpoint(&dir.canonicalize()?)?;
+    let mntpoint = get_mountpoint(dir)?;
     let base = mntpoint.join(ConvertJob::BASEDIR);
     let trashdir = base.join(ConvertJob::TRASHDIR);
     if let Err(e) = remove_file_or_dir(&trashdir.join(keyid.to_string())) {
