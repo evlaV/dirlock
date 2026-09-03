@@ -379,9 +379,9 @@ impl ConvertJob {
         self.cloner.is_finished()
     }
 
-    /// Cancel the operation
-    // TODO: this leaves the conversion as interrupted,
-    // it would be nice to have a way to abort it completely.
+    /// Cancel the operation, leaving the conversion interrupted so it
+    /// can be resumed later. Use [`remove_conversion()`] to discard it
+    /// altogether.
     pub fn cancel(&self) -> Result<()> {
         self.cloner.cancel()
     }
@@ -646,6 +646,62 @@ impl ConvertDb {
             file.commit()
         }
     }
+}
+
+/// Remove the conversion of `dir`. The source directory is never
+/// touched and remains intact.
+///
+/// Only an interrupted conversion can be removed, a running one has
+/// to be cancelled first.
+///
+/// Like [`ConvertJob::commit()`] this is a quick operation and it
+/// returns as soon as the encrypted copy has been trashed. The caller
+/// gets the [`PolicyKeyId`] of the conversion and is expected to call
+/// [`purge_trash()`] with it when it can afford to block.
+pub fn remove_conversion(dir: &Path, ks: &Keystore) -> Result<PolicyKeyId> {
+    let dirs = ConvertJob::get_src_dir_data(dir)?;
+    if ! dirs.base.exists() {
+        bail!("There is no conversion for {}", dirs.src.display());
+    }
+
+    // Take the global lock, so no job can start while we remove this
+    // conversion.
+    let mut db = ConvertDb::load(&dirs.base)?;
+    let Some(keyid) = db.get(&dirs.src_rel).cloned() else {
+        bail!("There is no conversion for {}", dirs.src.display());
+    };
+    let workdir = dirs.base.join(keyid.to_string());
+    let Some(lockfile) = LockFile::try_new(&workdir.join(ConvertJob::LOCKFILE))? else {
+        bail!("The conversion of {} is running, cancel it first", dirs.src.display());
+    };
+    // Do this under the lock in case another process is or was trying
+    // to complete this conversion.
+    if crate::get_policy(&dirs.src)?.is_some() {
+        bail!("{} is already encrypted", dirs.src.display());
+    }
+
+    // Same teardown order as commit(): trash the work dir, update
+    // convertdb and release the locks.
+    let trashdir = dirs.base.join(ConvertJob::TRASHDIR);
+    create_dir_if_needed(&trashdir)?;
+    let trash_target = trashdir.join(keyid.to_string());
+    fs::rename(&workdir, &trash_target)?;
+    db.remove(&dirs.src_rel);
+    db.commit()?;
+    drop(db);
+    drop(lockfile);
+
+    // Now we can get rid of the policy. It was generated internally
+    // in ConvertJob::start() so no one else should be using it and
+    // it's safe to remove. A missing policy file is not an error
+    // here, the conversion is being discarded either way.
+    _ = crate::remove_key(&dirs.src, &keyid, crate::RemoveKeyUsers::CurrentUser);
+    match ks.remove_policy(&keyid) {
+        Err(e) if e.kind() == ErrorKind::NotFound => (),
+        r => r?,
+    }
+
+    Ok(keyid)
 }
 
 /// Remove stale conversion entries for the filesystem containing `dir`.

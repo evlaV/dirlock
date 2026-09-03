@@ -412,6 +412,9 @@ fn test_crash_after_exchange() -> Result<()> {
     assert!(workdir.exists());
     assert!(ConvertDb::load(&dirs.base)?.get(&dirs.src_rel).is_some());
 
+    // And since the conversion is finished it cannot be discarded either.
+    assert!(remove_conversion(path, &ks).is_err());
+
     // cleanup() would clean the whole trash dir, affecting other
     // tests, so drop this conversion's leftovers by hand.
     let mut db = ConvertDb::load(&dirs.base)?;
@@ -421,6 +424,66 @@ fn test_crash_after_exchange() -> Result<()> {
     fs::remove_dir_all(&workdir)?;
 
     encrypted_dir.lock(RemoveKeyUsers::CurrentUser)?;
+
+    Ok(())
+}
+
+// A conversion that will never be finished can be discarded with
+// remove_conversion(): the encrypted copy, the convertdb entry and the
+// policy are removed, and the source directory is left untouched.
+#[test]
+fn test_remove_conversion() -> Result<()> {
+    let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+    let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
+    crate::init()?;
+
+    let ks_dir = TempDir::new("keystore")?;
+    let ks = Keystore::from_path(ks_dir.path());
+
+    // Create a directory with data
+    let dir = TempDir::new_in(&mntpoint, "convert")?;
+    let path = dir.path();
+    std::fs::write(path.join("file.txt"), "hello")?;
+
+    // Create a protector and start a conversion
+    let (protector, protector_key) = make_test_protector(&ks)?;
+    let job = ConvertJob::start(path, &protector, protector_key, &ks)?;
+    let workdir = job.workdir.clone();
+    let keyid = job.keyid.clone();
+    let dirs = ConvertJob::get_src_dir_data(path)?;
+
+    // A running conversion cannot be discarded
+    assert!(remove_conversion(path, &ks).is_err());
+
+    // Cancel it, leaving it in an interrupted state
+    job.cancel()?;
+    assert!(job.wait().is_err()); // wait for rsync to finish
+    drop(job);
+    assert!(matches!(conversion_status(path)?, ConversionStatus::Interrupted(_)));
+    assert!(workdir.exists());
+    assert!(ks.load_policy_data(&keyid).is_ok());
+
+    // remove_conversion() leaves the encrypted copy in the trash dir
+    // and it's up to us to remove it using purge_trash().
+    let removed = remove_conversion(path, &ks)?;
+    assert_eq!(removed, keyid);
+    let trash_target = dirs.base.join(ConvertJob::TRASHDIR).join(keyid.to_string());
+    assert!(trash_target.exists());
+    purge_trash(path, &keyid)?;
+    assert!(!trash_target.exists());
+
+    // The work directory, the convertdb entry and the policy are gone
+    assert!(!workdir.exists());
+    assert!(matches!(conversion_status(path)?, ConversionStatus::None));
+    assert!(ConvertDb::load(&dirs.base)?.get(&dirs.src_rel).is_none());
+    assert!(ks.load_policy_data(&keyid).is_err());
+
+    // The source directory is untouched
+    crate::ensure_unencrypted(path, &ks)?;
+    assert_eq!(std::fs::read_to_string(path.join("file.txt"))?, "hello");
+
+    // There is nothing left to discard
+    assert!(remove_conversion(path, &ks).is_err());
 
     Ok(())
 }
