@@ -22,17 +22,14 @@ use crate::protector::{Protector, ProtectorType};
 /// Get the mount point of the file system that contains `dir`
 pub fn get_mountpoint(dir: &Path) -> std::io::Result<PathBuf> {
     let mut current = dir.canonicalize()?;
+    let dev = std::fs::metadata(&current)?.dev();
     loop {
-        // Compare a directory's metadata with its parent's
-        let parent = current.parent().unwrap_or(&current);
-        let md1 = std::fs::metadata(&current)?;
-        let md2 = std::fs::metadata(parent)?;
-        // Same inode? => We reached the root directory
-        if md2.ino() == md1.ino() {
+        // If we reached the root directory then we're done
+        let Some(parent) = current.parent() else {
             return Ok(current);
-        }
+        };
         // Different device? => The parent is in a different filesystem
-        if md2.dev() != md1.dev() {
+        if std::fs::metadata(parent)?.dev() != dev {
             return Ok(current);
         }
         current.pop();
