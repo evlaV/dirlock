@@ -1711,7 +1711,7 @@ mod tests {
 
         // But if we use --recovery explicitly
         // then the password won't unlock the directory
-        push_test_password(&password);
+        push_test_password(password);
         cmd_unlock(&UnlockArgs {
             dir: dir.path().into(),
             protector: None,

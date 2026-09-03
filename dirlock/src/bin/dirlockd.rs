@@ -1229,7 +1229,7 @@ mod tests {
         let policy_id = proxy.encrypt_dir(
             dir.to_str().unwrap(),
             as_opts(&str_dict([
-                ("protector", &prot_id),
+                ("protector", prot_id),
                 ("password", password),
             ])),
         ).await?;
@@ -1253,15 +1253,15 @@ mod tests {
         let policy_id = encrypt_test_dir(&proxy, dir.path(), &prot_id, "pass1").await?;
 
         // The directory should now be encrypted and unlocked
-        let status = proxy.get_dir_status(&dir.path().to_str().unwrap()).await?;
+        let status = proxy.get_dir_status(dir.path().to_str().unwrap()).await?;
         assert_eq!(expect_str(&status, "status")?, "unlocked");
         assert_eq!(expect_str(&status, "policy")?, policy_id);
         assert_eq!(expect_bool(&status, "has-recovery-key")?, false);
         assert_eq!(status.len(), 4); // Element 4 is the 'protectors' field
 
         // Lock the directory
-        proxy.lock_dir(&dir.path().to_str().unwrap()).await?;
-        let status = proxy.get_dir_status(&dir.path().to_str().unwrap()).await?;
+        proxy.lock_dir(dir.path().to_str().unwrap()).await?;
+        let status = proxy.get_dir_status(dir.path().to_str().unwrap()).await?;
         assert_eq!(expect_str(&status, "status")?, "locked");
         assert_eq!(expect_str(&status, "policy")?, policy_id);
         assert_eq!(expect_bool(&status, "has-recovery-key")?, false);
@@ -1868,7 +1868,7 @@ mod tests {
         assert_eq!(expect_str(&status, "policy")?, policy);
         assert_eq!(expect_bool(&status, "has-recovery-key")?, false);
         assert_eq!(status.len(), 4); // Element 4 is the 'protectors' field
-        assert!(status.get("conversion").is_none());
+        assert!(!status.contains_key("conversion"));
 
         Ok(())
     }

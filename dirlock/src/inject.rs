@@ -56,7 +56,7 @@ pub fn check_injected_error(condition: Injected) -> Result<()> {
 
 #[cfg(test)]
 thread_local! {
-    static INJECTED: Cell<Option<Injected>> = Cell::new(None);
+    static INJECTED: Cell<Option<Injected>> = const { Cell::new(None) };
 }
 
 #[cfg(test)]
