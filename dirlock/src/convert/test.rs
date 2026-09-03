@@ -400,6 +400,11 @@ fn test_crash_after_exchange() -> Result<()> {
     // But the work directory still exists because this crashed before db.commit()
     assert!(workdir.exists());
 
+    // mark_dirty() does nothing even if the convertdb entry is still there,
+    // because it detects that the conversion is already finished.
+    assert!(!ConvertJob::mark_dirty(path)?);
+    assert!(!ConvertJob::flag_exists(&workdir, ConvertJob::DIRTY));
+
     // conversion_status() detects the stale entry and cleans everything up
     assert!(matches!(conversion_status(path)?, ConversionStatus::None));
     assert!(!workdir.exists());

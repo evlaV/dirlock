@@ -485,6 +485,12 @@ impl ConvertJob {
         let Some(id) = db.get(&dirs.src_rel) else {
             return Ok(false);
         };
+        // If the source dir is already encrypted then the db entry
+        // is a leftover from a commit() that crashed. cleanup()
+        // will take care of the stale entry, we can ignore it here.
+        if matches!(crate::get_policy(&dirs.src), Ok(Some(_))) {
+            return Ok(false);
+        }
         let workdir = dirs.base.join(id.to_string());
         match Self::create_flag(&workdir, Self::DIRTY) {
             Ok(()) => Ok(true),
