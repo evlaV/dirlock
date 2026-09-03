@@ -727,6 +727,7 @@ fn test_cleanup() -> Result<()> {
     let base = job.dirs.base.clone();
     let trash = base.join(ConvertJob::TRASHDIR);
     job.cancel()?;
+    crate::remove_key(&mntpoint, &job.keyid, RemoveKeyUsers::CurrentUser)?;
     drop(job);
     assert!(matches!(conversion_status(keep)?, ConversionStatus::Interrupted(_)));
 
@@ -752,6 +753,7 @@ fn test_cleanup() -> Result<()> {
     let job = ConvertJob::start(&gone, &protector, protector_key, &ks)?;
     let gone_workdir = job.workdir.clone();
     job.cancel()?;
+    crate::remove_key(&mntpoint, &job.keyid, RemoveKeyUsers::CurrentUser)?;
     drop(job);
     drop(gone_dir); // This removes the source directory
     assert!(!gone.exists());
