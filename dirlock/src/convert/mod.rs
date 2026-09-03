@@ -554,13 +554,12 @@ impl ConvertJob {
 
         check_injected_error(Injected::ConvertCommitAfterTrashRename)?;
 
-        // Remove the convertdb entry and release the global lock.
+        // Remove the convertdb entry.
         // If mark_dirty() arrives later there's no entry so it's a no-op.
         db.remove(&self.dirs.src_rel);
         if let Err(e) = db.commit() {
             eprintln!("Warning: failed to update convertdb: {e}");
         }
-        drop(db);
 
         // The original data is trashed, but removing it can take minutes.
         // In order to keep this commit() operation short return now
