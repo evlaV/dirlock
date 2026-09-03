@@ -87,6 +87,9 @@ pub trait Dirlock1 {
     /// LockDir method
     fn lock_dir(&self, dir: &str) -> zbus::Result<Vec<String>>;
 
+    /// RemoveConversion method
+    fn remove_conversion(&self, dir: &str) -> zbus::Result<()>;
+
     /// RecoveryAdd method
     fn recovery_add(
         &self,

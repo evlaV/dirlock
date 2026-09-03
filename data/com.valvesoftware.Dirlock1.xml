@@ -171,6 +171,25 @@
     </method>
 
     <!--
+        RemoveConversion:
+        @dir: Path to a directory with an interrupted conversion.
+
+        Discard a conversion and remove any temporary data used by it,
+        including its encryption policy.
+
+        Only an `interrupted` conversion can be discarded. A running
+        one (`ongoing` or `deferred`) must be stopped with CancelJob
+        first, but note that only conversions started by this daemon
+        can be cancelled like that.
+
+        The directory itself is not modified and keeps its original
+        unencrypted data.
+    -->
+    <method name="RemoveConversion">
+      <arg name="dir" type="s" direction="in"/>
+    </method>
+
+    <!--
         JobFinished:
         @jobid: ID of the finished job.
         @dir: Canonicalized path of the newly encrypted directory.

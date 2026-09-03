@@ -42,6 +42,7 @@ use dirlock::{
         ensure_not_filesystem_root,
         list_all_conversions,
         purge_trash,
+        remove_conversion,
     },
     protector::{
         Protector,
@@ -775,6 +776,22 @@ impl DirlockDaemon {
         &self,
     ) -> Result<Vec<DbusConversion>> {
         do_list_conversions(&self.jobs).into_dbus()
+    }
+
+    async fn remove_conversion(
+        &self,
+        dir: &Path,
+    ) -> Result<()> {
+        let keyid = remove_conversion(dir, &self.ks).into_dbus()?;
+        // Removing the old data can take minutes, so do it in a
+        // separate thread.
+        let dir = dir.to_owned();
+        tokio::task::spawn_blocking(move || {
+            if let Err(e) = purge_trash(&dir, &keyid) {
+                eprintln!("Warning: failed to remove the discarded data: {e}");
+            }
+        });
+        Ok(())
     }
 
     async fn job_status(
@@ -1869,6 +1886,56 @@ mod tests {
         assert_eq!(expect_bool(&status, "has-recovery-key")?, false);
         assert_eq!(status.len(), 4); // Element 4 is the 'protectors' field
         assert!(!status.contains_key("conversion"));
+
+        Ok(())
+    }
+
+    // RemoveConversion discards an interrupted conversion without
+    // touching the directory it was converting.
+    #[tokio::test]
+    async fn test_remove_conversion() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        let dir = TempDir::new_in(&mntpoint, "remove-conversion")?;
+        let dir_str = dir.path().to_str().unwrap();
+        let canon = std::fs::canonicalize(dir.path())?;
+        std::fs::write(dir.path().join("file.txt"), "hello")?;
+
+        // Start a conversion outside the daemon so we can interrupt it
+        let ks = srv.keystore();
+        let opts = ProtectorOptsBuilder::new()
+            .with_name("test".into())
+            .with_kdf_iter(std::num::NonZeroU32::new(1))
+            .build()?;
+        let (protector, protector_key) =
+            dirlock::create_protector(opts, b"pass", dirlock::CreateOpts::CreateAndSave, &ks)?;
+        let job = ConvertJob::start(dir.path(), &protector, protector_key, &ks)?;
+
+        // A running conversion cannot be discarded, it must be stopped first
+        assert!(proxy.remove_conversion(dir_str).await.is_err());
+
+        job.cancel()?;
+        assert!(job.wait().is_err());
+        drop(job);
+        let list = proxy.list_conversions().await?;
+        let conv = find_conversion(&list, &canon).expect("conversion not listed");
+        assert_eq!(expect_str(conv, "status")?, "interrupted");
+
+        // Now it can be discarded
+        proxy.remove_conversion(dir_str).await?;
+
+        // Now the conversion is gone
+        assert!(proxy.remove_conversion(dir_str).await.is_err());
+        let list = proxy.list_conversions().await?;
+        assert!(find_conversion(&list, &canon).is_none());
+
+        // The original directory keeps its data
+        assert_eq!(std::fs::read_to_string(dir.path().join("file.txt"))?, "hello");
+        let status = proxy.get_dir_status(dir_str).await?;
+        assert_eq!(expect_str(&status, "status")?, "unencrypted");
 
         Ok(())
     }
