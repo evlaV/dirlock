@@ -210,7 +210,7 @@ impl ConvertJob {
         if ! dirs.base.exists() {
             return Ok(ConversionStatus::None);
         }
-        let mut db = ConvertDb::load(&dirs.base)?;
+        let db = ConvertDb::load(&dirs.base)?;
         let Some(id) = db.get(&dirs.src_rel).cloned() else {
             return Ok(ConversionStatus::None);
         };
@@ -233,27 +233,8 @@ impl ConvertJob {
 
         // The directory is already encrypted: a previous commit()
         // completed the exchange but crashed before removing the db
-        // entry. Move the leftover workdir into .trash and update the db.
-        let trashdir = dirs.base.join(Self::TRASHDIR);
-        let trash_target = trashdir.join(id.to_string());
-        if create_dir_if_needed(&trashdir).is_ok() {
-            match fs::rename(&workdir, &trash_target) {
-                Err(e) if e.kind() != ErrorKind::NotFound => {
-                    eprintln!("Warning: failed to trash workdir: {e}");
-                },
-                _ => {
-                    db.remove(&dirs.src_rel);
-                    let _ = db.commit();
-                },
-            }
-        }
-
-        // The trashed data is removed by cleanup() because it can
-        // take a long time and we don't want to block here.
-        // We can still try to remove the base dirs in case
-        // they are already empty.
-        ConvertJob::try_remove_base_dirs(&dirs.base, &db.lock);
-
+        // entry. The conversion is finished, so there is nothing
+        // pending here; cleanup() reclaims the leftovers.
         Ok(ConversionStatus::None)
     }
 
@@ -598,7 +579,7 @@ impl ConvertJob {
 struct ConvertDb {
     filename: PathBuf,
     db: HashMap<PathBuf, PolicyKeyId>,
-    lock: GlobalLockFile,
+    _lock: GlobalLockFile,
     dirty: bool,
 }
 
@@ -614,7 +595,7 @@ impl ConvertDb {
         } else {
             HashMap::new()
         };
-        Ok(ConvertDb { filename, db, lock, dirty: false })
+        Ok(ConvertDb { filename, db, _lock: lock, dirty: false })
     }
 
     /// Get the [`PolicyKeyId`] being used to encrypt `dir`, if any.
@@ -686,13 +667,9 @@ pub fn cleanup(dir: &Path) -> Result<usize> {
     let mut count = 0;
     for entry in entries {
         let src = mntpoint.join(&entry);
-        if is_real_dir(&src) {
-            // The source dir exists: ConvertJob::status() handles the cleanup
-            if matches!(ConvertJob::status(&src)?, ConversionStatus::None) {
-                count += 1;
-            }
-        } else {
-            // The source dir is gone: we have to trash the workdir here
+        // If source dir is gone or the conversion is finished, trash
+        // the workdir and drop the convertdb entry.
+        if !is_real_dir(&src) || matches!(ConvertJob::status(&src)?, ConversionStatus::None) {
             let mut db = ConvertDb::load(&base)?;
             let Some(keyid) = db.get(&entry).cloned() else {
                 continue;
@@ -783,8 +760,8 @@ pub struct PendingConversion {
 
 /// Return the pending conversions of the filesystem mounted on `mntpoint`.
 ///
-/// Note that this uses [`ConvertJob::status()`], so it also cleans up
-/// the entries of conversions that are already finished.
+/// Entries of conversions that are already finished are not listed,
+/// it is up to [`cleanup()`] to remove them.
 fn list_conversions(mntpoint: &Path) -> Result<Vec<PendingConversion>> {
     // The convertdb keys are relative to the canonicalized mount point
     let mntpoint = mntpoint.canonicalize()?;

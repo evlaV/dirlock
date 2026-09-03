@@ -405,90 +405,21 @@ fn test_crash_after_exchange() -> Result<()> {
     assert!(!ConvertJob::mark_dirty(path)?);
     assert!(!ConvertJob::flag_exists(&workdir, ConvertJob::DIRTY));
 
-    // conversion_status() detects the stale entry and cleans everything up
-    assert!(matches!(conversion_status(path)?, ConversionStatus::None));
-    assert!(!workdir.exists());
-
-    // The workdir was trashed, not removed, but don't use cleanup()
-    // since it would interfere with other tests.
-    let trash_entry = workdir.parent().unwrap()
-        .join(ConvertJob::TRASHDIR)
-        .join(workdir.file_name().unwrap());
-    assert!(trash_entry.exists());
-    fs::remove_dir_all(&trash_entry)?;
-
-    encrypted_dir.lock(RemoveKeyUsers::CurrentUser)?;
-
-    Ok(())
-}
-
-// Same as test_crash_after_exchange(), but this time the workdir
-// cannot be trashed because the name it needs in the trash dir is
-// already taken.
-// - The workdir and the convertdb entry must be kept.
-// - The obstacle is not removed: it's the job of cleanup()
-// - Once it is removed the next call completes the recovery.
-#[test]
-fn test_workdir_cannot_be_trashed() -> Result<()> {
-    let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
-    let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
-    crate::init()?;
-
-    let ks_dir = TempDir::new("keystore")?;
-    let ks = Keystore::from_path(ks_dir.path());
-
-    // Create a directory with data
-    let dir = TempDir::new_in(&mntpoint, "convert")?;
-    let path = dir.path();
-    fs::write(path.join("file.txt"), "hello")?;
-
-    // Create a protector
-    let (protector, protector_key) = make_test_protector(&ks)?;
-
-    // Simulate a crash between RENAME_EXCHANGE and db.commit()
-    inject(Injected::ConvertCommitAfterExchange);
-    let job = ConvertJob::start(path, &protector, protector_key, &ks)?;
-    let workdir = job.workdir.clone();
-    let keyid = job.keyid.clone();
-    assert!(job.commit().is_err());
-    assert!(workdir.exists());
-    clear_injected();
-
-    // Put a non-empty directory where the workdir has to be moved to,
-    // so trashing the workdir fails.
+    // The conversion is finished. conversion_status() reports None
+    // correctly although the entry and workdir are still there.
     let dirs = ConvertJob::get_src_dir_data(path)?;
-    let trashdir = dirs.base.join(ConvertJob::TRASHDIR);
-    let trash_target = trashdir.join(keyid.to_string());
-    fs::create_dir_all(&trash_target)?;
-    fs::write(trash_target.join("blocker"), "x")?;
-
-    // The workdir cannot be trashed, so its entry has to be kept.
-    // It does not matter how often we try.
-    for _ in 0..2 {
-        assert!(matches!(conversion_status(path)?, ConversionStatus::None));
-        assert!(workdir.exists(), "workdir not found at the original location");
-        assert_eq!(fs::read_to_string(trash_target.join("blocker"))?, "x");
-        let db = ConvertDb::load(&dirs.base)?;
-        assert!(db.get(&dirs.src_rel).is_some(), "convertdb entry removed unexpectedly");
-        drop(db);
-    }
-
-    // Remove the obstacle. The next call finally trashes the work dir
-    // and updates the convertdb.
-    fs::remove_dir_all(&trash_target)?;
     assert!(matches!(conversion_status(path)?, ConversionStatus::None));
-    assert!(!workdir.exists());
-    let db = ConvertDb::load(&dirs.base)?;
-    assert!(db.get(&dirs.src_rel).is_none(), "convertdb entry was not removed");
+    assert!(workdir.exists());
+    assert!(ConvertDb::load(&dirs.base)?.get(&dirs.src_rel).is_some());
+
+    // cleanup() would clean the whole trash dir, affecting other
+    // tests, so drop this conversion's leftovers by hand.
+    let mut db = ConvertDb::load(&dirs.base)?;
+    db.remove(&dirs.src_rel);
+    db.commit()?;
     drop(db);
+    fs::remove_dir_all(&workdir)?;
 
-    // The workdir is trashed, let's remove it
-    assert!(trash_target.is_dir());
-    fs::remove_dir_all(&trash_target)?;
-
-    // The data is intact all along
-    let encrypted_dir = EncryptedDir::open(path, &ks, LockState::Unlocked)?;
-    assert_eq!(fs::read_to_string(path.join("file.txt"))?, "hello");
     encrypted_dir.lock(RemoveKeyUsers::CurrentUser)?;
 
     Ok(())
@@ -604,12 +535,18 @@ fn test_crash_after_trash_rename() -> Result<()> {
     assert!(trash_entry.exists());
 
     // conversion_status() detects the stale entry and reports None.
-    // The trashed data stays on disk, it's meant to be removed by cleanup().
+    // Both the entry and the workdir stay on disk, waiting for cleanup().
+    let dirs = ConvertJob::get_src_dir_data(path)?;
     assert!(matches!(conversion_status(path)?, ConversionStatus::None));
     assert!(trash_entry.exists());
+    assert!(ConvertDb::load(&dirs.base)?.get(&dirs.src_rel).is_some());
 
     // cleanup() would clean the whole trash dir, affecting other
-    // tests, so remove just this entry.
+    // tests, so drop this conversion's leftovers by hand.
+    let mut db = ConvertDb::load(&dirs.base)?;
+    db.remove(&dirs.src_rel);
+    db.commit()?;
+    drop(db);
     fs::remove_dir_all(&trash_entry)?;
 
     Ok(())
@@ -793,6 +730,21 @@ fn test_cleanup() -> Result<()> {
     drop(job);
     assert!(matches!(conversion_status(keep)?, ConversionStatus::Interrupted(_)));
 
+    // A dead conversion: commit() crashed after the exchange, so the
+    // source is already encrypted but the entry and the workdir remain.
+    // status() reports it as finished but does not reclaim anything.
+    let done_dir = TempDir::new_in(&mntpoint, "convert")?;
+    let done = done_dir.path();
+    std::fs::write(done.join("file.txt"), "hello")?;
+    inject(Injected::ConvertCommitAfterExchange);
+    let job = ConvertJob::start(done, &protector, protector_key.clone(), &ks)?;
+    let done_workdir = job.workdir.clone();
+    assert!(job.commit().is_err());
+    clear_injected();
+    let done_enc = EncryptedDir::open(done, &ks, LockState::Unlocked)?;
+    assert!(matches!(conversion_status(done)?, ConversionStatus::None));
+    assert!(done_workdir.exists());
+
     // A dead conversion: interrupted, and then its source disappears.
     let gone_dir = TempDir::new_in(&mntpoint, "convert")?;
     let gone = gone_dir.path().to_owned();
@@ -821,10 +773,10 @@ fn test_cleanup() -> Result<()> {
     let obstacle = trash.join(gone_workdir.file_name().unwrap());
     std::fs::write(&obstacle, "x")?;
 
-    // In total there are at least 3 convertdb entries
-    // (there could be more than 3 if an earlier test failed).
+    // In total there are at least 4 convertdb entries
+    // (there could be more than 4 if an earlier test failed).
     let entries = ConvertDb::load(&base)?.keys().count();
-    assert!(entries >= 3);
+    assert!(entries >= 4);
 
     // cleanup() must handle all of these without failing.
     let cleaned = cleanup(&mntpoint)?;
@@ -836,6 +788,9 @@ fn test_cleanup() -> Result<()> {
     // cleanup() clears both in the same pass.
     assert!(!gone_workdir.exists());
     assert!(!obstacle.exists());
+    // The finished conversion has been reclaimed.
+    assert!(!done_workdir.exists());
+    assert!(matches!(conversion_status(done)?, ConversionStatus::None));
     // The dead conversion with a missing workdir has been removed.
     assert!(ConvertDb::load(&base)?.get(&stale_rel).is_none());
     // The leftover has been removed.
@@ -846,6 +801,8 @@ fn test_cleanup() -> Result<()> {
     assert_eq!(cleaned + 1, entries);
 
     // Remove the last conversion so the test leaves no state behind
+    done_enc.lock(RemoveKeyUsers::CurrentUser)?;
+    drop(done_dir);
     drop(keep_dir);
     assert_eq!(cleanup(&mntpoint)?, 1);
     assert_eq!(ConvertDb::load(&base)?.keys().count(), 0);
