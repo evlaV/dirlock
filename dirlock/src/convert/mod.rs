@@ -12,7 +12,6 @@ use nix::fcntl;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{ErrorKind, Write};
-use std::os::fd::AsRawFd;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
@@ -490,13 +489,6 @@ impl ConvertJob {
             bail!("Error encrypting data: {e}");
         }
 
-        // Pre-flush dirty pages outside the global lock
-        // so later we only have to do it for the rename part.
-        // This should be quick since `cloner` has already
-        // called `syncfs()` before us.
-        let syncfd = fs::File::open(&self.dirs.base)?;
-        _ = nix::unistd::syncfs(syncfd.as_raw_fd());
-
         // Acquire the global lock during the dirty-flag check and the
         // RENAME_EXCHANGE, so that a concurrent mark_dirty() cannot
         // race between our check and the exchange.
@@ -540,7 +532,14 @@ impl ConvertJob {
         // Exchange atomically the source directory and its encrypted copy
         fcntl::renameat2(None, &self.dirs.src, None, &dstdir_2,
                          fcntl::RenameFlags::RENAME_EXCHANGE)?;
-        _ = nix::unistd::syncfs(syncfd.as_raw_fd());
+        // Make both renames durable.
+        let workdir_e = self.workdir.join(Self::ENCRYPTED);
+        let src_parent = self.dirs.src.parent().unwrap_or(&self.dirs.src);
+        for dir in [workdir_e.as_path(), self.workdir.as_path(), src_parent] {
+            if let Ok(fd) = fs::File::open(dir) {
+                _ = fd.sync_all();
+            }
+        }
 
         check_injected_error(Injected::ConvertCommitAfterExchange)?;
 
