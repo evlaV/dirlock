@@ -80,6 +80,7 @@ enum AdminCommand {
     ImportMasterKey(ImportMasterKeyArgs),
     FscryptEnabled(FscryptEnabledArgs),
     Cleanup(CleanupArgs),
+    RemoveConversion(RemoveConversionArgs),
 }
 
 #[derive(FromArgs)]
@@ -440,6 +441,15 @@ struct CleanupArgs {
     /// path within the filesystem to clean up (default: all mounted filesystems)
     #[argh(positional)]
     dir: Option<PathBuf>,
+}
+
+#[derive(FromArgs)]
+#[argh(subcommand, name = "remove-conversion")]
+/// Remove an interrupted conversion, leaving the original data intact
+struct RemoveConversionArgs {
+    /// directory whose conversion is to be removed
+    #[argh(positional)]
+    dir: PathBuf,
 }
 
 #[derive(FromArgs)]
@@ -1196,6 +1206,15 @@ fn cmd_cleanup(args: &CleanupArgs) -> Result<()> {
     Ok(())
 }
 
+fn cmd_remove_conversion(args: &RemoveConversionArgs, ks: &Keystore) -> Result<()> {
+    let keyid = dirlock::convert::remove_conversion(&args.dir, ks)?;
+    // The conversion is gone from dirlock's point of view, but the
+    // encrypted copy from the trash needs to be purged manually.
+    dirlock::convert::purge_trash(&args.dir, &keyid)?;
+    println!("Conversion removed");
+    Ok(())
+}
+
 fn cmd_status(args: &StatusArgs, ks: &Keystore) -> Result<()> {
     use dirlock::convert::ConversionStatus;
     let Some(dir) = &args.dir else {
@@ -1318,6 +1337,7 @@ fn main() -> Result<()> {
             AdminCommand::ImportMasterKey(_) => cmd_import_master_key(&ks),
             AdminCommand::FscryptEnabled(args) => cmd_fscrypt_enabled(args),
             AdminCommand::Cleanup(args) => cmd_cleanup(args),
+            AdminCommand::RemoveConversion(args) => cmd_remove_conversion(args, &ks),
         },
     }
 }
