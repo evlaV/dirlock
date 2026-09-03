@@ -212,8 +212,9 @@ impl DirectoryCloner {
                 Err(e) => break Err(e), // Error reading from child process
                 Ok(0) => { // EOF
                     // Sync the filesystem before finishing
-                    _ = nix::unistd::syncfs(syncfd.as_raw_fd());
-                    break Ok(());
+                    let result = nix::unistd::syncfs(syncfd.as_raw_fd())
+                        .map_err(std::io::Error::from);
+                    break result;
                 },
                 Ok(_) => (),
             }
