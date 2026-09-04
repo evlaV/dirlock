@@ -1207,10 +1207,10 @@ fn cmd_cleanup(args: &CleanupArgs) -> Result<()> {
 }
 
 fn cmd_remove_conversion(args: &RemoveConversionArgs, ks: &Keystore) -> Result<()> {
-    let keyid = dirlock::convert::remove_conversion(&args.dir, ks)?;
-    // The conversion is gone from dirlock's point of view, but the
-    // encrypted copy from the trash needs to be purged manually.
-    dirlock::convert::purge_trash(&args.dir, &keyid)?;
+    let trash = dirlock::convert::remove_conversion(&args.dir, ks)?;
+    if let Err(e) = trash.purge() {
+        eprintln!("Warning: failed to remove the old data: {e}");
+    }
     println!("Conversion removed");
     Ok(())
 }

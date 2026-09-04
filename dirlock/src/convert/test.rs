@@ -48,10 +48,9 @@ fn make_test_protector(ks: &Keystore) -> Result<(Protector, ProtectorKey)> {
 
 /// Helper: commit a conversion job and remove the old data if it completed.
 fn commit_and_clean(job: ConvertJob) -> Result<CommitOutcome> {
-    let dir = job.src_dir().to_path_buf();
     let outcome = job.commit()?;
-    if let CommitOutcome::Committed(keyid) = &outcome {
-        purge_trash(&dir, keyid)?;
+    if let CommitOutcome::Committed(_, trash) = &outcome {
+        trash.purge()?;
     }
     Ok(outcome)
 }
@@ -86,7 +85,7 @@ fn test_convert() -> Result<()> {
     let job = ConvertJob::start(path, &protector, protector_key, &ks)?;
     let base = job.dirs.base.clone();
     let workdir = job.workdir.clone();
-    assert!(matches!(commit_and_clean(job)?, CommitOutcome::Committed(_)));
+    assert!(matches!(commit_and_clean(job)?, CommitOutcome::Committed(_, _)));
 
     // The directory show now be encrypted
     let encrypted_dir = EncryptedDir::open(path, &ks, LockState::Unlocked)?;
@@ -146,7 +145,7 @@ fn test_conversion_status_lifecycle() -> Result<()> {
     assert!(matches!(conversion_status(path)?, ConversionStatus::None));
     let job = ConvertJob::start(path, &protector, protector_key, &ks)?;
     assert!(matches!(conversion_status(path)?, ConversionStatus::Ongoing(_)));
-    assert!(matches!(commit_and_clean(job)?, CommitOutcome::Committed(_)));
+    assert!(matches!(commit_and_clean(job)?, CommitOutcome::Committed(_, _)));
     assert!(matches!(conversion_status(path)?, ConversionStatus::None));
 
     // The directory show now be encrypted
@@ -183,7 +182,7 @@ fn test_convert_symlink() -> Result<()> {
     let job = ConvertJob::start(&link, &protector, protector_key, &ks)?;
     assert_eq!(job.dirs.src, path.canonicalize()?);
     assert!(matches!(conversion_status(&link)?, ConversionStatus::Ongoing(_)));
-    assert!(matches!(commit_and_clean(job)?, CommitOutcome::Committed(_)));
+    assert!(matches!(commit_and_clean(job)?, CommitOutcome::Committed(_, _)));
     assert!(matches!(conversion_status(&link)?, ConversionStatus::None));
 
     // The symlink points to the encrypted directory and the data is there
@@ -265,7 +264,7 @@ fn test_cancel_and_resume() -> Result<()> {
     // This removes the deferred flag and the job is listed as ongoing
     assert!(!ConvertJob::flag_exists(&job.workdir, ConvertJob::DEFERRED));
     assert!(matches!(conversion_status(path)?, ConversionStatus::Ongoing(_)));
-    assert!(matches!(commit_and_clean(job)?, CommitOutcome::Committed(_)));
+    assert!(matches!(commit_and_clean(job)?, CommitOutcome::Committed(_, _)));
 
     let encrypted_dir = EncryptedDir::open(path, &ks, LockState::Unlocked)?;
     assert_eq!(std::fs::read_to_string(path.join("file.txt"))?, "hello");
@@ -300,7 +299,7 @@ fn test_concurrent_start_rejected() -> Result<()> {
     assert!(ConvertJob::start(path, &protector, protector_key, &ks).is_err());
 
     // Finish the first job
-    assert!(matches!(commit_and_clean(job)?, CommitOutcome::Committed(_)));
+    assert!(matches!(commit_and_clean(job)?, CommitOutcome::Committed(_, _)));
 
     // Check that everying is in its expected status
     let encrypted_dir = EncryptedDir::open(path, &ks, LockState::Unlocked)?;
@@ -347,7 +346,7 @@ fn test_crash_before_exchange() -> Result<()> {
     // start() moves the orphan back and re-runs rsync; commit() finishes the job
     clear_injected();
     let job = ConvertJob::start(path, &protector, protector_key, &ks)?;
-    assert!(matches!(commit_and_clean(job)?, CommitOutcome::Committed(_)));
+    assert!(matches!(commit_and_clean(job)?, CommitOutcome::Committed(_, _)));
 
     // Check that everying is in its expected status
     let encrypted_dir = EncryptedDir::open(path, &ks, LockState::Unlocked)?;
@@ -464,12 +463,11 @@ fn test_remove_conversion() -> Result<()> {
     assert!(ks.load_policy_data(&keyid).is_ok());
 
     // remove_conversion() leaves the encrypted copy in the trash dir
-    // and it's up to us to remove it using purge_trash().
-    let removed = remove_conversion(path, &ks)?;
-    assert_eq!(removed, keyid);
+    // and it's up to us to remove it using trash.purge().
+    let trash = remove_conversion(path, &ks)?;
     let trash_target = dirs.base.join(ConvertJob::TRASHDIR).join(keyid.to_string());
     assert!(trash_target.exists());
-    purge_trash(path, &keyid)?;
+    trash.purge()?;
     assert!(!trash_target.exists());
 
     // The work directory, the convertdb entry and the policy are gone
@@ -541,7 +539,7 @@ fn test_mark_dirty_restarts_commit() -> Result<()> {
 
     // The restart cleared the flag, now the conversion can complete
     assert!(!ConvertJob::flag_exists(&job.workdir, ConvertJob::DIRTY));
-    assert!(matches!(commit_and_clean(job)?, CommitOutcome::Committed(_)));
+    assert!(matches!(commit_and_clean(job)?, CommitOutcome::Committed(_, _)));
 
     // The encrypted directory contains the modified file
     let encrypted_dir = EncryptedDir::open(path, &ks, LockState::Unlocked)?;
@@ -695,7 +693,7 @@ fn test_dirty_conversion_is_deferred() -> Result<()> {
     assert!(matches!(conversion_status(path)?, ConversionStatus::Ongoing(_)));
 
     // Now the job can complete successfully
-    assert!(matches!(commit_and_clean(job)?, CommitOutcome::Committed(_)));
+    assert!(matches!(commit_and_clean(job)?, CommitOutcome::Committed(_, _)));
     clear_injected();
 
     // The directory is encrypted with the data intact.
@@ -757,7 +755,7 @@ fn test_dirty_restart_uses_checksum() -> Result<()> {
     };
 
     // Now the job can complete successfully
-    assert!(matches!(commit_and_clean(job)?, CommitOutcome::Committed(_)));
+    assert!(matches!(commit_and_clean(job)?, CommitOutcome::Committed(_, _)));
 
     // Verify that the final (encrypted) directory has the new contents
     let encrypted_dir = EncryptedDir::open(srcdir, &ks, LockState::Unlocked)?;

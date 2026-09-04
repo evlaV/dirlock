@@ -41,7 +41,6 @@ use dirlock::{
         conversion_status,
         ensure_not_filesystem_root,
         list_all_conversions,
-        purge_trash,
         remove_conversion,
     },
     protector::{
@@ -600,13 +599,12 @@ impl DirlockDaemon {
         // commit() consumes the job, so keep the source dir for the signals.
         let dir = job.src_dir().to_path_buf();
         match job.commit() {
-            Ok(CommitOutcome::Committed(keyid)) => {
+            Ok(CommitOutcome::Committed(keyid, trash)) => {
                 // The job finished successfully.
                 // Remove the old (unencrypted) data in a separate thread since
                 // it can take minutes and block the D-Bus interface.
-                let (dir2, keyid2) = (dir.clone(), keyid.clone());
                 tokio::task::spawn_blocking(move || {
-                    if let Err(e) = purge_trash(&dir2, &keyid2) {
+                    if let Err(e) = trash.purge() {
                         eprintln!("Warning: failed to remove the old data: {e}");
                     }
                 });
@@ -782,12 +780,11 @@ impl DirlockDaemon {
         &self,
         dir: &Path,
     ) -> Result<()> {
-        let keyid = remove_conversion(dir, &self.ks).into_dbus()?;
+        let trash = remove_conversion(dir, &self.ks).into_dbus()?;
         // Removing the old data can take minutes, so do it in a
         // separate thread.
-        let dir = dir.to_owned();
         tokio::task::spawn_blocking(move || {
-            if let Err(e) = purge_trash(&dir, &keyid) {
+            if let Err(e) = trash.purge() {
                 eprintln!("Warning: failed to remove the discarded data: {e}");
             }
         });

@@ -9,6 +9,7 @@ use cloner::DirectoryCloner;
 
 use anyhow::{anyhow, bail, Result};
 use nix::fcntl;
+use std::cell::Cell;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{ErrorKind, Write};
@@ -73,8 +74,9 @@ pub enum ConversionStatus {
 
 /// The outcome of a [`ConvertJob::commit`] call.
 pub enum CommitOutcome {
-    /// Conversion successful. Contains the encryption policy.
-    Committed(PolicyKeyId),
+    /// Conversion successful. Contains the encryption policy and the
+    /// old unencrypted data to trash.
+    Committed(PolicyKeyId, TrashedData),
     /// Conversion deferred: the user is still active.
     /// The caller should call `commit()` again once the user
     /// is logged out.
@@ -127,9 +129,9 @@ pub fn convert_dir(dir: &Path, protector: &Protector, protector_key: ProtectorKe
         }
         println!();
         match job.commit()? {
-            CommitOutcome::Committed(id) => {
+            CommitOutcome::Committed(id, trash) => {
                 // The conversion succeeded, let's remove the old (unencrypted) data
-                if let Err(e) = purge_trash(dir, &id) {
+                if let Err(e) = trash.purge() {
                     eprintln!("Warning: failed to remove the old data: {e}");
                 }
                 return Ok(id);
@@ -563,8 +565,9 @@ impl ConvertJob {
 
         // The original data is trashed, but removing it can take minutes.
         // In order to keep this commit() operation short return now
-        // and leave it up to the caller to call purge_trash().
-        Ok(CommitOutcome::Committed(self.keyid))
+        // and leave it up to the caller to call trash.purge().
+        let trash = TrashedData::new(trash_target, self.dirs.base);
+        Ok(CommitOutcome::Committed(self.keyid, trash))
     }
 }
 
@@ -656,9 +659,8 @@ impl ConvertDb {
 ///
 /// Like [`ConvertJob::commit()`] this is a quick operation and it
 /// returns as soon as the encrypted copy has been trashed. The caller
-/// gets the [`PolicyKeyId`] of the conversion and is expected to call
-/// [`purge_trash()`] with it when it can afford to block.
-pub fn remove_conversion(dir: &Path, ks: &Keystore) -> Result<PolicyKeyId> {
+/// must purge the returned [`TrashedData`] when it can afford to block.
+pub fn remove_conversion(dir: &Path, ks: &Keystore) -> Result<TrashedData> {
     let dirs = ConvertJob::get_src_dir_data(dir)?;
     if ! dirs.base.exists() {
         bail!("There is no conversion for {}", dirs.src.display());
@@ -701,7 +703,8 @@ pub fn remove_conversion(dir: &Path, ks: &Keystore) -> Result<PolicyKeyId> {
         r => r?,
     }
 
-    Ok(keyid)
+    let trash = TrashedData::new(trash_target, dirs.base);
+    Ok(trash)
 }
 
 /// Remove stale conversion entries for the filesystem containing `dir`.
@@ -771,27 +774,31 @@ pub fn cleanup(dir: &Path) -> Result<usize> {
     Ok(count)
 }
 
-/// Remove the old data that a successful conversion job left behind.
-/// We're not doing this as part of [`ConvertJob::commit()`] since it
-/// can take a long time and we want the commit operation to be quick.
-/// `keyid` is the value returned by the `commit()` call, so only the
-/// old data from that job is actually removed.
-///
-/// The caller should use this function when it can afford to block.
-/// This function can be interrupted and called multiple times safely.
-pub fn purge_trash(dir: &Path, keyid: &PolicyKeyId) -> Result<()> {
-    let mntpoint = get_mountpoint(dir)?;
-    let base = mntpoint.join(ConvertJob::BASEDIR);
-    let trashdir = base.join(ConvertJob::TRASHDIR);
-    if let Err(e) = remove_file_or_dir(&trashdir.join(keyid.to_string())) {
-        if e.kind() != ErrorKind::NotFound {
-            return Err(e.into());
+/// Leftover data from a conversion that can be safely removed.
+pub struct TrashedData {
+    /// Directory that contains the data, /mnt/.dirlock/.trash/dirname
+    trash: Cell<Option<PathBuf>>,
+    /// Base directory, /mnt/.dirlock
+    base: PathBuf,
+}
+
+impl TrashedData {
+    fn new(trash: PathBuf, base: PathBuf) -> Self {
+        Self { trash: Cell::new(Some(trash)), base }
+    }
+
+    /// Purge the trashed data, and the base directory if possible
+    pub fn purge(&self) -> std::io::Result<()> {
+        if let Some(trash) = self.trash.take() {
+            // Errors are reported but otherwise ignored, i.e. you
+            // cannot call purge() twice to try again.
+            remove_file_or_dir(&trash)?;
+            if let Ok(lock) = GlobalLockFile::new() {
+                ConvertJob::try_remove_base_dirs(&self.base, &lock);
+            }
         }
+        Ok(())
     }
-    if let Ok(lock) = GlobalLockFile::new() {
-        ConvertJob::try_remove_base_dirs(&base, &lock);
-    }
-    Ok(())
 }
 
 /// Remove stale conversion entries across all mounted filesystems.
