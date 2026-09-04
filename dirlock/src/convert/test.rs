@@ -224,6 +224,47 @@ fn test_filesystem_root() -> Result<()> {
     Ok(())
 }
 
+// A directory that contains encrypted content cannot be converted.
+#[test]
+fn test_convert_with_encrypted_subdir() -> Result<()> {
+    let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+    let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
+    crate::init()?;
+
+    let ks_dir = TempDir::new("keystore")?;
+    let ks = Keystore::from_path(ks_dir.path());
+
+    // Create a directory with data and an encrypted directory a few levels down
+    let dir = TempDir::new_in(&mntpoint, "convert")?;
+    let path = dir.path();
+    std::fs::write(path.join("file.txt"), "hello")?;
+    let enc = path.join("a/b/encrypted");
+    std::fs::create_dir_all(&enc)?;
+
+    let (protector, protector_key) = make_test_protector(&ks)?;
+    crate::encrypt_dir(&enc, &protector, protector_key.clone(), &ks)?;
+    std::fs::write(enc.join("secret.txt"), "secret")?;
+
+    // start() only looks at the source directory itself, so it succeeds
+    let job = ConvertJob::start(path, &protector, protector_key, &ks)?;
+    let err = job.wait().unwrap_err().to_string();
+    assert!(err.contains("has encrypted content"), "unexpected error: {err}");
+    drop(job);
+
+    // The source is untouched and the conversion can be discarded
+    remove_conversion(path, &ks)?.purge()?;
+    assert!(matches!(conversion_status(path)?, ConversionStatus::None));
+    crate::ensure_unencrypted(path, &ks)?;
+    assert_eq!(std::fs::read_to_string(path.join("file.txt"))?, "hello");
+    assert_eq!(std::fs::read_to_string(enc.join("secret.txt"))?, "secret");
+
+    // Don't leave the key of the encrypted subdirectory in the kernel
+    let encrypted_dir = EncryptedDir::open(&enc, &ks, LockState::Unlocked)?;
+    encrypted_dir.lock(RemoveKeyUsers::CurrentUser)?;
+
+    Ok(())
+}
+
 #[test]
 fn test_cancel_and_resume() -> Result<()> {
     let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
