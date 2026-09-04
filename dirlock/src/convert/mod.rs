@@ -556,7 +556,7 @@ impl ConvertJob {
         // The original data is trashed, but removing it can take minutes.
         // In order to keep this commit() operation short return now
         // and leave it up to the caller to call trash.purge().
-        let trash = TrashedData::new(trash_target, self.dirs.base);
+        let trash = TrashedData::new(Some(trash_target), self.dirs.base);
         Ok(CommitOutcome::Committed(self.keyid, trash))
     }
 }
@@ -663,8 +663,14 @@ pub fn remove_conversion(dir: &Path, ks: &Keystore) -> Result<TrashedData> {
         bail!("There is no conversion for {}", dirs.src.display());
     };
     let workdir = dirs.base.join(keyid.to_string());
-    let Some(lockfile) = LockFile::try_new(&workdir.join(ConvertJob::LOCKFILE))? else {
-        bail!("The conversion of {} is running, cancel it first", dirs.src.display());
+    let lockfile = match LockFile::try_new(&workdir.join(ConvertJob::LOCKFILE)) {
+        Ok(Some(lock)) => Some(lock),
+        Ok(None) => bail!("The conversion of {} is running, cancel it first",
+                          dirs.src.display()),
+        // No work directory, it was probably removed by hand.
+        // We still need to update the db and remove the policy.
+        Err(e) if e.kind() == ErrorKind::NotFound => None,
+        Err(e) => return Err(e.into()),
     };
     // Do this under the lock in case another process is or was trying
     // to complete this conversion.
@@ -674,10 +680,16 @@ pub fn remove_conversion(dir: &Path, ks: &Keystore) -> Result<TrashedData> {
 
     // Same teardown order as commit(): trash the work dir, update
     // convertdb and release the locks.
-    let trashdir = dirs.base.join(ConvertJob::TRASHDIR);
-    create_dir_if_needed(&trashdir)?;
-    let trash_target = trashdir.join(keyid.to_string());
-    safe_rename(&workdir, &trash_target)?;
+    let trash_target = match lockfile {
+        Some(_) => {
+            let trashdir = dirs.base.join(ConvertJob::TRASHDIR);
+            create_dir_if_needed(&trashdir)?;
+            let target = trashdir.join(keyid.to_string());
+            safe_rename(&workdir, &target)?;
+            Some(target)
+        }
+        None => None,
+    };
     db.remove(&dirs.src_rel);
     db.commit()?;
     drop(db);
@@ -802,8 +814,8 @@ pub struct TrashedData {
 }
 
 impl TrashedData {
-    fn new(trash: PathBuf, base: PathBuf) -> Self {
-        Self { trash: Cell::new(Some(trash)), base }
+    fn new(trash: Option<PathBuf>, base: PathBuf) -> Self {
+        Self { trash: Cell::new(trash), base }
     }
 
     /// Purge the trashed data, and the base directory if possible
@@ -812,9 +824,9 @@ impl TrashedData {
             // Errors are reported but otherwise ignored, i.e. you
             // cannot call purge() twice to try again.
             remove_file_or_dir(&trash)?;
-            if let Ok(lock) = GlobalLockFile::new() {
-                ConvertJob::try_remove_base_dirs(&self.base, &lock);
-            }
+        }
+        if let Ok(lock) = GlobalLockFile::new() {
+            ConvertJob::try_remove_base_dirs(&self.base, &lock);
         }
         Ok(())
     }

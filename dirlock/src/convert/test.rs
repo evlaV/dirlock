@@ -486,6 +486,100 @@ fn test_remove_conversion() -> Result<()> {
     Ok(())
 }
 
+// If someone manually removes the work directory but keeps the
+// convertdb entry and its policy then cleanup() won't touch anything
+// because the conversion is actually resumable.
+// Test that remove_conversion() can get rid of it correctly.
+#[test]
+fn test_remove_conversion_without_workdir() -> Result<()> {
+    let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+    let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
+    crate::init()?;
+
+    let ks_dir = TempDir::new("keystore")?;
+    let ks = Keystore::from_path(ks_dir.path());
+
+    // Create a directory with data and start converting it
+    let dir = TempDir::new_in(&mntpoint, "convert")?;
+    let path = dir.path();
+    std::fs::write(path.join("file.txt"), "hello")?;
+    let (protector, protector_key) = make_test_protector(&ks)?;
+    let job = ConvertJob::start(path, &protector, protector_key, &ks)?;
+    let workdir = job.workdir.clone();
+    let keyid = job.keyid.clone();
+    let dirs = ConvertJob::get_src_dir_data(path)?;
+    job.cancel()?;
+    assert!(job.wait().is_err()); // wait for rsync to finish
+    drop(job);
+
+    // Someone removed the work directory by hand (maybe to reclaim
+    // its space). The rest of the conversion stays.
+    std::fs::remove_dir_all(&workdir)?;
+    assert!(matches!(conversion_status(path)?, ConversionStatus::Interrupted(_)));
+    assert!(ConvertDb::load(&dirs.base)?.get(&dirs.src_rel).is_some());
+    assert!(ks.load_policy_data(&keyid).is_ok());
+
+    // The conversion can be removed correctly. Here trash.purge()
+    // does not remove the trashed workdir because there is none, but
+    // it can still remove the base directories.
+    let trash = remove_conversion(path, &ks)?;
+    trash.purge()?;
+    assert!(matches!(conversion_status(path)?, ConversionStatus::None));
+    assert!(ConvertDb::load(&dirs.base)?.get(&dirs.src_rel).is_none());
+    assert!(ks.load_policy_data(&keyid).is_err());
+
+    // The source directory is untouched
+    crate::ensure_unencrypted(path, &ks)?;
+    assert_eq!(std::fs::read_to_string(path.join("file.txt"))?, "hello");
+
+    Ok(())
+}
+
+// If someone manually removes the work directory but keeps the
+// convertdb entry and its policy then cleanup() won't touch anything
+// because the conversion is actually resumable.
+// Test that this is actually the case.
+#[test]
+fn test_resume_conversion_without_workdir() -> Result<()> {
+    let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+    let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
+    crate::init()?;
+
+    let ks_dir = TempDir::new("keystore")?;
+    let ks = Keystore::from_path(ks_dir.path());
+
+    // Create a directory with data and start converting it
+    let dir = TempDir::new_in(&mntpoint, "convert")?;
+    let path = dir.path();
+    std::fs::write(path.join("file.txt"), "hello")?;
+    let (protector, protector_key) = make_test_protector(&ks)?;
+    let job = ConvertJob::start(path, &protector, protector_key.clone(), &ks)?;
+    let workdir = job.workdir.clone();
+    let keyid = job.keyid.clone();
+    job.cancel()?;
+    assert!(job.wait().is_err()); // wait for rsync to finish
+    drop(job);
+
+    // Remove the work directory by hand
+    std::fs::remove_dir_all(&workdir)?;
+    assert!(matches!(conversion_status(path)?, ConversionStatus::Interrupted(_)));
+
+    // start() recreates it and reuses the policy of the convertdb entry
+    let job = ConvertJob::start(path, &protector, protector_key, &ks)?;
+    assert_eq!(job.keyid, keyid);
+    assert!(workdir.exists());
+    assert!(matches!(commit_and_clean(job)?, CommitOutcome::Committed(_, _)));
+
+    // The conversion completed with the original policy, data intact
+    let encrypted_dir = EncryptedDir::open(path, &ks, LockState::Unlocked)?;
+    assert_eq!(encrypted_dir.policy.keyid, keyid);
+    assert_eq!(std::fs::read_to_string(path.join("file.txt"))?, "hello");
+    assert!(matches!(conversion_status(path)?, ConversionStatus::None));
+    encrypted_dir.lock(RemoveKeyUsers::CurrentUser)?;
+
+    Ok(())
+}
+
 // If a conversion job is marked dirty then commit() restarts it, and
 // a second commit() updates the data and completes the conversion.
 #[test]
