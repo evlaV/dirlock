@@ -776,6 +776,16 @@ pub fn cleanup(dir: &Path) -> Result<usize> {
     Ok(count)
 }
 
+/// Remove stale conversion entries across all mounted filesystems.
+/// Returns the total number of entries removed.
+pub fn cleanup_all() -> Result<usize> {
+    let mut total = 0;
+    for m in crate::util::get_unique_mounts()? {
+        total += cleanup(m.fs_mounted_on.as_ref())?;
+    }
+    Ok(total)
+}
+
 // Helper function for safe_rename() and safe_exchange()
 fn do_safe_rename(src: &Path, dst: &Path, flags: fcntl::RenameFlags) -> std::io::Result<()> {
     let (Some(src_dir), Some(src_file), Some(dst_dir), Some(dst_file)) =
@@ -830,16 +840,6 @@ impl TrashedData {
         }
         Ok(())
     }
-}
-
-/// Remove stale conversion entries across all mounted filesystems.
-/// Returns the total number of entries removed.
-pub fn cleanup_all() -> Result<usize> {
-    let mut total = 0;
-    for m in crate::util::get_unique_mounts()? {
-        total += cleanup(m.fs_mounted_on.as_ref())?;
-    }
-    Ok(total)
 }
 
 /// A conversion that has not finished yet.
