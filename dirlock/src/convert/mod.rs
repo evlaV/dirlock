@@ -13,6 +13,7 @@ use std::cell::Cell;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{ErrorKind, Write};
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
@@ -352,7 +353,7 @@ impl ConvertJob {
             if dstdir.exists() {
                 fs::remove_dir_all(&dstdir)?;
             }
-            fs::rename(&orphan, &dstdir)?;
+            safe_rename(&orphan, &dstdir)?;
         }
 
         // Copy the source directory inside the encrypted directory.
@@ -527,22 +528,11 @@ impl ConvertJob {
         // The dirty flag is unset: let's finish the conversion.
         // Move the encrypted copy from workdir/encrypted/ to workdir/
         let dstdir_2 = self.workdir.join(Self::DSTDIR);
-        fs::rename(&self.dstdir, &dstdir_2)?;
+        safe_rename(&self.dstdir, &dstdir_2)?;
 
         check_injected_error(Injected::ConvertCommitBeforeExchange)?;
-
         // Exchange atomically the source directory and its encrypted copy
-        fcntl::renameat2(None, &self.dirs.src, None, &dstdir_2,
-                         fcntl::RenameFlags::RENAME_EXCHANGE)?;
-        // Make both renames durable.
-        let workdir_e = self.workdir.join(Self::ENCRYPTED);
-        let src_parent = self.dirs.src.parent().unwrap_or(&self.dirs.src);
-        for dir in [workdir_e.as_path(), self.workdir.as_path(), src_parent] {
-            if let Ok(fd) = fs::File::open(dir) {
-                _ = fd.sync_all();
-            }
-        }
-
+        safe_exchange(&self.dirs.src, &dstdir_2)?;
         check_injected_error(Injected::ConvertCommitAfterExchange)?;
 
         // The conversion is done. workdir contains the original data
@@ -552,7 +542,7 @@ impl ConvertJob {
         let trashdir = self.dirs.base.join(Self::TRASHDIR);
         create_dir_if_needed(&trashdir)?;
         let trash_target = trashdir.join(self.keyid.to_string());
-        fs::rename(&self.workdir, &trash_target)?;
+        safe_rename(&self.workdir, &trash_target)?;
 
         check_injected_error(Injected::ConvertCommitAfterTrashRename)?;
 
@@ -687,7 +677,7 @@ pub fn remove_conversion(dir: &Path, ks: &Keystore) -> Result<TrashedData> {
     let trashdir = dirs.base.join(ConvertJob::TRASHDIR);
     create_dir_if_needed(&trashdir)?;
     let trash_target = trashdir.join(keyid.to_string());
-    fs::rename(&workdir, &trash_target)?;
+    safe_rename(&workdir, &trash_target)?;
     db.remove(&dirs.src_rel);
     db.commit()?;
     drop(db);
@@ -735,14 +725,14 @@ pub fn cleanup(dir: &Path) -> Result<usize> {
             if create_dir_if_needed(&trashdir).is_ok() {
                 let workdir = base.join(keyid.to_string());
                 let trashed_dir = trashdir.join(keyid.to_string());
-                let mut result = fs::rename(&workdir, &trashed_dir);
+                let mut result = safe_rename(&workdir, &trashed_dir);
                 if matches!(&result, Err(e) if e.kind() != ErrorKind::NotFound) {
                     // The rename failed. Is there already an item
                     // in the trash dir with the same name?
                     // This should not happen but we can still handle
                     // the situation easily: delete it and rename again.
                     let _ = remove_file_or_dir(&trashed_dir);
-                    result = fs::rename(&workdir, &trashed_dir);
+                    result = safe_rename(&workdir, &trashed_dir);
                 }
                 match result {
                     Err(e) if e.kind() != ErrorKind::NotFound => {
@@ -772,6 +762,35 @@ pub fn cleanup(dir: &Path) -> Result<usize> {
     }
 
     Ok(count)
+}
+
+// Helper function for safe_rename() and safe_exchange()
+fn do_safe_rename(src: &Path, dst: &Path, flags: fcntl::RenameFlags) -> std::io::Result<()> {
+    let (Some(src_dir), Some(src_file), Some(dst_dir), Some(dst_file)) =
+        (src.parent(), src.file_name(), dst.parent(), dst.file_name()) else {
+        let e = format!("Unable to rename {} to {}", src.display(), dst.display());
+        return Err(std::io::Error::new(ErrorKind::InvalidInput, e));
+    };
+    let src_fd = fs::File::open(src_dir)?;
+    let dst_fd = fs::File::open(dst_dir)?;
+    fcntl::renameat2(Some(src_fd.as_raw_fd()), src_file,
+                     Some(dst_fd.as_raw_fd()), dst_file, flags)?;
+    src_fd.sync_all()?;
+    if src_dir != dst_dir {
+        dst_fd.sync_all()?;
+    }
+    Ok(())
+}
+
+/// Rename `src` to `dst`, followed by fsync on both directories.
+/// Fails if `dst` already exists.
+fn safe_rename(src: &Path, dst: &Path) -> std::io::Result<()> {
+    do_safe_rename(src, dst, fcntl::RenameFlags::RENAME_NOREPLACE)
+}
+
+/// Exchange `src` and `dst`, followed by fsync on both directories.
+fn safe_exchange(src: &Path, dst: &Path) -> std::io::Result<()> {
+    do_safe_rename(src, dst, fcntl::RenameFlags::RENAME_EXCHANGE)
 }
 
 /// Leftover data from a conversion that can be safely removed.
