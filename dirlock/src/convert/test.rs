@@ -967,7 +967,7 @@ fn test_cleanup() -> Result<()> {
     let trash_leftover = trash.join("stale");
     std::fs::create_dir_all(&trash_leftover)?;
 
-    // Add an obstacle that prevents trashing the dead conversion's workdir.
+    // Add an obstacle with the same name as the dead conversion's workdir.
     let obstacle = trash.join(gone_workdir.file_name().unwrap());
     std::fs::write(&obstacle, "x")?;
 

@@ -721,58 +721,55 @@ pub fn cleanup(dir: &Path) -> Result<usize> {
     if ! base.exists() {
         return Ok(0);
     }
+    let trashdir = base.join(ConvertJob::TRASHDIR);
 
-    // 1. Clean stale convertdb entries
-    let entries : Vec<PathBuf> = {
-        let db = ConvertDb::load(&base)?;
-        db.keys().cloned().collect()
-    };
-    let mut count = 0;
-    for entry in entries {
-        let src = mntpoint.join(&entry);
-        // If source dir is gone or the conversion is finished, trash
-        // the workdir and drop the convertdb entry.
-        if !is_real_dir(&src) || matches!(ConvertJob::status(&src)?, ConversionStatus::None) {
-            let mut db = ConvertDb::load(&base)?;
-            let Some(keyid) = db.get(&entry).cloned() else {
-                continue;
-            };
-            let trashdir = base.join(ConvertJob::TRASHDIR);
-            if create_dir_if_needed(&trashdir).is_ok() {
-                let workdir = base.join(keyid.to_string());
-                let trashed_dir = trashdir.join(keyid.to_string());
-                let mut result = safe_rename(&workdir, &trashed_dir);
-                if matches!(&result, Err(e) if e.kind() != ErrorKind::NotFound) {
-                    // The rename failed. Is there already an item
-                    // in the trash dir with the same name?
-                    // This should not happen but we can still handle
-                    // the situation easily: delete it and rename again.
-                    let _ = remove_file_or_dir(&trashed_dir);
-                    result = safe_rename(&workdir, &trashed_dir);
-                }
-                match result {
-                    Err(e) if e.kind() != ErrorKind::NotFound => {
-                        eprintln!("Warning: failed to trash workdir: {e}");
-                    },
-                    _ => {
-                        db.remove(&entry);
-                        db.commit()?;
-                        count += 1;
-                    }
-                }
-            }
-        }
-    }
-
-    // 2. Purge any leftover trashed workdirs from crashed commits.
-    //    This does not need the global lock.
-    if let Ok(trash_entries) = fs::read_dir(base.join(ConvertJob::TRASHDIR)) {
+    // 1. Purge any leftover trashed workdirs from crashed commits.
+    //    This does not need the global lock and ensures that the
+    //    dir is empty before we trash new entries in step 2.
+    if let Ok(trash_entries) = fs::read_dir(&trashdir) {
         for entry in trash_entries.flatten() {
             let _ = remove_file_or_dir(&entry.path());
         }
     }
 
-    // 3. Remove .trash and the base dir if they are now empty
+    // 2. Clean stale convertdb entries, holding the global lock
+    let mut count = 0;
+    let mut db = ConvertDb::load(&base)?;
+    for (entry, keyid) in db.db.clone() {
+        let src = mntpoint.join(&entry);
+        if is_real_dir(&src) && crate::get_policy(&src)?.is_none() {
+            // A valid, existing conversion requires an actual
+            // unencrypted source dir, so if there is one, keep it.
+            continue;
+        }
+        // Now we know that this entry does not have an associated
+        // conversion: status() would return ConversionStatus::None
+        create_dir_if_needed(&trashdir)?;
+        let keyid_str = keyid.to_string();
+        let workdir = base.join(&keyid_str);
+        let trashed_dir = trashdir.join(&keyid_str);
+        // Trash the work directory
+        match safe_rename(&workdir, &trashed_dir) {
+            Err(e) if e.kind() != ErrorKind::NotFound => {
+                eprintln!("Warning: failed to trash workdir: {e}");
+            }
+            _ => {
+                db.remove(&entry);
+                db.commit()?;
+                count += 1;
+            }
+        }
+    }
+    drop(db); // Close the db and release the global lock
+
+    // 3. Purge the newly trashed workdirs. This does not need the global lock.
+    if let Ok(trash_entries) = fs::read_dir(&trashdir) {
+        for entry in trash_entries.flatten() {
+            let _ = remove_file_or_dir(&entry.path());
+        }
+    }
+
+    // 4. Remove .trash and the base dir if they are now empty
     if let Ok(lock) = GlobalLockFile::new() {
         ConvertJob::try_remove_base_dirs(&base, &lock);
     }
