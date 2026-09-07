@@ -402,8 +402,8 @@ fn test_crash_before_exchange() -> Result<()> {
 // Test a crash after RENAME_EXCHANGE but before convertdb is updated
 // - The source directory is already encrypted
 // - workdir still exists, and there's an entry in the convertdb file
-// - conversion_status() should trash the workdir, drop the entry and
-//   report None
+// - conversion_status() should report None but leave both in place,
+//   they are reclaimed by cleanup()
 #[test]
 fn test_crash_after_exchange() -> Result<()> {
     let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
@@ -692,7 +692,8 @@ fn test_mark_dirty_restarts_commit() -> Result<()> {
 // - The source directory is already encrypted
 // - The old workdir has been moved to .trash
 // - The convertdb entry is still there
-// - conversion_status() should remove the trashed data and return None
+// - conversion_status() should return None but leave the trashed data
+//   and the entry in place, they are reclaimed by cleanup()
 #[test]
 fn test_crash_after_trash_rename() -> Result<()> {
     let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
