@@ -616,7 +616,7 @@ impl ConvertDb {
             return Ok(());
         }
         let basedir = self.filename.parent().unwrap();
-        if self.db.is_empty() {
+        let result = if self.db.is_empty() {
             // Remove the db file. The base dir must be cleaned by the caller
             if self.filename.exists() {
                 fs::remove_file(&self.filename)?;
@@ -637,7 +637,11 @@ impl ConvertDb {
             serde_json::to_writer_pretty(&mut file, &self.db)?;
             file.write_all(b"\n")?;
             file.commit()
+        };
+        if result.is_ok() {
+            self.dirty = false;
         }
+        result
     }
 }
 
