@@ -217,6 +217,14 @@ impl ConvertJob {
             return Ok(ConversionStatus::None);
         };
 
+        // If the srcdir is already encrypted then a previous commit()
+        // completed the exchange but crashed before removing the db
+        // entry. The conversion is finished, so there is nothing
+        // pending here; cleanup() reclaims the leftovers.
+        if crate::get_policy(&dirs.src)?.is_some() {
+            return Ok(ConversionStatus::None);
+        }
+
         // If the workdir lock can't be acquired there's a live job.
         // A live job is deferred if it's waiting for the owner to log out.
         let workdir = dirs.base.join(id.to_string());
@@ -227,17 +235,9 @@ impl ConvertJob {
             return Ok(ConversionStatus::Ongoing(id));
         }
 
-        // No active job. If the directory is not encrypted yet then the
-        // conversion was interrupted and can be resumed later.
-        if crate::get_policy(&dirs.src)?.is_none() {
-            return Ok(ConversionStatus::Interrupted(id));
-        }
-
-        // The directory is already encrypted: a previous commit()
-        // completed the exchange but crashed before removing the db
-        // entry. The conversion is finished, so there is nothing
-        // pending here; cleanup() reclaims the leftovers.
-        Ok(ConversionStatus::None)
+        // No live job: the conversion was interrupted and can be
+        // resumed later.
+        Ok(ConversionStatus::Interrupted(id))
     }
 
     /// Start a new asynchronous job to convert `dir` to an encrypted folder
