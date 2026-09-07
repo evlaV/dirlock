@@ -6,6 +6,7 @@
 
 use anyhow::{anyhow, bail, Result};
 use nix::libc;
+use nix::sys::statvfs::statvfs;
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io::ErrorKind;
@@ -46,6 +47,26 @@ pub fn get_homedir(user: &str) -> Result<Option<PathBuf>> {
 pub fn dir_is_empty(dir: &Path) -> std::io::Result<bool> {
     let empty = std::fs::read_dir(dir)?.next().is_none();
     Ok(empty)
+}
+
+/// Space available in a filesystem
+pub struct FreeSpace {
+    /// Available bytes
+    pub bytes: u64,
+    /// Available inodes, or None if the filesystem has no fixed limit
+    pub inodes: Option<u64>,
+}
+
+/// Get the space available in the filesystem that contains `path`
+pub fn free_space(path: &Path) -> std::io::Result<FreeSpace> {
+    let vfs = statvfs(path).map_err(std::io::Error::from)?;
+    let bytes = vfs.blocks_available() as u64 * vfs.fragment_size() as u64;
+    // Some filesystems (e.g. btrfs) report 0 here to indicate no fixed inode limit
+    let inodes = match vfs.files_available() as u64 {
+        0 => None,
+        n => Some(n),
+    };
+    Ok(FreeSpace { bytes, inodes })
 }
 
 /// Like [`Path::is_dir`] but does not follow symlinks
