@@ -28,6 +28,7 @@ use std::{
     sync::atomic::Ordering::Relaxed,
 };
 
+use crate::config::Config;
 use crate::util;
 
 /// A background process that clones a directory with all its contents
@@ -140,19 +141,17 @@ impl DirectoryCloner {
     /// not encrypted, and that `dst` has enough free space and inodes.
     /// Returns the number of entries in `src`.
     fn validate_dirs(state: &ClonerState, src: &Path, dst: &Path) -> Result<u64> {
-        // It's not enough that `dst` can hold the contents of `src`,
-        // it must also have at least this amount of extra free space and inodes.
-        const MIN_FREE_BYTES: u64 = 512 * 1024 * 1024;
-        const MIN_FREE_INODES: u64 = 1000;
-
         let free = util::free_space(dst)?;
 
         let mut buf = Vec::with_capacity(512);
         buf.extend_from_slice(src.as_os_str().as_bytes());
         buf.push(0);
         let src_stx = util::Statx::from_path(CStr::from_bytes_with_nul(&buf)?)?;
-        let mut total_bytes: u64 = MIN_FREE_BYTES;
-        let mut total_inodes: u64 = MIN_FREE_INODES;
+        // It's not enough that `dst` can hold the contents of `src`, it
+        // must also leave enough free space and inodes for the rest of
+        // the system, so start counting from there.
+        let mut total_bytes = Config::fs_min_free_bytes();
+        let mut total_inodes = Config::fs_min_free_inodes();
         let mut entries: u64 = 0;
         for iter in walkdir::WalkDir::new(src).follow_links(false) {
             if state.cancelled.load(Relaxed) {

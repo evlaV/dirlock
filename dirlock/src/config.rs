@@ -21,6 +21,8 @@ const KEYSTORE_DIR_ENV_VAR : &str = "DIRLOCK_KEYSTORE";
 const DEFAULT_KEYSTORE_DIR : &str = "/var/lib/dirlock";
 const RUNTIME_DATA_DIR : &str = "/run";
 const DEFAULT_TPM2_MIN_LOCAL_TRIES : u32 = 10;
+const DEFAULT_FS_MIN_FREE_BYTES : u64 = 512 * 1024 * 1024;
+const DEFAULT_FS_MIN_FREE_INODES : u64 = 1000;
 
 #[derive(Deserialize)]
 pub struct Config {
@@ -31,6 +33,12 @@ pub struct Config {
     tpm2_min_local_tries: u32,
     #[serde(default = "default_keystore_dir")]
     keystore_dir: PathBuf,
+    /// Bytes that must remain free in a filesystem after a conversion
+    #[serde(default = "default_fs_min_free_bytes")]
+    fs_min_free_bytes: u64,
+    /// Inodes that must remain free in a filesystem after a conversion
+    #[serde(default = "default_fs_min_free_inodes")]
+    fs_min_free_inodes: u64,
 }
 
 impl Default for Config {
@@ -39,6 +47,8 @@ impl Default for Config {
             tpm2_tcti: default_tpm2_tcti(),
             keystore_dir: default_keystore_dir(),
             tpm2_min_local_tries: default_tpm2_min_local_tries(),
+            fs_min_free_bytes: default_fs_min_free_bytes(),
+            fs_min_free_inodes: default_fs_min_free_inodes(),
         }
     }
 }
@@ -57,6 +67,14 @@ fn default_keystore_dir() -> PathBuf {
 
 fn default_tpm2_min_local_tries() -> u32 {
     DEFAULT_TPM2_MIN_LOCAL_TRIES
+}
+
+fn default_fs_min_free_bytes() -> u64 {
+    DEFAULT_FS_MIN_FREE_BYTES
+}
+
+fn default_fs_min_free_inodes() -> u64 {
+    DEFAULT_FS_MIN_FREE_INODES
 }
 
 impl Config {
@@ -86,6 +104,14 @@ impl Config {
     #[cfg_attr(not(feature = "tpm2"), allow(dead_code))]
     pub fn tpm2_min_local_tries() -> u32 {
         Config::get().unwrap().tpm2_min_local_tries
+    }
+
+    pub fn fs_min_free_bytes() -> u64 {
+        Config::get().unwrap().fs_min_free_bytes
+    }
+
+    pub fn fs_min_free_inodes() -> u64 {
+        Config::get().unwrap().fs_min_free_inodes
     }
 
     pub fn runtime_dir() -> &'static Path {
