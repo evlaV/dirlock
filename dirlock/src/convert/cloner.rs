@@ -252,21 +252,34 @@ impl DirectoryCloner {
         self.state.finished.load(Relaxed)
     }
 
-    /// Cancel the copy operation, killing the child rsync process
-    pub fn cancel(&self) -> Result<()> {
-        // If swap() returns true -> already cancelled, nothing to do
-        if self.state.cancelled.swap(true, Relaxed) {
-            return Ok(());
-        }
+    /// Send a signal to the rsync process if it's still running
+    fn signal_child(&self, sig: signal::Signal) -> Result<()> {
         if ! self.is_finished() {
             if let Some(pid) = *self.state.child_pid.lock().unwrap() {
-                match signal::kill(pid, Some(signal::SIGTERM)) {
+                match signal::kill(pid, Some(sig)) {
                     Err(nix::errno::Errno::ESRCH) => (), // already exited
                     x => x?,
                 }
             }
         }
         Ok(())
+    }
+
+    /// Cancel the copy operation, killing the child rsync process
+    pub fn cancel(&self) -> Result<()> {
+        // If swap() returns true -> already cancelled, nothing to do
+        if self.state.cancelled.swap(true, Relaxed) {
+            return Ok(());
+        }
+        self.signal_child(signal::SIGTERM)
+    }
+
+    /// Kill rsync without giving it a chance to exit cleanly.
+    /// This acts even if the job is already cancelled, so it can be
+    /// used when SIGTERM was not enough.
+    pub fn kill(&self) -> Result<()> {
+        self.state.cancelled.store(true, Relaxed);
+        self.signal_child(signal::SIGKILL)
     }
 
     /// Wait until the copy is finished

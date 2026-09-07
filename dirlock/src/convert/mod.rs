@@ -389,6 +389,12 @@ impl ConvertJob {
         self.cloner.cancel()
     }
 
+    /// Like `cancel()` but without giving rsync a chance to exit
+    /// cleanly. Also works on an already cancelled job.
+    pub fn kill(&self) -> Result<()> {
+        self.cloner.kill()
+    }
+
     /// Wail until the operation is done
     pub fn wait(&self) -> Result<()> {
         self.cloner.wait()
