@@ -34,6 +34,8 @@ use dirlock::{
     ProtectedPolicyKey,
     RemovalStatusFlags,
     RemoveKeyUsers,
+    util,
+    config::Config,
     convert::{
         CommitOutcome,
         ConversionStatus,
@@ -65,6 +67,8 @@ enum Event {
     JobFinished(u32),
     /// A deferred job should be retried
     JobRetry(u32),
+    /// The job was stopped and must not be committed
+    JobAborted(u32, String),
 }
 
 /// A running conversion job with the background task that watches it
@@ -73,12 +77,29 @@ struct JobHandle {
     task: JoinHandle<()>,
 }
 
+/// Disk space that must remain available while a conversion is running
+#[derive(Clone, Copy)]
+struct MinFree {
+    bytes: u64,
+    inodes: u64,
+}
+
+impl MinFree {
+    fn from_config() -> Self {
+        MinFree {
+            bytes: Config::fs_min_free_bytes(),
+            inodes: Config::fs_min_free_inodes(),
+        }
+    }
+}
+
 /// Global state of the dirlock D-Bus daemon
 struct DirlockDaemon {
     jobs: HashMap<u32, JobHandle>,
     last_jobid: u32,
     tx: mpsc::Sender<Event>,
     ks: Keystore,
+    min_free: MinFree,
 }
 
 /// Convert a Result into a zbus::fdo::Result
@@ -585,6 +606,7 @@ impl DirlockDaemon {
     async fn handle_event(&mut self, emitter: &SignalEmitter<'_>, ev: Event) -> zbus::Result<()> {
         let jobid = match ev {
             Event::JobFinished(jobid) | Event::JobRetry(jobid) => jobid,
+            Event::JobAborted(jobid, _) => jobid,
         };
         let Some(handle) = self.jobs.remove(&jobid) else {
             // The job was cancelled before we got here, so nothing to do
@@ -596,6 +618,10 @@ impl DirlockDaemon {
         let Some(job) = Arc::into_inner(handle.job) else {
             return Err(zbus::Error::Failure(format!("BUG: job {jobid} is still referenced")));
         };
+        // If the job was aborted, emit JobFailed and stop now.
+        if let Event::JobAborted(_, reason) = ev {
+            return Self::job_failed(emitter, jobid, job.src_dir(), reason).await;
+        }
         // commit() consumes the job, so keep the source dir for the signals.
         let dir = job.src_dir().to_path_buf();
         match job.commit() {
@@ -620,7 +646,8 @@ impl DirlockDaemon {
             Ok(CommitOutcome::Restarted(job)) => {
                 // The job was restarted. Wait for it to complete.
                 let job = Arc::new(job);
-                let task = Self::watch_job(job.clone(), jobid, emitter.to_owned(), self.tx.clone());
+                let task = Self::watch_job(job.clone(), jobid, emitter.to_owned(),
+                                           self.tx.clone(), self.min_free);
                 self.jobs.insert(jobid, JobHandle { job, task });
                 Self::job_restarted(emitter, jobid, &dir).await
             }
@@ -631,21 +658,54 @@ impl DirlockDaemon {
     /// Spawn a background task that watches a running job.
     /// It emits [`JobProgress`] as it advances, and sends a
     /// [`Event::JobFinished`] event once it's ready.
+    ///
+    /// The task also stops the job if the filesystem is running out of
+    /// space, sending [`Event::JobAborted`] instead.
     fn watch_job(job: Arc<ConvertJob>,
                  jobid: u32,
                  emitter: SignalEmitter<'static>,
                  tx: mpsc::Sender<Event>,
+                 min_free: MinFree,
     ) -> JoinHandle<()> {
         tokio::task::spawn(async move {
-            let duration = std::time::Duration::new(2, 0);
+            // Free space is checked using `check_interval`, and the
+            // JobProgress signal is emitted every `checks_per_signal` checks.
+            let check_interval = std::time::Duration::from_millis(500);
+            let checks_per_signal = 4;
+            let mut checks = 0;
             let mut progress = 0;
             while ! job.is_finished() {
-                tokio::time::sleep(duration).await;
-                let new_progress = job.progress();
-                if new_progress > progress {
-                    progress = new_progress;
-                    _ = Self::job_progress(&emitter, jobid, job.src_dir(), progress).await;
+                // Stop the job before it fills up the filesystem
+                let reason = match util::free_space(job.src_dir()) {
+                    Ok(space) if space.bytes < min_free.bytes =>
+                        Some("Not enough free space, conversion aborted"),
+                    Ok(space) if space.inodes.is_some_and(|n| n < min_free.inodes) =>
+                        Some("Not enough free inodes, conversion aborted"),
+                    _ => None,
+                };
+                if let Some(reason) = reason {
+                    // Give rsync a chance to exit on its own first
+                    _ = job.cancel();
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    if ! job.is_finished() {
+                        _ = job.kill();
+                    }
+                    drop(job);
+                    _ = tx.send(Event::JobAborted(jobid, String::from(reason))).await;
+                    return;
                 }
+
+                checks += 1;
+                if checks == checks_per_signal {
+                    checks = 0;
+                    let new_progress = job.progress();
+                    if new_progress > progress {
+                        progress = new_progress;
+                        _ = Self::job_progress(&emitter, jobid, job.src_dir(), progress).await;
+                    }
+                }
+
+                tokio::time::sleep(check_interval).await;
             }
             // Once the job is finished, drop this reference and emit
             // the JobFinished signal.
@@ -750,7 +810,8 @@ impl DirlockDaemon {
 
         // Launch a task that reports the status of the job
         let emitter = emitter.into_owned();
-        let task = Self::watch_job(job.clone(), jobid, emitter, self.tx.clone());
+        let task = Self::watch_job(job.clone(), jobid, emitter, self.tx.clone(),
+                                   self.min_free);
         self.jobs.insert(jobid, JobHandle { job, task });
 
         // Return the job ID to the caller
@@ -931,6 +992,7 @@ async fn main() -> anyhow::Result<()> {
         last_jobid: 0,
         tx,
         ks: Keystore::default(),
+        min_free: MinFree::from_config(),
     };
 
     let builder = zbus::connection::Builder::system()?;
@@ -1098,6 +1160,7 @@ mod tests {
                 last_jobid: 0,
                 tx,
                 ks,
+                min_free: MinFree::from_config(),
             };
 
             let builder = zbus::connection::Builder::session()?;

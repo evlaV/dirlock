@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: BSD-3-Clause
  */
 
-pub(crate) mod config;
+pub mod config;
 pub mod convert;
 pub(crate) mod crypto;
 pub(crate) mod fscrypt;
