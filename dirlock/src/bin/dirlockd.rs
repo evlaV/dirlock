@@ -64,11 +64,11 @@ const OTHER_USERS_FLAG: &str = "other-users";
 /// Events sent by background tasks to the main thread
 enum Event {
     /// The job has finished converting the data; it's time to call commit().
-    JobFinished(u32),
+    Finished(u32),
     /// A deferred job should be retried
-    JobRetry(u32),
+    Retry(u32),
     /// The job was stopped and must not be committed
-    JobAborted(u32, String),
+    Aborted(u32, String),
 }
 
 /// A running conversion job with the background task that watches it
@@ -605,8 +605,8 @@ impl DirlockDaemon {
     /// Handle events sent by background tasks
     async fn handle_event(&mut self, emitter: &SignalEmitter<'_>, ev: Event) -> zbus::Result<()> {
         let jobid = match ev {
-            Event::JobFinished(jobid) | Event::JobRetry(jobid) => jobid,
-            Event::JobAborted(jobid, _) => jobid,
+            Event::Finished(jobid) | Event::Retry(jobid) => jobid,
+            Event::Aborted(jobid, _) => jobid,
         };
         let Some(handle) = self.jobs.remove(&jobid) else {
             // The job was cancelled before we got here, so nothing to do
@@ -619,7 +619,7 @@ impl DirlockDaemon {
             return Err(zbus::Error::Failure(format!("BUG: job {jobid} is still referenced")));
         };
         // If the job was aborted, emit JobFailed and stop now.
-        if let Event::JobAborted(_, reason) = ev {
+        if let Event::Aborted(_, reason) = ev {
             return Self::job_failed(emitter, jobid, job.src_dir(), reason).await;
         }
         // commit() consumes the job, so keep the source dir for the signals.
@@ -657,10 +657,10 @@ impl DirlockDaemon {
 
     /// Spawn a background task that watches a running job.
     /// It emits [`JobProgress`] as it advances, and sends a
-    /// [`Event::JobFinished`] event once it's ready.
+    /// [`Event::Finished`] event once it's ready.
     ///
     /// The task also stops the job if the filesystem is running out of
-    /// space, sending [`Event::JobAborted`] instead.
+    /// space, sending [`Event::Aborted`] instead.
     fn watch_job(job: Arc<ConvertJob>,
                  jobid: u32,
                  emitter: SignalEmitter<'static>,
@@ -691,7 +691,7 @@ impl DirlockDaemon {
                         _ = job.kill();
                     }
                     drop(job);
-                    _ = tx.send(Event::JobAborted(jobid, String::from(reason))).await;
+                    _ = tx.send(Event::Aborted(jobid, String::from(reason))).await;
                     return;
                 }
 
@@ -707,11 +707,11 @@ impl DirlockDaemon {
 
                 tokio::time::sleep(check_interval).await;
             }
-            // Once the job is finished, drop this reference and emit
-            // the JobFinished signal.
+            // Once the copy is finished, drop this reference and send
+            // the 'Finished' event so the job is committed.
             _ = job.wait();
             drop(job);
-            _ = tx.send(Event::JobFinished(jobid)).await;
+            _ = tx.send(Event::Finished(jobid)).await;
         })
     }
 
@@ -731,7 +731,7 @@ impl DirlockDaemon {
             }
             // Drop our reference so handle_event's Arc::into_inner succeeds.
             drop(job);
-            _ = tx.send(Event::JobRetry(jobid)).await;
+            _ = tx.send(Event::Retry(jobid)).await;
         })
     }
 }
