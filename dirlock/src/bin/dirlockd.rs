@@ -1148,6 +1148,13 @@ mod tests {
         ///
         /// Returns a new [`TestService`].
         async fn start() -> Result<Self> {
+            Self::start_with_min_free(MinFree::from_config()).await
+        }
+
+        /// Like [`start()`](Self::start), but letting the caller
+        /// override `min_free`, since the global config is the same
+        /// for the whole process.
+        async fn start_with_min_free(min_free: MinFree) -> Result<Self> {
             let _keystore_dir = TempDir::new("dirlock-dbus-test")?;
             let ks = Keystore::from_path(_keystore_dir.path());
 
@@ -1160,7 +1167,7 @@ mod tests {
                 last_jobid: 0,
                 tx,
                 ks,
-                min_free: MinFree::from_config(),
+                min_free,
             };
 
             let builder = zbus::connection::Builder::session()?;
@@ -2466,6 +2473,48 @@ mod tests {
         assert_eq!(std::fs::read_to_string(dir.path().join("subdir/nested.txt"))?, "world");
 
         proxy.lock_dir(dir_str).await?;
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_convert_out_of_space() -> Result<()> {
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        // This free space condition cannot be satisfied, so the first
+        // check should abort the job.
+        let min_free = MinFree { bytes: u64::MAX, inodes: u64::MAX };
+        let srv = TestService::start_with_min_free(min_free).await?;
+        let proxy = srv.proxy().await?;
+
+        // Create a directory with some files
+        let dir = TempDir::new_in(&mntpoint, "convert")?;
+        let dir_str = dir.path().to_str().unwrap();
+        std::fs::write(dir.path().join("file.txt"), "hello")?;
+
+        // Create a protector
+        let password = "1234";
+        let prot_id = create_test_protector(&proxy, password).await?;
+
+        // The job must report JobFailed, not JobFinished
+        let Err(err) = convert_and_wait(&proxy, dir_str, &prot_id, password).await else {
+            bail!("the conversion was not aborted");
+        };
+        // validate_dirs() fails with "Not enough free space" too, so
+        // match the rest of watch_job()'s message
+        assert!(err.to_string().contains("conversion aborted"),
+                "unexpected error: {err}");
+
+        // The source directory is untouched and the conversion can be resumed
+        let status = proxy.get_dir_status(dir_str).await?;
+        assert_eq!(expect_str(&status, "status")?, "unencrypted");
+        assert_eq!(expect_str(&status, "conversion")?, "interrupted");
+        assert_eq!(std::fs::read_to_string(dir.path().join("file.txt"))?, "hello");
+
+        // Discard it so the test leaves nothing behind
+        proxy.remove_conversion(dir_str).await?;
+        let status = proxy.get_dir_status(dir_str).await?;
+        assert!(!status.contains_key("conversion"));
 
         Ok(())
     }
