@@ -143,6 +143,10 @@ impl DirectoryCloner {
     fn validate_dirs(state: &ClonerState, src: &Path, dst: &Path) -> Result<u64> {
         let free = util::free_space(dst)?;
 
+        // Round up the file size to the nearest block size to
+        // calculate how much actual space is used.
+        let allocated = |len: u64| len.next_multiple_of(free.block_size);
+
         // On a resume `dst` already holds part of the copy, so count
         // it as available space because rsync will likely reuse it.
         let mut avail_bytes = free.bytes;
@@ -153,7 +157,8 @@ impl DirectoryCloner {
             }
             let entry = iter?;
             if entry.file_type().is_file() {
-                avail_bytes = avail_bytes.saturating_add(entry.metadata()?.len());
+                let alloc_len = allocated(entry.metadata()?.len());
+                avail_bytes = avail_bytes.saturating_add(alloc_len);
             }
             avail_inodes = avail_inodes.map(|n| n.saturating_add(1));
         }
@@ -177,7 +182,7 @@ impl DirectoryCloner {
             entries += 1;
 
             if ft.is_file() {
-                total_bytes += entry.metadata()?.len();
+                total_bytes += allocated(entry.metadata()?.len());
                 if total_bytes > avail_bytes {
                     bail!("Not enough free space");
                 }

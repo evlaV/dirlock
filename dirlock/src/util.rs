@@ -55,18 +55,21 @@ pub struct FreeSpace {
     pub bytes: u64,
     /// Available inodes, or None if the filesystem has no fixed limit
     pub inodes: Option<u64>,
+    /// Allocation unit
+    pub block_size: u64,
 }
 
 /// Get the space available in the filesystem that contains `path`
 pub fn free_space(path: &Path) -> std::io::Result<FreeSpace> {
     let vfs = statvfs(path).map_err(std::io::Error::from)?;
-    let bytes = vfs.blocks_available() as u64 * vfs.fragment_size() as u64;
+    let block_size = vfs.fragment_size() as u64;
+    let bytes = vfs.blocks_available() as u64 * block_size;
     // Some filesystems (e.g. btrfs) report 0 here to indicate no fixed inode limit
     let inodes = match vfs.files_available() as u64 {
         0 => None,
         n => Some(n),
     };
-    Ok(FreeSpace { bytes, inodes })
+    Ok(FreeSpace { bytes, inodes, block_size })
 }
 
 /// Like [`Path::is_dir`] but does not follow symlinks
