@@ -143,6 +143,21 @@ impl DirectoryCloner {
     fn validate_dirs(state: &ClonerState, src: &Path, dst: &Path) -> Result<u64> {
         let free = util::free_space(dst)?;
 
+        // On a resume `dst` already holds part of the copy, so count
+        // it as available space because rsync will likely reuse it.
+        let mut avail_bytes = free.bytes;
+        let mut avail_inodes = free.inodes;
+        for iter in walkdir::WalkDir::new(dst).follow_links(false) {
+            if state.cancelled.load(Relaxed) {
+                bail!("operation cancelled");
+            }
+            let entry = iter?;
+            if entry.file_type().is_file() {
+                avail_bytes = avail_bytes.saturating_add(entry.metadata()?.len());
+            }
+            avail_inodes = avail_inodes.map(|n| n.saturating_add(1));
+        }
+
         let mut buf = Vec::with_capacity(512);
         buf.extend_from_slice(src.as_os_str().as_bytes());
         buf.push(0);
@@ -163,13 +178,13 @@ impl DirectoryCloner {
 
             if ft.is_file() {
                 total_bytes += entry.metadata()?.len();
-                if total_bytes > free.bytes {
+                if total_bytes > avail_bytes {
                     bail!("Not enough free space");
                 }
             }
-            if let Some(free_inodes) = free.inodes {
+            if let Some(avail_inodes) = avail_inodes {
                 total_inodes += 1;
-                if total_inodes > free_inodes {
+                if total_inodes > avail_inodes {
                     bail!("Not enough free inodes");
                 }
             }
