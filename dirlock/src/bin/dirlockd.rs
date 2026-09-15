@@ -821,13 +821,20 @@ impl DirlockDaemon {
     async fn cancel_job(
         &mut self,
         jobid: u32,
+        #[zbus(signal_emitter)]
+        emitter: SignalEmitter<'_>,
     ) -> Result<()> {
         let Some(handle) = self.jobs.remove(&jobid) else {
             return Err(Error::Failed(format!("Job {jobid} not found")));
         };
         // Cancel the job and kill its background watcher task
+        let dir = handle.job.src_dir().to_path_buf();
         let result = handle.job.cancel().into_dbus();
         handle.task.abort();
+        // abort() only requests the cancellation. Wait for it to finish,
+        // else this returns while the conversion still looks ongoing.
+        _ = handle.task.await;
+        _ = Self::job_cancelled(&emitter, jobid, &dir).await;
         result
     }
 
@@ -876,6 +883,9 @@ impl DirlockDaemon {
 
     #[zbus(signal)]
     async fn job_restarted(e: &SignalEmitter<'_>, jobid: u32, dir: &Path) -> zbus::Result<()>;
+
+    #[zbus(signal)]
+    async fn job_cancelled(e: &SignalEmitter<'_>, jobid: u32, dir: &Path) -> zbus::Result<()>;
 
     async fn create_protector(
         &self,
@@ -2515,6 +2525,58 @@ mod tests {
         proxy.remove_conversion(dir_str).await?;
         let status = proxy.get_dir_status(dir_str).await?;
         assert!(!status.contains_key("conversion"));
+
+        Ok(())
+    }
+
+    // Cancelling a job emits JobCancelled and leaves the conversion
+    // interrupted on disk, so that it can be resumed later.
+    #[tokio::test]
+    async fn test_cancel_job() -> Result<()> {
+        use futures_lite::StreamExt;
+
+        let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
+
+        let srv = TestService::start().await?;
+        let proxy = srv.proxy().await?;
+
+        // Create a directory with some files
+        let dir = TempDir::new_in(&mntpoint, "convert")?;
+        let dir_str = dir.path().to_str().unwrap();
+        std::fs::write(dir.path().join("file.txt"), "hello")?;
+
+        // Create a protector
+        let password = "1234";
+        let prot_id = create_test_protector(&proxy, password).await?;
+
+        let mut cancelled = proxy.receive_job_cancelled().await?;
+
+        // The signal carries the canonicalized path, not the one we pass
+        let canon = std::fs::canonicalize(dir.path())?;
+
+        let jobid = proxy.convert_dir(dir_str, as_opts(&str_dict([
+            ("protector", &prot_id),
+            ("password", password),
+        ]))).await?;
+
+        // Cancel the job and check for the signal
+        proxy.cancel_job(jobid).await?;
+        let sig = cancelled.next().await.expect("no JobCancelled signal");
+        let args = sig.args()?;
+        assert_eq!(args.jobid, jobid);
+        assert_eq!(Path::new(args.dir), canon);
+
+        // The daemon does not track the job any more
+        assert!(proxy.cancel_job(jobid).await.is_err());
+
+        // The source is untouched and the conversion can be resumed
+        let status = proxy.get_dir_status(dir_str).await?;
+        assert_eq!(expect_str(&status, "status")?, "unencrypted");
+        assert_eq!(expect_str(&status, "conversion")?, "interrupted");
+        assert_eq!(std::fs::read_to_string(dir.path().join("file.txt"))?, "hello");
+
+        // Discard it so the test leaves nothing behind
+        proxy.remove_conversion(dir_str).await?;
 
         Ok(())
     }

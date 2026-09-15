@@ -136,6 +136,10 @@ pub trait Dirlock1 {
         options: std::collections::HashMap<&str, &zbus::zvariant::Value<'_>>,
     ) -> zbus::Result<bool>;
 
+    /// JobCancelled signal
+    #[zbus(signal)]
+    fn job_cancelled(&self, jobid: u32, dir: &str) -> zbus::Result<()>;
+
     /// JobDeferred signal
     #[zbus(signal)]
     fn job_deferred(&self, jobid: u32, dir: &str) -> zbus::Result<()>;

@@ -263,6 +263,21 @@
     </signal>
 
     <!--
+        JobCancelled:
+        @jobid: ID of the cancelled job.
+        @dir: Canonicalized path of the directory being converted.
+
+        Emitted when a conversion job is cancelled with CancelJob. No
+        other signal follows it: the daemon stops tracking the job, and
+        the conversion is left interrupted on disk so that it can be
+        resumed later.
+    -->
+    <signal name="JobCancelled">
+      <arg name="jobid" type="u"/>
+      <arg name="dir" type="s"/>
+    </signal>
+
+    <!--
         CreateProtector:
         @options: Options dict. Required keys:
 
