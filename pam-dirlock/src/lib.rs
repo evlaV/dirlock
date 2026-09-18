@@ -95,12 +95,16 @@ fn get_user(pamh: &Pam) -> Result<&str> {
 ///
 /// If it's not encrypted by dirlock then return PAM_USER_UNKNOWN so
 /// other PAM modules can try to handle it.
-fn get_home_data(user: &str, ks: &Keystore) -> Result<EncryptedDir> {
+fn get_home_data(pamh: &Pam, user: &str, ks: &Keystore) -> Result<EncryptedDir> {
     match dirlock::open_home(user, ks) {
         Ok(Some(DirStatus::Encrypted(d))) => Ok(d),
         Ok(Some(_)) => Err(PamError::USER_UNKNOWN), // The home directory is not encrypted with dirlock
         Ok(None)    => Err(PamError::USER_UNKNOWN), // The home directory does not exist
-        Err(_)      => Err(PamError::SERVICE_ERR),
+        Err(e)      => {
+            // SERVICE_ERR kills the whole PAM stack, so say why.
+            log_warning(pamh, format!("error opening the home dir; user={user} error={e}"));
+            Err(PamError::SERVICE_ERR)
+        },
     }
 }
 
@@ -158,7 +162,7 @@ fn do_authenticate_autologin(pamh: Pam) -> Result<()> {
     let ks = Keystore::default();
     let user = get_user(&pamh)?;
 
-    match get_home_data(user, &ks) {
+    match get_home_data(&pamh, user, &ks) {
         Ok(d) => {
             if d.key_status == dirlock::KeyStatus::Present {
                 log_info(&pamh, format!("autologin; home already unlocked for user {user}"));
@@ -200,7 +204,7 @@ fn do_authenticate_autologin(pamh: Pam) -> Result<()> {
 fn do_authenticate(pamh: Pam) -> Result<()> {
     let ks = Keystore::default();
     let user = get_user(&pamh)?;
-    let homedir = get_home_data(user, &ks)?;
+    let homedir = get_home_data(&pamh, user, &ks)?;
     let rhost = get_rhost(&pamh);
 
     let mut available_protectors = false;
@@ -271,7 +275,7 @@ fn do_authenticate(pamh: Pam) -> Result<()> {
 fn do_chauthtok(pamh: Pam, flags: PamFlags) -> Result<()> {
     let ks = Keystore::default();
     let user = get_user(&pamh)?;
-    let mut homedir = get_home_data(user, &ks)?;
+    let mut homedir = get_home_data(&pamh, user, &ks)?;
     let rhost = get_rhost(&pamh);
 
     // Get only the protectors that are available and can be updated
@@ -374,7 +378,7 @@ fn do_open_session(pamh: Pam) -> Result<()> {
         }
     }
 
-    let homedir = get_home_data(user, &ks)?;
+    let homedir = get_home_data(&pamh, user, &ks)?;
     // If the home directory is already unlocked then we are done
     if homedir.key_status == dirlock::KeyStatus::Present {
         log_info(&pamh, format!("session opened for user {user}"));
@@ -404,7 +408,7 @@ fn do_open_session(pamh: Pam) -> Result<()> {
 fn do_close_session(pamh: Pam) -> Result<()> {
     let ks = Keystore::default();
     let user = get_user(&pamh)?;
-    let _homedir = get_home_data(user, &ks)?;
+    let _homedir = get_home_data(&pamh, user, &ks)?;
     log_info(&pamh, format!("session closed for user {user}"));
     Ok(())
 }
