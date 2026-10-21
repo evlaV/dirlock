@@ -11,6 +11,7 @@ options=('!lto') # This breaks the libfido2-sys build
 source=("git+ssh://git@gitlab.steamos.cloud/holo/$pkgname.git#commit=$_commit"
         'dirlock-pam-config'
         'dirlock-sddm.service'
+        'polkit-agent-helper-dirlock.conf'
         'steamos-enable-dirlock'
         'steamos-encrypt-home'
         'steamos-decrypt-home'
@@ -312,6 +313,7 @@ makedepends=('git'
              'holo-rust-packaging-tools')
 license=('BSD-3-Clause')
 sha256sums=('e3c4a478a7bb3297cec614c1d93ed2145d3bdd7d7c677e595cc5a73a5e597c7c'
+            'SKIP'
             'SKIP'
             'SKIP'
             'SKIP'
@@ -649,6 +651,9 @@ package() {
 
   # PAM module
   install -m644 -D "target/release/libpam_dirlock.so" "$pkgdir/usr/lib/security/pam_dirlock.so"
+
+  # Polkit override so pam_dirlock can open the home directory and use the TPM
+  install -m644 -D ../polkit-agent-helper-dirlock.conf "$pkgdir/usr/lib/systemd/system/polkit-agent-helper@.service.d/10-dirlock.conf"
 
   # Helper scripts to enable encryption in SteamOS
   install -m755 -D ../steamos-enable-dirlock "$pkgdir/usr/lib/steamos/steamos-enable-dirlock"
