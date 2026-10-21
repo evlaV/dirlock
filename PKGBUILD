@@ -663,7 +663,7 @@ package() {
   install -m644 -D ../tmpfiles.conf "$pkgdir/usr/lib/tmpfiles.d/dirlock.conf"
 
   # udev rules
-  install -m644 -D ../udev.rules "$pkgdir/usr/lib/udev/rules.d/99-dirlock.rules"
+  install -m644 -D ../udev.rules "$pkgdir/usr/lib/udev/rules.d/70-dirlock.rules"
 
   # Debug and helper tools
   install -m755 -D "target/release/fscryptctl" "$pkgdir/usr/lib/dirlock/fscryptctl"
