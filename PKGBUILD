@@ -1,8 +1,8 @@
 # Maintainer: Alberto Garcia <berto@igalia.com>
 
 pkgname=dirlock
-_commit=011a409e8174de1c827d82f37fdaa041f1555f4c
-pkgver=0.0.1.460.011a409
+_commit=ca496fe04a830bb6260bbc3fe90fb5fb3cc397bf
+pkgver=0.0.1.461.ca496fe
 pkgrel=1
 pkgdesc='Tool for managing encrypted directories'
 url='https://gitlab.steamos.cloud/holo/dirlock/'
@@ -312,7 +312,7 @@ makedepends=('git'
              'cmake'
              'holo-rust-packaging-tools')
 license=('BSD-3-Clause')
-sha256sums=('8d93cc85cf72415f055f667e6fe9a6340ba7c3e78bef76be1b5a5859c9084dea'
+sha256sums=('7c63ba0e59a3ecbb97276569d5bd86898454c708c2e2752cdbdd2f58e5e2a074'
             'SKIP'
             'SKIP'
             'SKIP'
