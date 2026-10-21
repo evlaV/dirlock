@@ -1,8 +1,8 @@
 # Maintainer: Alberto Garcia <berto@igalia.com>
 
 pkgname=dirlock
-_commit=2319b3ad718b31eac41794ef114139c512c3d75e
-pkgver=0.0.1.404.2319b3a
+_commit=011a409e8174de1c827d82f37fdaa041f1555f4c
+pkgver=0.0.1.460.011a409
 pkgrel=1
 pkgdesc='Tool for managing encrypted directories'
 url='https://gitlab.steamos.cloud/holo/dirlock/'
@@ -312,7 +312,7 @@ makedepends=('git'
              'cmake'
              'holo-rust-packaging-tools')
 license=('BSD-3-Clause')
-sha256sums=('e3c4a478a7bb3297cec614c1d93ed2145d3bdd7d7c677e595cc5a73a5e597c7c'
+sha256sums=('8d93cc85cf72415f055f667e6fe9a6340ba7c3e78bef76be1b5a5859c9084dea'
             'SKIP'
             'SKIP'
             'SKIP'
@@ -637,7 +637,7 @@ build () {
   gcc -o tpm2-dict-setup -O2 -s tpm2-dict-setup.c -ltss2-esys -ltss2-tctildr -ltss2-rc
 
   cd "$pkgname"
-  cargo build -F tpm2,fido2 --offline --release --target-dir target
+  cargo build -F tpm2,fido2,dbus --offline --release --target-dir target
 }
 
 package() {
@@ -673,4 +673,11 @@ package() {
   # Debug and helper tools
   install -m755 -D "target/release/fscryptctl" "$pkgdir/usr/lib/dirlock/fscryptctl"
   install -m755 -D "$srcdir/tpm2-dict-setup" "$pkgdir/usr/lib/dirlock/tpm2-dict-setup"
+
+  # D-Bus service
+  install -m644 -D "$srcdir/dirlock/data/com.valvesoftware.Dirlock1.xml" "$pkgdir/usr/share/dbus-1/interfaces/com.valvesoftware.Dirlock1.xml"
+  install -m644 -D "$srcdir/dirlock/data/com.valvesoftware.Dirlock1.service" "$pkgdir/usr/share/dbus-1/system-services/com.valvesoftware.Dirlock1.service"
+  install -m644 -D "$srcdir/dirlock/data/com.valvesoftware.Dirlock1.conf" "$pkgdir/usr/share/dbus-1/system.d/com.valvesoftware.Dirlock1.conf"
+  install -m644 -D "$srcdir/dirlock/data/dirlockd.service" "$pkgdir/usr/lib/systemd/system/dirlockd.service"
+  install -m755 -D "target/release/dirlockd" "$pkgdir/usr/lib/dirlock/dirlockd"
 }
