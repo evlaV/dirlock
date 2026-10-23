@@ -379,7 +379,7 @@ mod tests {
 
     #[test]
     fn test_safefile() -> Result<()> {
-        let tmpdir = tempdir::TempDir::new("safefile")?;
+        let tmpdir = tempfile::TempDir::with_prefix("safefile")?;
 
         // Create a SafeFile but don't commit it
         let path = tmpdir.path().join("test1");

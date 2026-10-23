@@ -120,7 +120,7 @@ mod tests {
 
     #[test]
     fn test_load_no_xattrs() {
-        let tmpdir = tempdir::TempDir::new("xattrs").expect("tmpdir");
+        let tmpdir = tempfile::TempDir::with_prefix("xattrs").expect("tmpdir");
         let xattrs = Xattrs::load(tmpdir.path());
         assert!(xattrs.find_slot(Xattrs::TYPE_RECOVERY).is_none());
         assert_eq!(xattrs.first_free_slot(), Some(0));

@@ -529,7 +529,7 @@ pub mod tests {
         qzZHIw==";
 
     pub struct Swtpm {
-        dir: tempdir::TempDir,
+        dir: tempfile::TempDir,
         port: u16,
     }
 
@@ -537,7 +537,7 @@ pub mod tests {
         pub fn new() -> Result<Self> {
             static SWTPM_PORT : AtomicU16 = AtomicU16::new(7900);
             let port = SWTPM_PORT.fetch_add(2, Ordering::Relaxed);
-            let dir = tempdir::TempDir::new("swtpm")?;
+            let dir = tempfile::TempDir::with_prefix("swtpm")?;
             let path = dir.path().to_str()
                 .expect("Error creating temporary dir for swtpm");
             let tpm_state_file = dir.path().join("tpm2-00.permall");

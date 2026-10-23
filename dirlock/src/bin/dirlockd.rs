@@ -1062,7 +1062,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicU32, Ordering};
     use dirlock::dbus_proxy::Dirlock1Proxy;
-    use tempdir::TempDir;
+    use tempfile::TempDir;
     use zbus::zvariant::{OwnedValue, Value};
 
     /// Transform a list of key / value pairs from (&str, &str) into (&str, Value).
@@ -1165,7 +1165,7 @@ mod tests {
         /// override `min_free`, since the global config is the same
         /// for the whole process.
         async fn start_with_min_free(min_free: MinFree) -> Result<Self> {
-            let _keystore_dir = TempDir::new("dirlock-dbus-test")?;
+            let _keystore_dir = TempDir::with_prefix("dirlock-dbus-test")?;
             let ks = Keystore::from_path(_keystore_dir.path());
 
             let n = TEST_SERVICE_SEQ.fetch_add(1, Ordering::Relaxed);
@@ -1342,7 +1342,7 @@ mod tests {
         let proxy = srv.proxy().await?;
 
         // Create and encrypt an empty directory
-        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir = TempDir::with_prefix_in("encrypted", &mntpoint)?;
         let prot_id = create_test_protector(&proxy, "pass1").await?;
         let policy_id = encrypt_test_dir(&proxy, dir.path(), &prot_id, "pass1").await?;
 
@@ -1372,7 +1372,7 @@ mod tests {
         let proxy = srv.proxy().await?;
 
         // Create a directory and a protector
-        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir = TempDir::with_prefix_in("encrypted", &mntpoint)?;
         let prot_id = create_test_protector(&proxy, "pass").await?;
 
         // Try to encrypt it with the wrong password
@@ -1405,7 +1405,7 @@ mod tests {
         let proxy = srv.proxy().await?;
 
         // Create a directory and put a file inside
-        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir = TempDir::with_prefix_in("encrypted", &mntpoint)?;
         std::fs::write(dir.path().join("file.txt"), "hello")?;
 
         // Try to encrypt it: it should fail
@@ -1424,7 +1424,7 @@ mod tests {
         let proxy = srv.proxy().await?;
 
         // Create an empty directory and a protector
-        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir = TempDir::with_prefix_in("encrypted", &mntpoint)?;
         let dir_str = dir.path().to_str().unwrap();
         let prot_id = create_test_protector(&proxy, "pass1").await?;
 
@@ -1468,7 +1468,7 @@ mod tests {
         let proxy = srv.proxy().await?;
 
         // Create an empty directory and a protector
-        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir = TempDir::with_prefix_in("encrypted", &mntpoint)?;
         let dir_str = dir.path().to_str().unwrap();
         let prot_id = create_test_protector(&proxy, "pass1").await?;
 
@@ -1510,7 +1510,7 @@ mod tests {
         let password = "pass1";
 
         // Create and encrypt a directory
-        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir = TempDir::with_prefix_in("encrypted", &mntpoint)?;
         let dir_str = dir.path().to_str().unwrap();
         let prot_id = create_test_protector(&proxy, password).await?;
         encrypt_test_dir(&proxy, dir.path(), &prot_id, password).await?;
@@ -1730,7 +1730,7 @@ mod tests {
         // Create two protectors and encrypt a directory with the first one
         let prot1_id = create_test_protector(&proxy, pass1).await?;
         let prot2_id = create_test_protector(&proxy, pass2).await?;
-        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir = TempDir::with_prefix_in("encrypted", &mntpoint)?;
         let policy_id = encrypt_test_dir(&proxy, dir.path(), &prot1_id, pass1).await?;
 
         // The policy should have one protector
@@ -1796,7 +1796,7 @@ mod tests {
         // Create two protectors and encrypt a directory with the first one
         let prot1_id = create_test_protector(&proxy, pass1).await?;
         let prot2_id = create_test_protector(&proxy, pass2).await?;
-        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir = TempDir::with_prefix_in("encrypted", &mntpoint)?;
         let policy_id = encrypt_test_dir(&proxy, dir.path(), &prot1_id, pass1).await?;
 
         // Add with wrong protector password
@@ -1858,7 +1858,7 @@ mod tests {
         let srv = TestService::start().await?;
         let proxy = srv.proxy().await?;
 
-        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir = TempDir::with_prefix_in("encrypted", &mntpoint)?;
         let dir_str = dir.path().to_str().unwrap();
 
         // An unencrypted directory
@@ -1909,7 +1909,7 @@ mod tests {
         let proxy = srv.proxy().await?;
 
         // A plain unencrypted directory with some data to convert
-        let dir = TempDir::new_in(&mntpoint, "convert-status")?;
+        let dir = TempDir::with_prefix_in("convert-status", &mntpoint)?;
         let dir_str = dir.path().to_str().unwrap();
         std::fs::write(dir.path().join("file.txt"), "hello")?;
 
@@ -1976,7 +1976,7 @@ mod tests {
         let srv = TestService::start().await?;
         let proxy = srv.proxy().await?;
 
-        let dir = TempDir::new_in(&mntpoint, "remove-conversion")?;
+        let dir = TempDir::with_prefix_in("remove-conversion", &mntpoint)?;
         let dir_str = dir.path().to_str().unwrap();
         let canon = std::fs::canonicalize(dir.path())?;
         std::fs::write(dir.path().join("file.txt"), "hello")?;
@@ -2028,7 +2028,7 @@ mod tests {
         let proxy = srv.proxy().await?;
 
         // A plain unencrypted directory with some data to convert
-        let dir = TempDir::new_in(&mntpoint, "list-conversions")?;
+        let dir = TempDir::with_prefix_in("list-conversions", &mntpoint)?;
         let dir_str = dir.path().to_str().unwrap();
         let canon = std::fs::canonicalize(dir.path())?;
         std::fs::write(dir.path().join("file.txt"), "hello")?;
@@ -2109,7 +2109,7 @@ mod tests {
         let proxy = srv.proxy().await?;
 
         let password = "pass1";
-        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir = TempDir::with_prefix_in("encrypted", &mntpoint)?;
         let dir_str = dir.path().to_str().unwrap();
         let prot_id = create_test_protector(&proxy, password).await?;
         encrypt_test_dir(&proxy, dir.path(), &prot_id, password).await?;
@@ -2156,7 +2156,7 @@ mod tests {
 
         // Create and encrypt a directory
         let password = "pass1";
-        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir = TempDir::with_prefix_in("encrypted", &mntpoint)?;
         let dir_str = dir.path().to_str().unwrap();
         let prot_id = create_test_protector(&proxy, password).await?;
         encrypt_test_dir(&proxy, dir.path(), &prot_id, password).await?;
@@ -2197,7 +2197,7 @@ mod tests {
         let proxy = srv.proxy().await?;
 
         let password = "pass1";
-        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir = TempDir::with_prefix_in("encrypted", &mntpoint)?;
         let dir_str = dir.path().to_str().unwrap();
         let prot_id = create_test_protector(&proxy, password).await?;
         encrypt_test_dir(&proxy, dir.path(), &prot_id, password).await?;
@@ -2220,7 +2220,7 @@ mod tests {
         assert!(proxy.recovery_remove(dir_str).await.is_err());
 
         // Cannot add/remove recovery on an unencrypted directory
-        let unenc_dir = TempDir::new_in(&mntpoint, "unencrypted")?;
+        let unenc_dir = TempDir::with_prefix_in("unencrypted", &mntpoint)?;
         let unenc_str = unenc_dir.path().to_str().unwrap();
         assert!(proxy.recovery_add(unenc_str, as_opts(&str_dict([
             ("protector", &prot_id),
@@ -2243,7 +2243,7 @@ mod tests {
 
         // Create and encrypt a new directory
         let password = "pass1";
-        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir = TempDir::with_prefix_in("encrypted", &mntpoint)?;
         let dir_str = dir.path().to_str().unwrap();
         let prot_id = create_test_protector(&proxy, password).await?;
         encrypt_test_dir(&proxy, dir.path(), &prot_id, password).await?;
@@ -2290,7 +2290,7 @@ mod tests {
 
         // Create and encrypt a new directory
         let password = "pass1";
-        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir = TempDir::with_prefix_in("encrypted", &mntpoint)?;
         let dir_str = dir.path().to_str().unwrap();
         let prot_id = create_test_protector(&proxy, password).await?;
         encrypt_test_dir(&proxy, dir.path(), &prot_id, password).await?;
@@ -2343,7 +2343,7 @@ mod tests {
 
         // Create and encrypt a new directory
         let password = "pass1";
-        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir = TempDir::with_prefix_in("encrypted", &mntpoint)?;
         let dir_str = dir.path().to_str().unwrap();
         let prot_id = create_test_protector(&proxy, password).await?;
         encrypt_test_dir(&proxy, dir.path(), &prot_id, password).await?;
@@ -2443,7 +2443,7 @@ mod tests {
         let proxy = srv.proxy().await?;
 
         // Create a directory with some files
-        let dir = TempDir::new_in(&mntpoint, "convert")?;
+        let dir = TempDir::with_prefix_in("convert", &mntpoint)?;
         let dir_str = dir.path().to_str().unwrap();
         std::fs::write(dir.path().join("file.txt"), "hello")?;
         std::fs::create_dir(dir.path().join("subdir"))?;
@@ -2498,7 +2498,7 @@ mod tests {
         let proxy = srv.proxy().await?;
 
         // Create a directory with some files
-        let dir = TempDir::new_in(&mntpoint, "convert")?;
+        let dir = TempDir::with_prefix_in("convert", &mntpoint)?;
         let dir_str = dir.path().to_str().unwrap();
         std::fs::write(dir.path().join("file.txt"), "hello")?;
 
@@ -2541,7 +2541,7 @@ mod tests {
         let proxy = srv.proxy().await?;
 
         // Create a directory with some files
-        let dir = TempDir::new_in(&mntpoint, "convert")?;
+        let dir = TempDir::with_prefix_in("convert", &mntpoint)?;
         let dir_str = dir.path().to_str().unwrap();
         std::fs::write(dir.path().join("file.txt"), "hello")?;
 
@@ -2592,7 +2592,7 @@ mod tests {
         let prot_id = create_test_protector(&proxy, password).await?;
 
         // Converting an empty directory should fail
-        let dir = TempDir::new_in(&mntpoint, "convert")?;
+        let dir = TempDir::with_prefix_in("convert", &mntpoint)?;
         let dir_str = dir.path().to_str().unwrap();
         let err = proxy.convert_dir(dir_str, as_opts(&str_dict([
             ("protector", prot_id.as_str()),
@@ -2615,7 +2615,7 @@ mod tests {
         let prot_id = create_test_protector(&proxy, password).await?;
 
         // Encrypt a directory first, then put a file in it
-        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir = TempDir::with_prefix_in("encrypted", &mntpoint)?;
         encrypt_test_dir(&proxy, dir.path(), &prot_id, password).await?;
         std::fs::write(dir.path().join("file.txt"), "data")?;
 

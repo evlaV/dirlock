@@ -399,7 +399,7 @@ mod tests {
         fn do_test_key(key: &[u8], mntpoint: &Path) -> Result<()> {
             let mntpoint_fd = File::open(mntpoint)?;
             // Create a temporary directory and check that it's not encrypted
-            let workdir = tempdir::TempDir::new_in(mntpoint, "encrypted")?;
+            let workdir = tempfile::TempDir::with_prefix_in("encrypted", mntpoint)?;
             let workdir_fd = File::open(workdir.path())?;
             if get_policy(&workdir_fd)?.is_some() {
                 panic!("Found policy where none was expected")
@@ -452,7 +452,7 @@ mod tests {
     #[test]
     fn test_invalid_policy() -> Result<()> {
         let Some(mntpoint) = mntpoint() else { return Ok(()) };
-        let workdir = tempdir::TempDir::new_in(&mntpoint, "encrypted")?;
+        let workdir = tempfile::TempDir::with_prefix_in("encrypted", mntpoint)?;
         let fd = File::open(workdir.path())?;
 
         // Use the raw ioctl because our set_policy() function never provides
@@ -477,7 +477,7 @@ mod tests {
     fn test_policy_too_large() -> Result<()> {
         let Some(mntpoint) = mntpoint() else { return Ok(()) };
         let mntpoint_fd = File::open(&mntpoint)?;
-        let workdir = tempdir::TempDir::new_in(&mntpoint, "encrypted")?;
+        let workdir = tempfile::TempDir::with_prefix_in("encrypted", mntpoint)?;
         let workdir_fd = File::open(workdir.path())?;
 
         // Encrypt the directory with a new key
@@ -502,7 +502,7 @@ mod tests {
     fn test_already_encrypted() -> Result<()> {
         let Some(mntpoint) = mntpoint() else { return Ok(()) };
         let mntpoint_fd = File::open(&mntpoint)?;
-        let workdir = tempdir::TempDir::new_in(&mntpoint, "encrypted")?;
+        let workdir = tempfile::TempDir::with_prefix_in("encrypted", mntpoint)?;
         let workdir_fd = File::open(workdir.path())?;
 
         let id1 = add_key(&mntpoint_fd, &random_key(MAX_KEY_SIZE))?;
@@ -528,7 +528,7 @@ mod tests {
         let id = PolicyKeyId::new_from_key(&random_key(MAX_KEY_SIZE));
 
         // Directory owned by root
-        let workdir = tempdir::TempDir::new_in(&mntpoint, "encrypted")?;
+        let workdir = tempfile::TempDir::with_prefix_in("encrypted", mntpoint)?;
         let workdir_fd = File::open(workdir.path())?;
 
         // Drop privileges and try to set the key
@@ -544,7 +544,7 @@ mod tests {
     fn test_key_not_found() -> Result<()> {
         let Some(mntpoint) = mntpoint() else { return Ok(()) };
 
-        let workdir = tempdir::TempDir::new_in(&mntpoint, "encrypted")?;
+        let workdir = tempfile::TempDir::with_prefix_in("encrypted", mntpoint)?;
         let workdir_fd = File::open(workdir.path())?;
 
         let id = PolicyKeyId::new_from_key(&random_key(MAX_KEY_SIZE));
@@ -572,7 +572,7 @@ mod tests {
     fn test_not_a_directory() -> Result<()> {
         let Some(mntpoint) = mntpoint() else { return Ok(()) };
 
-        let workdir = tempdir::TempDir::new_in(&mntpoint, "encrypted")?;
+        let workdir = tempfile::TempDir::with_prefix_in("encrypted", mntpoint)?;
         let file = workdir.path().join("file");
         std::fs::write(&file, b"")?;
         let fd = File::open(file)?;
@@ -586,7 +586,7 @@ mod tests {
     fn test_directory_not_empty() -> Result<()> {
         let Some(mntpoint) = mntpoint() else { return Ok(()) };
 
-        let workdir = tempdir::TempDir::new_in(&mntpoint, "encrypted")?;
+        let workdir = tempfile::TempDir::with_prefix_in("encrypted", mntpoint)?;
         let workdir_fd = File::open(workdir.path())?;
         std::fs::write(workdir.path().join("file"), b"")?;
 
@@ -598,7 +598,7 @@ mod tests {
     #[test]
     fn test_no_encryption_supported() -> Result<()> {
         let mntpoint = Path::new("/tmp");
-        let workdir = tempdir::TempDir::new_in(mntpoint, "encrypted")?;
+        let workdir = tempfile::TempDir::with_prefix_in("encrypted", mntpoint)?;
 
         let mntpoint_fd = File::open(mntpoint)?;
         let workdir_fd = File::open(workdir.path())?;

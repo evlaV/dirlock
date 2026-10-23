@@ -556,18 +556,18 @@ pub fn init() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempdir::TempDir;
+    use tempfile::TempDir;
 
     // A directory in a filesystem that does not support encryption
     // should be reported as unencrypted, even though
     // fscrypt::get_policy() returns an error in that case.
     #[test]
     fn test_open_dir_no_encryption_supported() -> Result<()> {
-        let ks_dir = TempDir::new("keystore")?;
+        let ks_dir = TempDir::with_prefix("keystore")?;
         let ks = Keystore::from_path(ks_dir.path());
 
         // This expects /tmp to be a tmpfs, so no encryption is supported
-        let dir = TempDir::new_in("/tmp", "no-encryption")?;
+        let dir = TempDir::with_prefix_in("no-encryption", "/tmp")?;
         // Using fscrypt::get_policy() returns an error
         let policy = fscrypt::get_policy(&File::open(dir.path())?);
         assert!(matches!(policy, Err(fscrypt::Error::NotSupported)),

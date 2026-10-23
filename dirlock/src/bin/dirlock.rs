@@ -1347,7 +1347,7 @@ mod tests {
     use super::*;
     use dirlock::util::push_test_password;
     use dirlock::{RemoveKeyUsers, RemovalStatusFlags};
-    use tempdir::TempDir;
+    use tempfile::TempDir;
 
     // Filesystem where to run the tests. It must support fscrypt.
     // Set to 'skip' to skip these tests.
@@ -1393,11 +1393,11 @@ mod tests {
     fn test_encrypt() -> Result<()> {
         let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
 
-        let ks_dir = TempDir::new("keystore")?;
+        let ks_dir = TempDir::with_prefix("keystore")?;
         let ks = Keystore::from_path(ks_dir.path());
 
         // Encrypt the directory
-        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir = TempDir::with_prefix_in("encrypted", &mntpoint)?;
         push_test_password("1234");
         cmd_encrypt(&test_encrypt_args(dir.path()), &ks)?;
 
@@ -1415,7 +1415,7 @@ mod tests {
         let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
 
         // Create an empty directory
-        let ks_dir = TempDir::new("keystore")?;
+        let ks_dir = TempDir::with_prefix("keystore")?;
         let ks = Keystore::from_path(ks_dir.path());
 
         // Create two protectors
@@ -1425,7 +1425,7 @@ mod tests {
         let prot2_id = create_test_protector(&ks, "prot2", pass2)?;
 
         // Encrypt a directory using the first protector
-        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir = TempDir::with_prefix_in("encrypted", &mntpoint)?;
         push_test_password(pass1);
         cmd_encrypt(&EncryptArgs {
             protector: Some(prot1_id),
@@ -1477,11 +1477,11 @@ mod tests {
     fn test_encrypt_non_empty() -> Result<()> {
         let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
 
-        let ks_dir = TempDir::new("keystore")?;
+        let ks_dir = TempDir::with_prefix("keystore")?;
         let ks = Keystore::from_path(ks_dir.path());
 
         // Create a directory and put a file inside
-        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir = TempDir::with_prefix_in("encrypted", &mntpoint)?;
         std::fs::write(dir.path().join("file.txt"), "hello")?;
 
         // Try to encrypt it: it should fail
@@ -1496,13 +1496,13 @@ mod tests {
     fn test_lock_unlock() -> Result<()> {
         let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
 
-        let ks_dir = TempDir::new("keystore")?;
+        let ks_dir = TempDir::with_prefix("keystore")?;
         let ks = Keystore::from_path(ks_dir.path());
 
         let password = "1234";
 
         // Encrypt the directory
-        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir = TempDir::with_prefix_in("encrypted", &mntpoint)?;
         push_test_password(password);
         cmd_encrypt(&test_encrypt_args(dir.path()), &ks)?;
 
@@ -1527,13 +1527,13 @@ mod tests {
     fn test_change_pass() -> Result<()> {
         let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
 
-        let ks_dir = TempDir::new("keystore")?;
+        let ks_dir = TempDir::with_prefix("keystore")?;
         let ks = Keystore::from_path(ks_dir.path());
 
         let old_password = "1234";
         let new_password = "5678";
 
-        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir = TempDir::with_prefix_in("encrypted", &mntpoint)?;
         let lock_args = LockArgs { dir: dir.path().into(), all_users: false };
         let unlock_args = UnlockArgs { dir: dir.path().into(), protector: None, recovery: false };
 
@@ -1565,10 +1565,10 @@ mod tests {
     fn test_recovery_add_remove() -> Result<()> {
         let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
 
-        let ks_dir = TempDir::new("keystore")?;
+        let ks_dir = TempDir::with_prefix("keystore")?;
         let ks = Keystore::from_path(ks_dir.path());
 
-        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir = TempDir::with_prefix_in("encrypted", &mntpoint)?;
         let lock_args = LockArgs { dir: dir.path().into(), all_users: false };
 
         let password = "1234";
@@ -1600,10 +1600,10 @@ mod tests {
     fn test_recovery_verify() -> Result<()> {
         let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
 
-        let ks_dir = TempDir::new("keystore")?;
+        let ks_dir = TempDir::with_prefix("keystore")?;
         let ks = Keystore::from_path(ks_dir.path());
 
-        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir = TempDir::with_prefix_in("encrypted", &mntpoint)?;
         let password = "1234";
 
         // Encrypt the directory and lock it
@@ -1638,10 +1638,10 @@ mod tests {
     fn test_recovery_restore() -> Result<()> {
         let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
 
-        let ks_dir = TempDir::new("keystore")?;
+        let ks_dir = TempDir::with_prefix("keystore")?;
         let ks = Keystore::from_path(ks_dir.path());
 
-        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir = TempDir::with_prefix_in("encrypted", &mntpoint)?;
         let lock_args = LockArgs { dir: dir.path().into(), all_users: false };
         let unlock_args = UnlockArgs { dir: dir.path().into(), protector: None, recovery: false };
 
@@ -1658,7 +1658,7 @@ mod tests {
         let recovery_key = encrypted_dir.add_recovery_key(&protkey)?;
 
         // Replace the old keystore with a new, empty one
-        let ks_dir = TempDir::new("new-keystore")?;
+        let ks_dir = TempDir::with_prefix("new-keystore")?;
         let ks = Keystore::from_path(ks_dir.path());
 
         // Unlock should fail now
@@ -1690,13 +1690,13 @@ mod tests {
     fn test_unlock_recovery() -> Result<()> {
         let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
 
-        let ks_dir = TempDir::new("keystore")?;
+        let ks_dir = TempDir::with_prefix("keystore")?;
         let ks = Keystore::from_path(ks_dir.path());
 
         let password = "1234";
 
         // Encrypt the directory and lock it
-        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir = TempDir::with_prefix_in("encrypted", &mntpoint)?;
         let lock_args = LockArgs { dir: dir.path().into(), all_users: false };
         push_test_password(password);
         cmd_encrypt(&test_encrypt_args(dir.path()), &ks)?;
@@ -1744,7 +1744,7 @@ mod tests {
 
     #[test]
     fn test_admin_protector() -> Result<()> {
-        let ks_dir = TempDir::new("keystore")?;
+        let ks_dir = TempDir::with_prefix("keystore")?;
         let ks = Keystore::from_path(ks_dir.path());
 
         let password = "1234";
@@ -1785,7 +1785,7 @@ mod tests {
 
     #[test]
     fn test_admin_policy() -> Result<()> {
-        let ks_dir = TempDir::new("keystore")?;
+        let ks_dir = TempDir::with_prefix("keystore")?;
         let ks = Keystore::from_path(ks_dir.path());
 
         // Create a protector
@@ -1816,11 +1816,11 @@ mod tests {
     fn test_admin_policy_purge() -> Result<()> {
         let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
 
-        let ks_dir = TempDir::new("keystore")?;
+        let ks_dir = TempDir::with_prefix("keystore")?;
         let ks = Keystore::from_path(ks_dir.path());
 
         // Encrypt the directory
-        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir = TempDir::with_prefix_in("encrypted", &mntpoint)?;
         push_test_password("1234");
         cmd_encrypt(&test_encrypt_args(dir.path()), &ks)?;
 
@@ -1841,7 +1841,7 @@ mod tests {
 
     #[test]
     fn test_admin_policy_add_remove_protector() -> Result<()> {
-        let ks_dir = TempDir::new("keystore")?;
+        let ks_dir = TempDir::with_prefix("keystore")?;
         let ks = Keystore::from_path(ks_dir.path());
 
         let pass1 = "1234";
@@ -1928,11 +1928,11 @@ mod tests {
     fn test_convert() -> Result<()> {
         let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
 
-        let ks_dir = TempDir::new("keystore")?;
+        let ks_dir = TempDir::with_prefix("keystore")?;
         let ks = Keystore::from_path(ks_dir.path());
 
         // Create a directory with some files
-        let dir = TempDir::new_in(&mntpoint, "convert")?;
+        let dir = TempDir::with_prefix_in("convert", &mntpoint)?;
         std::fs::write(dir.path().join("file.txt"), "hello")?;
         std::fs::create_dir(dir.path().join("subdir"))?;
         std::fs::write(dir.path().join("subdir/nested.txt"), "world")?;
@@ -1972,14 +1972,14 @@ mod tests {
     fn test_convert_existing_protector() -> Result<()> {
         let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
 
-        let ks_dir = TempDir::new("keystore")?;
+        let ks_dir = TempDir::with_prefix("keystore")?;
         let ks = Keystore::from_path(ks_dir.path());
 
         let password = "1234";
         let prot_id = create_test_protector(&ks, "prot", password)?;
 
         // Convert a directory with data using the existing protector
-        let dir = TempDir::new_in(&mntpoint, "convert")?;
+        let dir = TempDir::with_prefix_in("convert", &mntpoint)?;
         std::fs::write(dir.path().join("data.txt"), "test data")?;
 
         push_test_password(password);
@@ -2000,11 +2000,11 @@ mod tests {
     fn test_convert_empty_dir() -> Result<()> {
         let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
 
-        let ks_dir = TempDir::new("keystore")?;
+        let ks_dir = TempDir::with_prefix("keystore")?;
         let ks = Keystore::from_path(ks_dir.path());
 
         // Converting an empty directory should fail
-        let dir = TempDir::new_in(&mntpoint, "convert")?;
+        let dir = TempDir::with_prefix_in("convert", &mntpoint)?;
         push_test_password("1234");
         let err = cmd_convert(&test_convert_args(dir.path(), None), &ks).unwrap_err();
         assert!(err.to_string().contains("empty"), "unexpected error: {err}");
@@ -2016,11 +2016,11 @@ mod tests {
     fn test_convert_already_encrypted() -> Result<()> {
         let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
 
-        let ks_dir = TempDir::new("keystore")?;
+        let ks_dir = TempDir::with_prefix("keystore")?;
         let ks = Keystore::from_path(ks_dir.path());
 
         // Encrypt a directory first, then put a file in it
-        let dir = TempDir::new_in(&mntpoint, "encrypted")?;
+        let dir = TempDir::with_prefix_in("encrypted", &mntpoint)?;
         push_test_password("1234");
         cmd_encrypt(&test_encrypt_args(dir.path()), &ks)?;
         std::fs::write(dir.path().join("file.txt"), "data")?;

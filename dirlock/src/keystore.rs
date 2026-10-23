@@ -212,13 +212,13 @@ impl Keystore {
 mod tests {
     use anyhow::Result;
     use std::str::FromStr;
-    use tempdir::TempDir;
+    use tempfile::TempDir;
     use super::*;
     use crate::protector::ProtectorData;
 
     #[test]
     fn test_empty_keystore() -> Result<()> {
-        let tmpdir = TempDir::new("keystore")?;
+        let tmpdir = TempDir::with_prefix("keystore")?;
         let ks = Keystore::from_path(tmpdir.path());
 
         // Check that the dirs are empty
@@ -251,7 +251,7 @@ mod tests {
 
     #[test]
     fn test_create_protector() -> Result<()> {
-        let tmpdir = TempDir::new("keystore")?;
+        let tmpdir = TempDir::with_prefix("keystore")?;
         let ks = Keystore::from_path(tmpdir.path());
 
         // This tests that the JSON serialization of a protector works as expected

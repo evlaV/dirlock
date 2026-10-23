@@ -229,7 +229,7 @@ impl WrappedPolicyKey {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempdir::TempDir;
+    use tempfile::TempDir;
 
     #[test]
     fn test_wrapped_policy_key() -> Result<()> {
@@ -257,7 +257,7 @@ mod tests {
 
     #[test]
     fn test_xattr_round_trip() -> Result<()> {
-        let tmpdir = TempDir::new("policy-xattr")?;
+        let tmpdir = TempDir::with_prefix("policy-xattr")?;
         let dir = tmpdir.path();
 
         let protkey = ProtectorKey::new_random();
@@ -284,7 +284,7 @@ mod tests {
 
     #[test]
     fn test_xattr_overwrite() -> Result<()> {
-        let tmpdir = TempDir::new("policy-xattr")?;
+        let tmpdir = TempDir::with_prefix("policy-xattr")?;
         let dir = tmpdir.path();
 
         // Create two different policy keys
@@ -317,7 +317,7 @@ mod tests {
 
     #[test]
     fn test_xattr_remove() -> Result<()> {
-        let tmpdir = TempDir::new("policy-xattr")?;
+        let tmpdir = TempDir::with_prefix("policy-xattr")?;
         let dir = tmpdir.path();
 
         let protkey = ProtectorKey::new_random();
@@ -336,7 +336,7 @@ mod tests {
 
     #[test]
     fn test_xattr_load_empty() {
-        let tmpdir = TempDir::new("policy-xattr").unwrap();
+        let tmpdir = TempDir::with_prefix("policy-xattr").unwrap();
 
         // Loading from a directory with no xattrs should return None
         assert!(WrappedPolicyKey::load_xattr(tmpdir.path()).is_none());
@@ -344,7 +344,7 @@ mod tests {
 
     #[test]
     fn test_xattr_remove_nonexistent() {
-        let tmpdir = TempDir::new("policy-xattr").unwrap();
+        let tmpdir = TempDir::with_prefix("policy-xattr").unwrap();
 
         // Removing from a directory with no recovery xattr should fail
         assert!(WrappedPolicyKey::remove_xattr(tmpdir.path()).is_err());

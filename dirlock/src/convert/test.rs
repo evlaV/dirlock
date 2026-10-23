@@ -9,7 +9,7 @@ use anyhow::{bail, Result};
 use std::fs;
 use std::os::unix::fs::MetadataExt;
 use std::path::PathBuf;
-use tempdir::TempDir;
+use tempfile::TempDir;
 use crate::{Keystore, CreateOpts, EncryptedDir, LockState, RemoveKeyUsers};
 use crate::inject::{clear_injected, inject, Injected};
 use crate::protector::{Protector, ProtectorKey, opts::ProtectorOptsBuilder};
@@ -60,11 +60,11 @@ fn test_convert() -> Result<()> {
     let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
     let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
 
-    let ks_dir = TempDir::new("keystore")?;
+    let ks_dir = TempDir::with_prefix("keystore")?;
     let ks = Keystore::from_path(ks_dir.path());
 
     // Create a directory and populate it with some files
-    let dir = TempDir::new_in(&mntpoint, "dir-with-data")?;
+    let dir = TempDir::with_prefix_in("dir-with-data", &mntpoint)?;
     let path = dir.path();
 
     // One of them deep in the hierarchy
@@ -130,11 +130,11 @@ fn test_conversion_status_lifecycle() -> Result<()> {
     let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
     let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
 
-    let ks_dir = TempDir::new("keystore")?;
+    let ks_dir = TempDir::with_prefix("keystore")?;
     let ks = Keystore::from_path(ks_dir.path());
 
     // Create a directory with data
-    let dir = TempDir::new_in(&mntpoint, "convert")?;
+    let dir = TempDir::with_prefix_in("convert", &mntpoint)?;
     let path = dir.path();
     std::fs::write(path.join("file.txt"), "hello")?;
 
@@ -163,16 +163,16 @@ fn test_convert_symlink() -> Result<()> {
     let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
     let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
 
-    let ks_dir = TempDir::new("keystore")?;
+    let ks_dir = TempDir::with_prefix("keystore")?;
     let ks = Keystore::from_path(ks_dir.path());
 
     // Create a directory with data
-    let dir = TempDir::new_in(&mntpoint, "convert")?;
+    let dir = TempDir::with_prefix_in("convert", &mntpoint)?;
     let path = dir.path();
     fs::write(path.join("file.txt"), "hello")?;
 
     // Create a symlink to it, outside of the test filesystem
-    let linkdir = TempDir::new("symlink")?;
+    let linkdir = TempDir::with_prefix("symlink")?;
     let link = linkdir.path().join("link");
     std::os::unix::fs::symlink(path, &link)?;
 
@@ -207,7 +207,7 @@ fn test_filesystem_root() -> Result<()> {
     let Some(mntpoint) = get_mntpoint()? else { return Ok(()) };
     let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
 
-    let ks_dir = TempDir::new("keystore")?;
+    let ks_dir = TempDir::with_prefix("keystore")?;
     let ks = Keystore::from_path(ks_dir.path());
 
     // The mountpoint is the root directory of a filesystem
@@ -231,11 +231,11 @@ fn test_convert_with_encrypted_subdir() -> Result<()> {
     let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
     crate::init()?;
 
-    let ks_dir = TempDir::new("keystore")?;
+    let ks_dir = TempDir::with_prefix("keystore")?;
     let ks = Keystore::from_path(ks_dir.path());
 
     // Create a directory with data and an encrypted directory a few levels down
-    let dir = TempDir::new_in(&mntpoint, "convert")?;
+    let dir = TempDir::with_prefix_in("convert", &mntpoint)?;
     let path = dir.path();
     std::fs::write(path.join("file.txt"), "hello")?;
     let enc = path.join("a/b/encrypted");
@@ -271,11 +271,11 @@ fn test_cancel_and_resume() -> Result<()> {
     let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
     crate::init()?;
 
-    let ks_dir = TempDir::new("keystore")?;
+    let ks_dir = TempDir::with_prefix("keystore")?;
     let ks = Keystore::from_path(ks_dir.path());
 
     // Create a directory with data
-    let dir = TempDir::new_in(&mntpoint, "convert")?;
+    let dir = TempDir::with_prefix_in("convert", &mntpoint)?;
     let path = dir.path();
     std::fs::write(path.join("file.txt"), "hello")?;
 
@@ -321,11 +321,11 @@ fn test_concurrent_start_rejected() -> Result<()> {
     let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
     crate::init()?;
 
-    let ks_dir = TempDir::new("keystore")?;
+    let ks_dir = TempDir::with_prefix("keystore")?;
     let ks = Keystore::from_path(ks_dir.path());
 
     // Create a directory with data
-    let dir = TempDir::new_in(&mntpoint, "convert")?;
+    let dir = TempDir::with_prefix_in("convert", &mntpoint)?;
     let path = dir.path();
     std::fs::write(dir.path().join("file.txt"), "hello")?;
 
@@ -362,11 +362,11 @@ fn test_crash_before_exchange() -> Result<()> {
     let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
     crate::init()?;
 
-    let ks_dir = TempDir::new("keystore")?;
+    let ks_dir = TempDir::with_prefix("keystore")?;
     let ks = Keystore::from_path(ks_dir.path());
 
     // Create a directory with data
-    let dir = TempDir::new_in(&mntpoint, "convert")?;
+    let dir = TempDir::with_prefix_in("convert", &mntpoint)?;
     let path = dir.path();
     std::fs::write(path.join("file.txt"), "hello")?;
 
@@ -410,11 +410,11 @@ fn test_crash_after_exchange() -> Result<()> {
     let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
     crate::init()?;
 
-    let ks_dir = TempDir::new("keystore")?;
+    let ks_dir = TempDir::with_prefix("keystore")?;
     let ks = Keystore::from_path(ks_dir.path());
 
     // Create a directory with data
-    let dir = TempDir::new_in(&mntpoint, "convert")?;
+    let dir = TempDir::with_prefix_in("convert", &mntpoint)?;
     let path = dir.path();
     std::fs::write(path.join("file.txt"), "hello")?;
 
@@ -477,11 +477,11 @@ fn test_remove_conversion() -> Result<()> {
     let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
     crate::init()?;
 
-    let ks_dir = TempDir::new("keystore")?;
+    let ks_dir = TempDir::with_prefix("keystore")?;
     let ks = Keystore::from_path(ks_dir.path());
 
     // Create a directory with data
-    let dir = TempDir::new_in(&mntpoint, "convert")?;
+    let dir = TempDir::with_prefix_in("convert", &mntpoint)?;
     let path = dir.path();
     std::fs::write(path.join("file.txt"), "hello")?;
 
@@ -537,11 +537,11 @@ fn test_remove_conversion_without_workdir() -> Result<()> {
     let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
     crate::init()?;
 
-    let ks_dir = TempDir::new("keystore")?;
+    let ks_dir = TempDir::with_prefix("keystore")?;
     let ks = Keystore::from_path(ks_dir.path());
 
     // Create a directory with data and start converting it
-    let dir = TempDir::new_in(&mntpoint, "convert")?;
+    let dir = TempDir::with_prefix_in("convert", &mntpoint)?;
     let path = dir.path();
     std::fs::write(path.join("file.txt"), "hello")?;
     let (protector, protector_key) = make_test_protector(&ks)?;
@@ -586,11 +586,11 @@ fn test_resume_conversion_without_workdir() -> Result<()> {
     let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
     crate::init()?;
 
-    let ks_dir = TempDir::new("keystore")?;
+    let ks_dir = TempDir::with_prefix("keystore")?;
     let ks = Keystore::from_path(ks_dir.path());
 
     // Create a directory with data and start converting it
-    let dir = TempDir::new_in(&mntpoint, "convert")?;
+    let dir = TempDir::with_prefix_in("convert", &mntpoint)?;
     let path = dir.path();
     std::fs::write(path.join("file.txt"), "hello")?;
     let (protector, protector_key) = make_test_protector(&ks)?;
@@ -629,11 +629,11 @@ fn test_mark_dirty_restarts_commit() -> Result<()> {
     let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
     crate::init()?;
 
-    let ks_dir = TempDir::new("keystore")?;
+    let ks_dir = TempDir::with_prefix("keystore")?;
     let ks = Keystore::from_path(ks_dir.path());
 
     // Create a directory with data
-    let dir = TempDir::new_in(&mntpoint, "convert")?;
+    let dir = TempDir::with_prefix_in("convert", &mntpoint)?;
     let path = dir.path();
     std::fs::write(path.join("file.txt"), "hello")?;
     std::fs::write(path.join("gone.txt"), "to be deleted")?;
@@ -700,11 +700,11 @@ fn test_crash_after_trash_rename() -> Result<()> {
     let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
     crate::init()?;
 
-    let ks_dir = TempDir::new("keystore")?;
+    let ks_dir = TempDir::with_prefix("keystore")?;
     let ks = Keystore::from_path(ks_dir.path());
 
     // Create a directory with data
-    let dir = TempDir::new_in(&mntpoint, "convert")?;
+    let dir = TempDir::with_prefix_in("convert", &mntpoint)?;
     let path = dir.path();
     std::fs::write(path.join("file.txt"), "hello")?;
 
@@ -759,11 +759,11 @@ fn test_dirty_conversion_is_deferred() -> Result<()> {
     let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
     crate::init()?;
 
-    let ks_dir = TempDir::new("keystore")?;
+    let ks_dir = TempDir::with_prefix("keystore")?;
     let ks = Keystore::from_path(ks_dir.path());
 
     // Create a directory with data
-    let dir = TempDir::new_in(&mntpoint, "convert")?;
+    let dir = TempDir::with_prefix_in("convert", &mntpoint)?;
     let path = dir.path();
     std::fs::write(path.join("file.txt"), "hello")?;
 
@@ -853,11 +853,11 @@ fn test_dirty_restart_uses_checksum() -> Result<()> {
     let _shared = FS_LOCK.read().unwrap_or_else(|e| e.into_inner());
     crate::init()?;
 
-    let ks_dir = TempDir::new("keystore")?;
+    let ks_dir = TempDir::with_prefix("keystore")?;
     let ks = Keystore::from_path(ks_dir.path());
 
     // Create a directory with data
-    let dir = TempDir::new_in(&mntpoint, "convert")?;
+    let dir = TempDir::with_prefix_in("convert", &mntpoint)?;
     let srcdir = dir.path();
     let srcfile = srcdir.join("file.txt");
     std::fs::write(&srcfile, "hello")?;
@@ -910,14 +910,14 @@ fn test_cleanup() -> Result<()> {
     let _exclusive = FS_LOCK.write().unwrap_or_else(|e| e.into_inner());
     crate::init()?;
 
-    let ks_dir = TempDir::new("keystore")?;
+    let ks_dir = TempDir::with_prefix("keystore")?;
     let ks = Keystore::from_path(ks_dir.path());
 
     // Create a protector
     let (protector, protector_key) = make_test_protector(&ks)?;
 
     // A resumable conversion: interrupted, but its source still exists.
-    let keep_dir = TempDir::new_in(&mntpoint, "convert")?;
+    let keep_dir = TempDir::with_prefix_in("convert", &mntpoint)?;
     let keep = keep_dir.path();
     std::fs::write(keep.join("file.txt"), "hello")?;
     let job = ConvertJob::start(keep, &protector, protector_key.clone(), &ks)?;
@@ -931,7 +931,7 @@ fn test_cleanup() -> Result<()> {
     // A dead conversion: commit() crashed after the exchange, so the
     // source is already encrypted but the entry and the workdir remain.
     // status() reports it as finished but does not reclaim anything.
-    let done_dir = TempDir::new_in(&mntpoint, "convert")?;
+    let done_dir = TempDir::with_prefix_in("convert", &mntpoint)?;
     let done = done_dir.path();
     std::fs::write(done.join("file.txt"), "hello")?;
     inject(Injected::ConvertCommitAfterExchange);
@@ -944,7 +944,7 @@ fn test_cleanup() -> Result<()> {
     assert!(done_workdir.exists());
 
     // A dead conversion: interrupted, and then its source disappears.
-    let gone_dir = TempDir::new_in(&mntpoint, "convert")?;
+    let gone_dir = TempDir::with_prefix_in("convert", &mntpoint)?;
     let gone = gone_dir.path().to_owned();
     std::fs::write(gone.join("file.txt"), "hello")?;
     let job = ConvertJob::start(&gone, &protector, protector_key, &ks)?;
