@@ -2,6 +2,7 @@
 
 pkgname=dirlock
 _commit=10f85a7b80c193703f85f4eaa5cf1d36ad94f7c1
+_extras=f0db112f865774fdd5749e7c654409d9cf6e5547
 pkgver=0.0.1.463.10f85a7
 pkgrel=1
 pkgdesc='Tool for managing encrypted directories'
@@ -9,15 +10,12 @@ url='https://gitlab.steamos.cloud/holo/dirlock/'
 arch=('x86_64')
 options=('!lto') # This breaks the libfido2-sys build
 source=("git+ssh://git@gitlab.steamos.cloud/holo/$pkgname.git#commit=$_commit"
+        "holo-dirlock-extras::git+ssh://git@gitlab.steamos.cloud/holo/$pkgname.git#commit=$_extras"
         'dirlock-pam-config'
         'dirlock-sddm.service'
         'polkit-agent-helper-dirlock.conf'
-        'steamos-enable-dirlock'
-        'steamos-encrypt-home'
-        'steamos-decrypt-home'
         'tmpfiles.conf'
         'udev.rules'
-        'tpm2-dict-setup.c'
         'adler2-2.0.1.tar.gz::https://static.crates.io/crates/adler2/2.0.1/download'
         'aes-0.8.4.tar.gz::https://static.crates.io/crates/aes/0.8.4/download'
         'aho-corasick-1.1.5.tar.gz::https://static.crates.io/crates/aho-corasick/1.1.5/download'
@@ -307,10 +305,7 @@ makedepends=('git'
              'holo-rust-packaging-tools')
 license=('BSD-3-Clause')
 sha256sums=('5ed0a4b0d527856372782d30b3fb1df7c02d7c65115e08cc5c8e3581b77969b8'
-            'SKIP'
-            'SKIP'
-            'SKIP'
-            'SKIP'
+            '5a62ee69767334b9aa0d98d8be133419a691534c377a7222bd86dd5937f9cd2c'
             'SKIP'
             'SKIP'
             'SKIP'
@@ -621,14 +616,15 @@ prepare() {
 }
 
 build () {
-  cd "$srcdir"
-  gcc -o tpm2-dict-setup -O2 -s tpm2-dict-setup.c -ltss2-esys -ltss2-tctildr -ltss2-rc
+  make -C "$srcdir/holo-dirlock-extras"
 
-  cd "$pkgname"
+  cd "$srcdir/$pkgname"
   cargo build -F tpm2,fido2,dbus --offline --release --target-dir target
 }
 
 package() {
+  make -C "$srcdir/holo-dirlock-extras" DESTDIR="$pkgdir" install
+
   cd "$srcdir/$pkgname"
 
   # Data dir
@@ -643,11 +639,6 @@ package() {
   # Polkit override so pam_dirlock can open the home directory and use the TPM
   install -m644 -D ../polkit-agent-helper-dirlock.conf "$pkgdir/usr/lib/systemd/system/polkit-agent-helper@.service.d/10-dirlock.conf"
 
-  # Helper scripts to enable encryption in SteamOS
-  install -m755 -D ../steamos-enable-dirlock "$pkgdir/usr/lib/steamos/steamos-enable-dirlock"
-  install -m755 -D ../steamos-encrypt-home "$pkgdir/usr/lib/steamos/steamos-encrypt-home"
-  install -m755 -D ../steamos-decrypt-home "$pkgdir/usr/lib/steamos/steamos-decrypt-home"
-
   # systemd service (SteamOS integration)
   install -m644 -D ../dirlock-sddm.service "$pkgdir/usr/lib/systemd/system/dirlock-sddm.service"
   install -m755 -D ../dirlock-pam-config "$pkgdir/usr/lib/steamos/dirlock-pam-config"
@@ -660,7 +651,6 @@ package() {
 
   # Debug and helper tools
   install -m755 -D "target/release/fscryptctl" "$pkgdir/usr/lib/dirlock/fscryptctl"
-  install -m755 -D "$srcdir/tpm2-dict-setup" "$pkgdir/usr/lib/dirlock/tpm2-dict-setup"
 
   # D-Bus service
   install -m644 -D "$srcdir/dirlock/data/com.valvesoftware.Dirlock1.xml" "$pkgdir/usr/share/dbus-1/interfaces/com.valvesoftware.Dirlock1.xml"
