@@ -1,0 +1,15 @@
+# Copyright © 2026 Valve Corporation
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Show the progress of a dirlock conversion in a Plasma session.
+#
+# This is meant to be started manually by the dirlock-convert-home-gui
+# script.
+
+[Unit]
+Description=Show the progress of a dirlock conversion in the session
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/dirlock/dirlock-session-progress

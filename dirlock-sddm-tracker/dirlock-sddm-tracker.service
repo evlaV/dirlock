@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# This daemon tracks the progress of a dirlock conversion so it can be
+# displayed by SDDM and the dirlock-session-progress desktop utility.
+
+[Unit]
+Description=Report the progress of a dirlock conversion
+After=dbus.service
+Requires=dbus.service
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/dirlock/dirlock-sddm-tracker
+
+# Use this SDDM configuration only while a conversion is pending.
+ReadWritePaths=/etc/sddm.conf.d
+ExecStartPre=-/usr/bin/install -m644 -D /usr/share/dirlock/sddm.conf /etc/sddm.conf.d/zz-steamos-dirlock.conf
+ExecStopPost=-/usr/bin/rm -f /etc/sddm.conf.d/zz-steamos-dirlock.conf
+
+# The state file must outlive the service, so preseve the dir
+RuntimeDirectory=dirlock-progress
+RuntimeDirectoryMode=0755
+RuntimeDirectoryPreserve=yes
+
+# The dirlockd interface is restricted to root, but this daemon only
+# needs D-Bus and its own runtime directory.
+NoNewPrivileges=yes
+ProtectSystem=strict
+# Read access is needed to find the owner of a home directory
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX

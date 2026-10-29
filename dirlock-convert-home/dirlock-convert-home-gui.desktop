@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Encrypt Home Directory (experimental)
+GenericName=Home Directory Encryption
+Comment=Encrypt your home directory with dirlock
+Exec=dirlock-convert-home-gui
+Icon=drive-harddisk-encrypted
+Terminal=false
+StartupNotify=false
+Categories=System;

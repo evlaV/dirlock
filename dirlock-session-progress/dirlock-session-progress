@@ -1,0 +1,198 @@
+#!/usr/bin/env python3
+#
+# Copyright © 2026 Valve Corporation
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+"""Show the progress of a dirlock conversion in a Plasma session.
+
+This uses the state file written by dirlock-sddm-tracker.
+
+This is meant to be started manually by dirlock-convert-home-gui.
+"""
+
+import argparse
+import json
+import logging
+import os
+import signal
+import sys
+
+import dbus
+from dbus.mainloop.glib import DBusGMainLoop
+from gi.repository import Gio, GLib
+from gi.repository import GLibUnix
+
+DEFAULT_STATE_FILE = "/run/dirlock-progress/state.json"
+
+SERVER_NAME = "org.kde.JobViewServer"
+SERVER_PATH = "/JobViewServer"
+SERVER_IFACE = "org.kde.JobViewServer"
+JOB_IFACE = "org.kde.JobViewV2"
+
+APP_NAME = "Disk encryption"
+APP_ICON = "drive-harddisk-encrypted"
+# Capabilities 0 means the entry offers neither cancel nor suspend
+CAPABILITIES = 0
+
+NOTIFY_NAME = "org.freedesktop.Notifications"
+NOTIFY_PATH = "/org/freedesktop/Notifications"
+NOTIFY_IFACE = "org.freedesktop.Notifications"
+
+log = logging.getLogger("dirlock-session-progress")
+
+
+class ProgressAgent:
+    """Follows the state file and keeps one job entry in sync with it."""
+
+    def __init__(self, state_file):
+        self.state_file = state_file
+        self.loop = GLib.MainLoop()
+        self.bus = dbus.SessionBus()
+        self.monitor = None
+        # The job entry, None while there is nothing to report
+        self.job = None
+        # The notification shown instead of it, 0 while there is none
+        self.notification = 0
+        # Last state read from the file.
+        self.state = None
+
+    # ---------------------------------------------------------------
+    # The job entry
+    # ---------------------------------------------------------------
+
+    def job_open(self):
+        server = dbus.Interface(self.bus.get_object(SERVER_NAME, SERVER_PATH),
+                                SERVER_IFACE)
+        path = server.requestView(APP_NAME, APP_ICON, CAPABILITIES)
+        self.job = dbus.Interface(self.bus.get_object(SERVER_NAME, path),
+                                  JOB_IFACE)
+        log.info("job entry opened")
+
+    def job_close(self, error=""):
+        if self.job is None:
+            return
+        try:
+            self.job.terminate(error)
+        except dbus.DBusException as e:
+            log.warning("cannot close the job entry: %s", e)
+        self.job = None
+        log.info("job entry closed")
+
+    def notify_show(self, message):
+        """Show `message`, replacing the previous one."""
+        try:
+            server = dbus.Interface(self.bus.get_object(NOTIFY_NAME,
+                                                        NOTIFY_PATH),
+                                    NOTIFY_IFACE)
+            # expire_timeout 0: stays until the state changes
+            self.notification = server.Notify(APP_NAME,
+                                              dbus.UInt32(self.notification),
+                                              APP_ICON, APP_NAME, message,
+                                              [], {}, 0)
+        except dbus.DBusException as e:
+            log.warning("cannot show the notification: %s", e)
+
+    def notify_close(self):
+        if not self.notification:
+            return
+        try:
+            server = dbus.Interface(self.bus.get_object(NOTIFY_NAME,
+                                                        NOTIFY_PATH),
+                                    NOTIFY_IFACE)
+            server.CloseNotification(dbus.UInt32(self.notification))
+        except dbus.DBusException as e:
+            log.warning("cannot close the notification: %s", e)
+        self.notification = 0
+
+    def update(self):
+        """Push self.state, opening the job entry if needed."""
+        percent, label = self.state
+        # -1 means we're waiting for the user to log out
+        if percent < 0:
+            self.job_close()
+            self.notify_show(label)
+            log.info("%s", label)
+            return
+        self.notify_close()
+        try:
+            if self.job is None:
+                self.job_open()
+            self.job.setInfoMessage(label)
+            self.job.setPercent(dbus.UInt32(percent))
+        except dbus.DBusException as e:
+            log.error("cannot drive the job entry: %s", e)
+            self.job_close()
+            raise
+        log.info("%d%% (%s)", percent, label)
+
+    # ---------------------------------------------------------------
+    # The state file
+    # ---------------------------------------------------------------
+
+    def refresh(self, *_args):
+        try:
+            with open(self.state_file, encoding="utf-8") as statefile:
+                data = json.load(statefile)
+        except (OSError, ValueError):
+            data = {}
+        if not data.get("active"):
+            self.state = None
+            self.job_close()
+            return
+        percent = int(data.get("percent", -1))
+        label = str(data.get("label", ""))
+        state = percent, label
+        if state == self.state:
+            return
+        self.state = state
+        self.update()
+        # A finished conversion leaves its final state in the file.
+        if percent == 100:
+            self.job_close()
+
+    # ---------------------------------------------------------------
+
+    def on_terminate(self):
+        log.info("terminated")
+        self.notify_close()
+        self.job_close()
+        self.loop.quit()
+        return False
+
+    def run(self):
+        directory = Gio.File.new_for_path(os.path.dirname(self.state_file))
+        # Monitor the directory because the file is replaced on every update
+        self.monitor = directory.monitor_directory(Gio.FileMonitorFlags.NONE,
+                                                   None)
+        self.monitor.connect("changed", self.refresh)
+
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            GLibUnix.signal_add(GLib.PRIORITY_DEFAULT, sig, self.on_terminate)
+
+        self.refresh()
+        self.loop.run()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--state-file", default=DEFAULT_STATE_FILE,
+                        help="JSON file to read (default: %(default)s)")
+    args = parser.parse_args()
+
+    logging.basicConfig(format="%(message)s", level=logging.INFO,
+                        stream=sys.stderr)
+    DBusGMainLoop(set_as_default=True)
+
+    try:
+        ProgressAgent(args.state_file).run()
+    except dbus.DBusException as e:
+        # Including a job view that does not speak what we expect: there
+        # is no point staying up if we cannot report anything.
+        log.error("D-Bus error: %s", e)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

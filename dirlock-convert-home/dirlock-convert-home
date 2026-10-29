@@ -1,0 +1,325 @@
+#!/usr/bin/env python3
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+"""Manage the encryption of the home directory of the user who invoked
+this tool.
+
+The actual tasks are performed by the dirlock daemon, controlled by this
+script using the D-Bus API. This is meant to be run using pkexec or sudo.
+"""
+
+import argparse
+import getpass
+import os
+import pwd
+import stat
+import subprocess
+import sys
+
+import dbus
+
+BUS_NAME = "com.valvesoftware.Dirlock1"
+OBJECT_PATH = "/com/valvesoftware/Dirlock1"
+INTERFACE = "com.valvesoftware.Dirlock1"
+
+SDDM_SERVICE = "dirlock-sddm.service"
+TPM2_DICT_SETUP = "/usr/lib/dirlock/tpm2-dict-setup"
+
+# Protectors supported by this tool (no FIDO2)
+SECRET_NAME = {"password": "password", "tpm2": "PIN"}
+
+
+def fail(msg):
+    print(msg, file=sys.stderr)
+    sys.exit(1)
+
+
+def caller():
+    """The passwd entry of the user who invoked pkexec or sudo."""
+    uid = os.environ.get("PKEXEC_UID")
+    if uid is None:
+        uid = os.environ.get("SUDO_UID")
+    if uid is None:
+        fail("PKEXEC_UID and SUDO_UID are not set, run this through pkexec or sudo")
+    try:
+        return pwd.getpwuid(int(uid))
+    except (ValueError, KeyError):
+        fail(f"there is no passwd entry for uid {uid}")
+
+
+def home_of(pw):
+    """The caller's home directory, canonicalized and checked."""
+    home = os.path.realpath(pw.pw_dir)
+    try:
+        st = os.stat(home)
+    except OSError as e:
+        fail(f"cannot stat {home}: {e}")
+    if not stat.S_ISDIR(st.st_mode):
+        fail(f"{home} is not a directory")
+    if st.st_uid != pw.pw_uid:
+        fail(f"{home} is not owned by {pw.pw_name}")
+    return home
+
+
+def get_password(from_stdin, prompt):
+    """Read a password from stdin, or prompt for it on the terminal."""
+    if from_stdin:
+        return sys.stdin.readline().rstrip("\n")
+    return getpass.getpass(prompt)
+
+
+def secret_fd(secret):
+    """Write `secret` (a password) to a new memfd to send via D-Bus.
+
+    These fds should not be reused between calls, each one should have its own."""
+    fd = os.memfd_create("dirlock-secret", os.MFD_CLOEXEC)
+    try:
+        os.write(fd, secret.encode())
+        os.lseek(fd, 0, os.SEEK_SET)
+        return dbus.types.UnixFd(fd)
+    finally:
+        os.close(fd)
+
+
+def create_protector(dirlock, pw, ptype, from_stdin):
+    """Create a protector of type `ptype` for the caller."""
+    name = SECRET_NAME[ptype]
+    password = get_password(from_stdin, f"Enter a new {name}: ")
+    if not password:
+        fail(f"the {name} cannot be empty")
+    # Confirm the password if it didn't come from stdin
+    if not from_stdin and password != getpass.getpass(f"Repeat the {name}: "):
+        fail("the values don't match")
+
+    pid = str(dirlock.CreateProtector({"type": ptype,
+                                       "name": f"Protector for {pw.pw_dir}",
+                                       "password-fd": secret_fd(password)}))
+    return pid, password
+
+
+def single_protector(protectors, what):
+    """The protector in `protectors` that this tool can use, as (id, type)."""
+    usable = [(str(p["id"]), str(p.get("type"))) for p in protectors
+              if str(p.get("type")) in SECRET_NAME]
+    if not usable:
+        fail(f"{what} has no protector usable by this tool")
+    if len(usable) > 1:
+        fail(f"{what} has several protectors, use the dirlock CLI")
+    return usable[0]
+
+
+def select_protector(dirlock, pw, policy, ptype, from_stdin):
+    """Pick the protector to convert with.
+
+    If `policy` is None (no conversion yet), create a new protector.
+    If `policy` is set (an interrupted conversion already exists) then
+    get its existing protector.
+    """
+    if policy is None:
+        return create_protector(dirlock, pw, ptype, from_stdin)
+
+    pid, existing = single_protector(dirlock.GetAllPolicies()[policy],
+                                     "this conversion")
+    name = SECRET_NAME[existing]
+    return pid, get_password(from_stdin, f"Enter your {name}: ")
+
+
+def run(cmd):
+    """Run a command."""
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True,
+                              check=True).stdout
+    except subprocess.CalledProcessError as e:
+        fail(f"{cmd[0]} failed: {e.stderr.strip() or e}")
+    except OSError as e:
+        fail(f"cannot run {cmd[0]}: {e}")
+
+
+def enable_fs_encryption(home):
+    """Make sure that the filesystem of `home` supports encryption.
+
+    This script only supports ext4. Other filesystems may fail
+    when the conversion starts.
+    """
+    fields = run(["findmnt", "-n", "-r", "-o", "SOURCE,FSTYPE",
+                  "--target", home]).split()
+    if len(fields) != 2 or fields[1] != "ext4":
+        return
+    device = fields[0]
+    for line in run(["dumpe2fs", "-h", device]).splitlines():
+        if line.startswith("Filesystem features:"):
+            if "encrypt" in line.split(":", 1)[1].split():
+                return
+            break
+    run(["tune2fs", "-O", "encrypt", device])
+    print(f"Enabled encryption support on {device}.")
+
+
+def enable_sddm_service():
+    """Make sure that dirlock-sddm.service is enabled.
+
+    This service sets up PAM before SDDM starts.
+    """
+    if subprocess.run(["systemctl", "is-enabled", "-q", SDDM_SERVICE]).returncode == 0:
+        return
+    run(["systemctl", "enable", "--now", "-q", SDDM_SERVICE])
+    print(f"Enabled {SDDM_SERVICE}.")
+
+
+def setup_tpm():
+    """If there is a TPM, set the dictionary attack parameters.
+
+    Print only a warning if this fails: the TPM then keeps its own defaults.
+    TODO: this is still incomplete.
+    """
+    try:
+        if subprocess.run(["dirlock", "admin", "tpm2-test"],
+                          capture_output=True).returncode != 0:
+            return
+        subprocess.run([TPM2_DICT_SETUP, "31", "600"],
+                       capture_output=True, check=True)
+    except (OSError, subprocess.CalledProcessError):
+        print("Warning: the TPM dictionary attack parameters could not "
+              "be changed.")
+
+
+def home_state(status):
+    """Summarize GetDirStatus() as a single word.
+
+    This is what the status command prints, and what
+    other commands check before acting.
+    """
+    state = str(status.get("status"))
+    if state == "unencrypted":
+        conversion = status.get("conversion")
+        return str(conversion) if conversion is not None else state
+    if state in ("locked", "unlocked", "partially-locked"):
+        if status.get("has-recovery-key"):
+            return "encrypted-recovery"
+        return "encrypted"
+    return state
+
+
+def cmd_status(dirlock, pw, home, status, args):
+    print(home_state(status))
+
+
+def cmd_convert(dirlock, pw, home, status, args):
+    state = home_state(status)
+    if state in ("ongoing", "deferred"):
+        fail(f"{home} is already being encrypted")
+    if state not in ("unencrypted", "interrupted"):
+        fail(f"{home} is {state}, there is nothing to convert")
+
+    # Make sure that encryption is enabled before going on
+    enable_fs_encryption(home)
+    enable_sddm_service()
+    setup_tpm()
+
+    policy = None
+    if state == "interrupted":
+        policy = str(status["conversion-policy"])
+        print(f"Resuming the interrupted encryption of {home}.")
+
+    protector, password = select_protector(dirlock, pw, policy,
+                                           args.protector_type,
+                                           args.password_stdin)
+
+    jobid = dirlock.ConvertDir(home, {"protector": protector,
+                                      "password-fd": secret_fd(password)})
+    print(f"Encrypting {home} in the background, job {jobid}.\n"
+          f"This can take a while, and the last step needs you to log out.")
+
+
+def cmd_recovery_add(dirlock, pw, home, status, args):
+    """Add a recovery key and print it on stdout."""
+    state = home_state(status)
+    if state == "encrypted-recovery":
+        fail(f"{home} already has a recovery key")
+    if state != "encrypted":
+        fail(f"{home} is not encrypted")
+
+    pid, ptype = single_protector(status["protectors"], home)
+    password = get_password(args.password_stdin,
+                            f"Enter your {SECRET_NAME[ptype]}: ")
+    print(dirlock.RecoveryAdd(home, {"protector": pid,
+                                     "password-fd": secret_fd(password)}).upper())
+
+
+def cmd_recovery_remove(dirlock, pw, home, status, args):
+    if home_state(status) != "encrypted-recovery":
+        fail(f"{home} has no recovery key")
+    dirlock.RecoveryRemove(home)
+    print(f"The recovery key of {home} has been removed.")
+
+
+def cmd_stop(dirlock, pw, home, status, args):
+    if home_state(status) not in ("ongoing", "deferred"):
+        fail(f"{home} is not being encrypted")
+    for conv in dirlock.ListConversions():
+        if str(conv.get("dir")) == home and "jobid" in conv:
+            dirlock.CancelJob(conv["jobid"])
+            print(f"The encryption of {home} has been stopped. "
+                  "It can be resumed or discarded later.")
+            return
+    fail(f"the encryption of {home} is not managed by dirlockd")
+
+
+def cmd_discard(dirlock, pw, home, status, args):
+    if home_state(status) != "interrupted":
+        fail(f"{home} has no interrupted encryption")
+    dirlock.RemoveConversion(home)
+    print(f"The interrupted encryption of {home} has been discarded. "
+          "Your files have not been modified.")
+
+
+COMMANDS = {
+    "status": cmd_status,
+    "convert": cmd_convert,
+    "recovery-add": cmd_recovery_add,
+    "recovery-remove": cmd_recovery_remove,
+    "stop": cmd_stop,
+    "discard": cmd_discard,
+}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("status", help="print the state of the home directory")
+    for name, help in (
+            ("convert", "encrypt the home directory, or resume an "
+                        "interrupted encryption"),
+            ("recovery-add", "add a recovery key and print it")):
+        cmd = sub.add_parser(name, help=help)
+        cmd.add_argument("--password-stdin", action="store_true",
+                         help="read the password from stdin rather than from "
+                              "the terminal")
+        if name == "convert":
+            cmd.add_argument("--protector-type", choices=sorted(SECRET_NAME),
+                             default="password",
+                             help="what protects a new encryption: a password, "
+                                  "or the TPM with a PIN (default: "
+                                  "%(default)s). Ignored when resuming")
+    sub.add_parser("recovery-remove", help="remove the recovery key")
+    sub.add_parser("stop", help="stop an encryption in progress")
+    sub.add_parser("discard", help="discard an interrupted encryption")
+    args = parser.parse_args()
+
+    pw = caller()
+    home = home_of(pw)
+
+    dirlock = dbus.Interface(dbus.SystemBus().get_object(BUS_NAME, OBJECT_PATH),
+                             INTERFACE)
+    COMMANDS[args.command](dirlock, pw, home, dirlock.GetDirStatus(home), args)
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except dbus.DBusException as e:
+        fail(f"D-Bus error: {e}")
+    except (KeyboardInterrupt, EOFError):
+        fail("\nAborted")

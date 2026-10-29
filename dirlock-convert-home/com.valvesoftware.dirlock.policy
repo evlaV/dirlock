@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+
+<!--
+  Polkit policy to let users manage the encryption of their own home
+  directories.
+
+  There is one action per command of dirlock-convert-home, all of them
+  need authentication except the status command.
+-->
+
+<policyconfig>
+
+  <vendor>dirlock</vendor>
+
+  <action id="com.valvesoftware.dirlock.home-status">
+    <description>Check the encryption status of your home directory</description>
+    <message>Authentication is required to check the encryption status of your home directory</message>
+    <defaults>
+      <allow_any>auth_self</allow_any>
+      <allow_inactive>auth_self</allow_inactive>
+      <allow_active>yes</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/dirlock/dirlock-convert-home</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">status</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
+
+  <action id="com.valvesoftware.dirlock.home-convert">
+    <description>Encrypt your home directory</description>
+    <message>Authentication is required to encrypt your home directory</message>
+    <defaults>
+      <allow_any>auth_self</allow_any>
+      <allow_inactive>auth_self</allow_inactive>
+      <allow_active>auth_self</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/dirlock/dirlock-convert-home</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">convert</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
+
+  <action id="com.valvesoftware.dirlock.home-recovery-add">
+    <description>Add a recovery key to your home directory</description>
+    <message>Authentication is required to add a recovery key to your home directory</message>
+    <defaults>
+      <allow_any>auth_self</allow_any>
+      <allow_inactive>auth_self</allow_inactive>
+      <allow_active>auth_self</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/dirlock/dirlock-convert-home</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">recovery-add</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
+
+  <action id="com.valvesoftware.dirlock.home-recovery-remove">
+    <description>Remove the recovery key of your home directory</description>
+    <message>Authentication is required to remove the recovery key of your home directory</message>
+    <defaults>
+      <allow_any>auth_self</allow_any>
+      <allow_inactive>auth_self</allow_inactive>
+      <allow_active>auth_self</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/dirlock/dirlock-convert-home</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">recovery-remove</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
+
+  <action id="com.valvesoftware.dirlock.home-stop">
+    <description>Stop the encryption of your home directory</description>
+    <message>Authentication is required to stop the encryption of your home directory</message>
+    <defaults>
+      <allow_any>auth_self</allow_any>
+      <allow_inactive>auth_self</allow_inactive>
+      <allow_active>auth_self</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/dirlock/dirlock-convert-home</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">stop</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
+
+  <action id="com.valvesoftware.dirlock.home-discard">
+    <description>Discard the interrupted encryption of your home directory</description>
+    <message>Authentication is required to discard the encryption of your home directory</message>
+    <defaults>
+      <allow_any>auth_self</allow_any>
+      <allow_inactive>auth_self</allow_inactive>
+      <allow_active>auth_self</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/lib/dirlock/dirlock-convert-home</annotate>
+    <annotate key="org.freedesktop.policykit.exec.argv1">discard</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
+
+</policyconfig>

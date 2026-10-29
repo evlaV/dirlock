@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# This daemon tracks the progress of a dirlock conversion so it can be
+# displayed by SDDM and the dirlock-session-progress desktop utility.
+
+[Unit]
+Description=Watch for pending dirlock conversions
+
+[Path]
+PathExists=/home/.dirlock/convertdb
+
+[Install]
+WantedBy=multi-user.target

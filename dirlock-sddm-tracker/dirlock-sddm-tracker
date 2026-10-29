@@ -1,0 +1,339 @@
+#!/usr/bin/env python3
+#
+# SPDX-License-Identifier: BSD-3-Clause
+#
+"""Track the progress of a dirlock conversion.
+
+This daemon does not start conversions: it attaches to one that is
+already running (or about to start), follows it over D-Bus and keeps a
+JSON file updated with the status of the conversion. It exits once the
+conversion is finished.
+"""
+
+import argparse
+import json
+import logging
+import os
+import pwd
+import signal
+import subprocess
+import sys
+import tempfile
+
+import dbus
+import gi
+from dbus.mainloop.glib import DBusGMainLoop
+from gi.repository import GLib
+
+# The Unix-specific API has its own namespace since glib 2.80
+gi.require_version("GLibUnix", "2.0")
+from gi.repository import GLibUnix
+
+BUS_NAME = "com.valvesoftware.Dirlock1"
+OBJECT_PATH = "/com/valvesoftware/Dirlock1"
+INTERFACE = "com.valvesoftware.Dirlock1"
+
+DEFAULT_STATE_FILE = "/run/dirlock-progress/state.json"
+
+LABEL_RUNNING = "Encrypting the data"
+LABEL_VERIFYING = "Verifying the encrypted data"
+LABEL_DEFERRED = "Waiting for the user to log out to finish encrypting the data"
+LABEL_DONE = "All data has been encrypted successfully. You can now log in"
+LABEL_FAILED = "Unexpected error encrypting the data"
+LABEL_CANCELLED = "The encryption has been cancelled"
+
+log = logging.getLogger("dirlock-sddm-tracker")
+
+
+class ConversionMonitor:
+    """Follows one conversion and keeps the state file updated."""
+
+    def __init__(self, state_file):
+        self.state_file = state_file
+        self.loop = GLib.MainLoop()
+        self.bus = dbus.SystemBus()
+        # Directory being converted, initially None
+        self.dir = None
+        self.percent = 0
+        # Label used while the conversion is running
+        self.label = LABEL_RUNNING
+        # Last data written to disk, contains: (percent, label)
+        self.written = None
+        self.done = False
+
+    # ---------------------------------------------------------------
+    # State file
+    # ---------------------------------------------------------------
+
+    def write_state(self, percent, label):
+        """Update the state file atomically if the contents
+        need to be updated."""
+        if (percent, label) == self.written:
+            return
+
+        directory = os.path.dirname(self.state_file)
+        os.makedirs(directory, mode=0o755, exist_ok=True)
+        data = {"active": True, "percent": percent, "label": label}
+
+        fd, tmpname = tempfile.mkstemp(dir=directory, prefix=".state-")
+        try:
+            with os.fdopen(fd, "w") as tmpfile:
+                json.dump(data, tmpfile)
+                tmpfile.write("\n")
+                tmpfile.flush()
+                os.fsync(tmpfile.fileno())
+            os.chmod(tmpname, 0o644)
+            os.replace(tmpname, self.state_file)
+        except Exception:
+            os.unlink(tmpname)
+            raise
+
+        # Call fsync on the directory
+        dirfd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(dirfd)
+        finally:
+            os.close(dirfd)
+
+        self.written = (percent, label)
+        self.percent = percent
+        log.info("%s: %d%% (%s)", self.dir or "?", percent, label)
+
+    # ---------------------------------------------------------------
+    # D-Bus
+    # ---------------------------------------------------------------
+
+    def list_conversions(self):
+        """Return the list of pending conversions, or None if dirlockd
+        cannot be reached."""
+        try:
+            obj = self.bus.get_object(BUS_NAME, OBJECT_PATH)
+            iface = dbus.Interface(obj, INTERFACE)
+            return list(iface.ListConversions())
+        except dbus.DBusException as e:
+            log.warning("cannot list conversions: %s", e)
+            return None
+
+    def attach(self, path, percent):
+        """Start following the conversion of `path`."""
+        self.dir = path
+        self.percent = percent
+        log.info("following the conversion of %s", path)
+        self.write_state(percent, self.label)
+
+    def is_ours(self, path):
+        """Whether a signal for `path` is about the conversion we
+        follow. Before we have one, the first conversion we hear about
+        becomes ours."""
+        return self.dir is None or self.dir == path
+
+    def finish(self, percent, label):
+        """Write the final state of the conversion that we follow and
+        stop following it."""
+        self.write_state(percent, label)
+        self.dir = None
+        self.label = LABEL_RUNNING
+
+    def disable_password(self, path):
+        """If path is a home directory, disable the Unix password
+        of the user."""
+        # Get the passwd entry of the owner of the directory
+        try:
+            pw = pwd.getpwuid(os.stat(path).st_uid)
+        except (OSError, KeyError) as e:
+            log.warning("cannot find the owner of %s: %s", path, e)
+            return
+        # If 'path' is the home directory then disable the user's password
+        if os.path.realpath(pw.pw_dir) != path:
+            return
+        # usermod rewrites /etc/shadow and this service's sandbox won't
+        # allow it, so use a transient systemd unit.
+        try:
+            subprocess.run(["systemd-run", "--wait", "--pipe", "--quiet",
+                            "--collect", "--", "/usr/bin/usermod", "-p", "*",
+                            pw.pw_name], check=True)
+        except (OSError, subprocess.CalledProcessError) as e:
+            log.error("cannot disable the password of %s: %s", pw.pw_name, e)
+            return
+        log.info("the password of %s is now disabled", pw.pw_name)
+
+    def quit(self):
+        """Leave the state file as it is and exit."""
+        self.done = True
+        self.loop.quit()
+
+    # ---------------------------------------------------------------
+    # Signal handlers
+    # ---------------------------------------------------------------
+
+    def on_job_progress(self, jobid, path, progress):
+        path = str(path)
+        if not self.is_ours(path):
+            return
+        if self.dir is None:
+            self.attach(path, int(progress))
+        else:
+            self.write_state(int(progress), self.label)
+
+    def on_job_finished(self, jobid, path, keyid):
+        path = str(path)
+        if not self.is_ours(path):
+            return
+        log.info("the conversion of %s is done", path)
+        self.disable_password(path)
+        self.finish(100, LABEL_DONE)
+        # Discard the blocks freed by the old unencrypted copy.
+        try:
+            subprocess.run(["systemd-run", "--wait", "--pipe", "--quiet",
+                            "--collect", "--", "/usr/bin/fstrim", "/home"],
+                           check=True)
+        except (OSError, subprocess.CalledProcessError) as e:
+            log.error("failed to run fstrim on /home: %s", e)
+        # Wait until there are no conversions left, otherwise this
+        # daemon would be restarted.
+        if self.list_conversions() == []:
+            log.info("no conversions left")
+            self.quit()
+
+    def on_job_failed(self, jobid, path, error):
+        path = str(path)
+        if not self.is_ours(path):
+            return
+        log.error("the conversion of %s failed: %s", path, error)
+        self.finish(self.percent, f"{LABEL_FAILED}: {error}")
+
+    def on_job_cancelled(self, jobid, path):
+        path = str(path)
+        if not self.is_ours(path):
+            return
+        log.info("the conversion of %s was cancelled", path)
+        self.finish(self.percent, LABEL_CANCELLED)
+
+    def on_job_restarted(self, jobid, path):
+        path = str(path)
+        if not self.is_ours(path) or self.dir is None:
+            return
+        # The directory changed while it was being copied. We have to
+        # copy it again, so the progress starts from zero, with a
+        # different label this time.
+        log.info("the conversion of %s was restarted", path)
+        self.label = LABEL_VERIFYING
+        self.write_state(0, self.label)
+
+    def on_job_deferred(self, jobid, path):
+        path = str(path)
+        if not self.is_ours(path) or self.dir is None:
+            return
+        # The conversion is deferred until the user logs out.
+        log.info("the conversion of %s is waiting for the user to log out", path)
+        self.label = LABEL_DEFERRED
+        self.write_state(-1, self.label)
+
+    def on_name_owner_changed(self, name, old_owner, new_owner):
+        if not new_owner:
+            # dirlock is gone, the conversion is interrupted.
+            log.warning("dirlockd is gone")
+            if self.dir is not None:
+                self.finish(self.percent, LABEL_FAILED)
+            return
+        log.info("dirlockd is available again")
+        if self.dir is None:
+            self.adopt()
+
+    # ---------------------------------------------------------------
+    # Adoption
+    # ---------------------------------------------------------------
+
+    def adopt(self):
+        """Look for a conversion to follow. Called once at startup and
+        again whenever dirlockd comes back."""
+        conversions = self.list_conversions()
+        if conversions is None:
+            # dirlockd is unreachable, wait for NameOwnerChanged
+            return
+        if not conversions:
+            log.info("no conversions left")
+            self.quit()
+            return
+        live = sorted((c for c in conversions
+                       if c.get("status") in ("ongoing", "deferred")),
+                      key=lambda c: str(c["dir"]))
+        if not live:
+            return
+        conv = live[0]
+        path = str(conv["dir"])
+        if len(live) > 1:
+            log.warning("%d conversions are running, following %s",
+                        len(live), path)
+        deferred = conv.get("status") == "deferred"
+        if deferred:
+            self.label = LABEL_DEFERRED
+        if "progress" in conv:
+            progress = int(conv["progress"])
+        else:
+            # Not managed by dirlockd, so it reports no progress. Being
+            # deferred means the copy is already done, so 100 is right.
+            progress = 100 if deferred else 0
+        self.attach(path, progress)
+
+    def on_terminate(self):
+        log.info("terminated")
+        self.quit()
+        return False
+
+    # ---------------------------------------------------------------
+
+    def run(self):
+        handlers = {
+            "JobProgress": self.on_job_progress,
+            "JobFinished": self.on_job_finished,
+            "JobFailed": self.on_job_failed,
+            "JobCancelled": self.on_job_cancelled,
+            "JobRestarted": self.on_job_restarted,
+            "JobDeferred": self.on_job_deferred,
+        }
+        for name, handler in handlers.items():
+            self.bus.add_signal_receiver(handler,
+                                         signal_name=name,
+                                         dbus_interface=INTERFACE,
+                                         bus_name=BUS_NAME,
+                                         path=OBJECT_PATH)
+        self.bus.add_signal_receiver(self.on_name_owner_changed,
+                                     signal_name="NameOwnerChanged",
+                                     dbus_interface="org.freedesktop.DBus",
+                                     arg0=BUS_NAME)
+
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            GLibUnix.signal_add(GLib.PRIORITY_DEFAULT, sig, self.on_terminate)
+
+        self.adopt()
+        if self.done:
+            return
+
+        self.loop.run()
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--state-file", default=DEFAULT_STATE_FILE,
+                        help="JSON file to write (default: %(default)s)")
+    args = parser.parse_args()
+
+    logging.basicConfig(format="%(message)s", level=logging.INFO,
+                        stream=sys.stderr)
+    DBusGMainLoop(set_as_default=True)
+
+    try:
+        monitor = ConversionMonitor(args.state_file)
+        monitor.run()
+    except dbus.DBusException as e:
+        log.error("D-Bus error: %s", e)
+        return 1
+    except OSError as e:
+        log.error("cannot write %s: %s", args.state_file, e)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

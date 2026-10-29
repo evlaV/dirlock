@@ -1,0 +1,13 @@
+[SddmGreeterTheme]
+Name=Breeze (dirlock)
+Description=Breeze, with a progress indicator for dirlock
+Author=Alberto Garcia
+Copyright=(c) 2026, Valve Corporation
+License=BSD-3-Clause
+Type=sddm-theme
+Version=0.1
+MainScript=Main.qml
+ConfigFile=theme.conf
+Theme-Id=dirlock
+Theme-API=2.0
+QtVersion=6
