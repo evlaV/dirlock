@@ -2,7 +2,7 @@
 
 pkgname=dirlock
 _commit=10f85a7b80c193703f85f4eaa5cf1d36ad94f7c1
-_extras=f0db112f865774fdd5749e7c654409d9cf6e5547
+_extras=ce8a8ac8c44f760a6179019aa454e53c0ef95f59
 pkgver=0.0.1.463.10f85a7
 pkgrel=1
 pkgdesc='Tool for managing encrypted directories'
@@ -305,7 +305,7 @@ makedepends=('git'
              'holo-rust-packaging-tools')
 license=('BSD-3-Clause')
 sha256sums=('5ed0a4b0d527856372782d30b3fb1df7c02d7c65115e08cc5c8e3581b77969b8'
-            '5a62ee69767334b9aa0d98d8be133419a691534c377a7222bd86dd5937f9cd2c'
+            'b630acb692c2b099391a0ef63e35d28cf7b5ff1f188826a0defacb0231b234d3'
             'SKIP'
             'SKIP'
             'SKIP'
