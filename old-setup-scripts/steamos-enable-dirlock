@@ -126,12 +126,13 @@ echo "====================================="
 echo -e "${CYAN}Filesystem encryption is now enabled.${NC}"
 cat <<EOF
 
-You can now encrypt the home directory with the following command:
+You can encrypt the home directory with the following command, but
+YOU MUST REBOOT THE SYSTEM BEFORE DOING IT.
 
    /usr/lib/steamos/steamos-encrypt-home
 
-After that, reboot the system and you should see the login screen where
-you have to introduce your PIN or password.
+After that, reboot the system again and you should see the login
+screen where you have to enter your PIN or password.
 EOF
 
 if [ "$needs_pam_review" != "0" ]; then

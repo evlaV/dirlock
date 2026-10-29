@@ -154,6 +154,10 @@ def enable_fs_encryption(home):
             break
     run(["tune2fs", "-O", "encrypt", device])
     print(f"Enabled encryption support on {device}.")
+    # After enabling encryption the filesystem needs to be remounted due to this bug:
+    # https://github.com/gregkh/linux/commit/40554d1221e3d2ff2e0d192b74a05d89eb3620e7
+    fail("Encryption support has just been enabled. "
+         "Please restart the machine now and try again.")
 
 
 def enable_sddm_service():
@@ -203,6 +207,10 @@ def home_state(status):
 
 def cmd_status(dirlock, pw, home, status, args):
     print(home_state(status))
+
+
+def cmd_enable_fs_encryption(dirlock, pw, home, status, args):
+    enable_fs_encryption(home)
 
 
 def cmd_convert(dirlock, pw, home, status, args):
@@ -276,6 +284,7 @@ def cmd_discard(dirlock, pw, home, status, args):
 
 COMMANDS = {
     "status": cmd_status,
+    "enable-fs-encryption": cmd_enable_fs_encryption,
     "convert": cmd_convert,
     "recovery-add": cmd_recovery_add,
     "recovery-remove": cmd_recovery_remove,
@@ -288,6 +297,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("status", help="print the state of the home directory")
+    sub.add_parser("enable-fs-encryption",
+                   help="enable encryption support on the filesystem")
     for name, help in (
             ("convert", "encrypt the home directory, or resume an "
                         "interrupted encryption"),

@@ -80,6 +80,31 @@ No data is lost if the machine is rebooted before the encryption is
 finished. After a reboot, you can use this tool again to resume or
 cancel the process." || exit 0
 
+        # Enable encryption on the filesystem first, as this may require a reboot
+        # https://github.com/gregkh/linux/commit/40554d1221e3d2ff2e0d192b74a05d89eb3620e7
+        if ! run_helper enable-fs-encryption; then
+            msg=$(cat "$tmpdir/err")
+            if expr "X$msg" : "XEncryption support has just been enabled" > /dev/null; then
+                kdialog --title "$TITLE" --msgbox \
+                        "This filesystem did not have encryption support, so it has just been
+enabled now.
+
+IMPORTANT: you need to reboot the machine now and restart the process
+afterwards by opening this tool again.
+
+Due to a bug in the Linux kernel, please don't try to encrypt your
+data before rebooting the machine."
+                exit 0
+            else
+                kdialog --title "$TITLE" --error \
+                        "There was an error when trying to enable encryption support
+on the filesystem:
+
+$msg"
+                exit 1
+            fi
+        fi
+
         if $have_tpm; then
             rc=0
             kdialog --title "$TITLE" --yes-label "Use the TPM" \
